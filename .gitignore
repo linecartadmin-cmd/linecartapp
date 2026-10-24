@@ -1,0 +1,50 @@
+# Node dependencies
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production build artifacts
+client/dist/
+dist/
+
+# Documentation screenshots may contain real customer or account details
+docs/screenshots/
+
+# Local sensitive data files & exports (DO NOT COMMIT)
+server/data.js
+data.js
+*.csv
+*.tsv
+*.xlsx
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Local uploads & customer photos (DO NOT COMMIT)
+uploads/*
+server/uploads/*
+!uploads/.gitkeep
+!server/uploads/.gitkeep
+
+# Environment & local credentials (exclude all .env* except safe .env.example)
+.env*
+!.env.example
+*.pem
+*.key
+
+# Temporary / Scratch scripts & logs
+scratch/
+**/scratch/
+*.log
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
