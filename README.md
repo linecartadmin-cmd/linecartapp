@@ -6,10 +6,17 @@ LineCart 2.0 is a field sales force automation, store onboarding, wholesale comm
 
 ## 📚 Complete Documentation Suite
 
-- 📖 **[User Manual & Operations Guide](docs/USER_GUIDE.md)**: Practical, step-by-step operating instructions for all four user roles (Admin, Sales Manager, Field Sales Agent, and Delivery Agent), credential policies, mobile previews, accessible navigation, and operational troubleshooting.
-- 🏛️ **[Technical Architecture & System Design Guide](docs/ARCHITECTURE.md)**: Comprehensive architectural specification detailing frontend/backend design, request lifecycles, token-based session security, Leaflet map engine with dual-tile resilience, OSRM road routing, and complete 48+ route API directory.
-- 📦 **[Libraries and Tools Reference](docs/LIBRARIES_AND_TOOLS.md)**: Complete catalog of installed runtime and development dependencies (React 18, Vite 6, Leaflet, TailwindCSS, Express 4, Multer) and external web service providers (OpenStreetMap, CartoDB, OSRM).
-- ⚠️ **[Known Limitations & Production Readiness Guide](docs/KNOWN_LIMITATIONS.md)**: In-memory persistence boundaries, external service dependencies, and the step-by-step checklist required before deploying to production.
+### 1. User Manual
+- 📝 **[Editable Markdown](docs/USER_MANUAL.md)** | 📄 **[Download PDF](docs/pdf/LineCart_User_Manual.pdf)**
+Practical, step-by-step operating instructions for all four user roles (Admin, Sales Manager, Field Sales Agent, and Delivery Agent), credential policies, mobile previews, accessible navigation, and operational troubleshooting.
+
+### 2. Architecture & Workflow Guide
+- 📝 **[Editable Markdown](docs/ARCHITECTURE_AND_WORKFLOW_GUIDE.md)** | 📄 **[Download PDF](docs/pdf/LineCart_Architecture_and_Workflow_Guide.pdf)**
+Comprehensive technical architecture detailing frontend/backend design, request lifecycles, token-based session security, Leaflet map engine with dual-tile resilience, OSRM road routing, and complete 48+ route API directory.
+
+### 3. Libraries & Technical Reference Guide
+- 📝 **[Editable Markdown](docs/LIBRARIES_AND_TECHNICAL_GUIDE.md)** | 📄 **[Download PDF](docs/pdf/LineCart_Libraries_and_Technical_Guide.pdf)**
+Complete catalog of installed runtime and development dependencies, external web service providers (OpenStreetMap, CartoDB, OSRM), in-memory persistence boundaries, and production readiness checklist.
 
 ---
 
