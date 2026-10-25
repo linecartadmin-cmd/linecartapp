@@ -86,10 +86,14 @@ export default function OrderBooking({ shop, cluster, user, onBack, onOrderCompl
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2.5 text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition"
+            className="p-2.5 text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition min-w-[40px] min-h-[40px] flex items-center justify-center"
+            title="Go back"
+            aria-label="Go back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+            <span className="sr-only">Go back</span>
           </button>
           <div>
             <div className="flex items-center gap-2">

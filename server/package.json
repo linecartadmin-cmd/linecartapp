@@ -4,11 +4,16 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "migrate": "node migrate.js",
+    "db:backup": "node migrate.js --backup",
+    "db:restore": "node migrate.js --restore",
+    "admin:reset-password": "node migrate.js --reset-admin-password"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.23.1"
   }
 }

@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Technical Architecture & Workflow Guide — LineCart 2.0</title>
+  <style>
+
+@page {
+  size: A4;
+  margin: 16mm 14mm 16mm 14mm;
+  @bottom-right {
+    content: "Page " counter(page);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #64748b;
+  }
+  @bottom-left {
+    content: "LineCart 2.0 Enterprise Suite";
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #94a3b8;
+  }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #1e293b;
+  background: #ffffff;
+  line-height: 1.5;
+  font-size: 9.5pt;
+  margin: 0;
+  padding: 0;
+}
+
+.cover-header {
+  border-bottom: 3px solid #2563eb;
+  padding-bottom: 14px;
+  margin-bottom: 20px;
+}
+
+.cover-badge {
+  display: inline-block;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 8pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  border: 1px solid #bfdbfe;
+  margin-bottom: 8px;
+}
+
+h1 {
+  font-size: 20pt;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 6px 0;
+  line-height: 1.2;
+}
+
+.doc-subtitle {
+  font-size: 10.5pt;
+  color: #475569;
+  margin: 0 0 10px 0;
+}
+
+.doc-meta {
+  font-size: 8pt;
+  color: #64748b;
+  display: flex;
+  gap: 16px;
+}
+
+h2 {
+  font-size: 13pt;
+  font-weight: 700;
+  color: #0f172a;
+  border-bottom: 1.5px solid #e2e8f0;
+  padding-bottom: 4px;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  break-after: avoid;
+}
+
+h3 {
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: #1e293b;
+  margin-top: 14px;
+  margin-bottom: 6px;
+  break-after: avoid;
+}
+
+p {
+  margin: 0 0 8px 0;
+  color: #334155;
+}
+
+ul, ol {
+  margin: 0 0 10px 0;
+  padding-left: 20px;
+  color: #334155;
+}
+
+li {
+  margin-bottom: 3px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 8.5pt;
+  break-inside: avoid;
+}
+
+th {
+  background: #f1f5f9;
+  color: #0f172a;
+  font-weight: 700;
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+}
+
+td {
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  vertical-align: top;
+}
+
+tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.callout {
+  border-left: 4px solid;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 12px 0;
+  font-size: 8.5pt;
+  break-inside: avoid;
+}
+
+.callout-important {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1e40af;
+}
+
+.callout-warning {
+  background: #fffbeb;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.callout-title {
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8pt;
+  background: #f1f5f9;
+  color: #0f172a;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+}
+
+pre {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 7.8pt;
+  line-height: 1.4;
+  overflow-x: hidden;
+  margin: 10px 0;
+  break-inside: avoid;
+}
+
+pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border: none;
+}
+
+.diagram-container {
+  margin: 14px 0;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  break-inside: avoid;
+  text-align: center;
+}
+
+.diagram-title {
+  font-size: 8.5pt;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+}
+
+.diagram-caption {
+  font-size: 7.8pt;
+  color: #64748b;
+  margin-top: 6px;
+  font-style: italic;
+  text-align: center;
+}
+
+.toc-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  break-inside: avoid;
+}
+
+.toc-card h2 {
+  font-size: 10pt;
+  border-bottom: none;
+  margin-top: 0;
+  margin-bottom: 6px;
+  padding-bottom: 0;
+}
+
+.toc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 8.2pt;
+}
+
+.toc-item {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.page-break {
+  page-break-before: always;
+}
+
+  </style>
+</head>
+<body>
+  <div class="cover-header">
+    <div class="cover-badge">Architecture Reference</div>
+    <h1>Technical Architecture & Workflow Guide</h1>
+    <div class="doc-subtitle">System design, authentication lifecycle, RBAC middleware, maps, APIs, and persistence.</div>
+    <div class="doc-meta">
+      <span><b>Project:</b> LineCart 2.0 Enterprise</span>
+      <span><b>Version:</b> 2.0.4 (October 2026)</span>
+      <span><b>Environment:</b> Production / Staging / Local</span>
+    </div>
+  </div>
+
+  <div class="toc-card">
+    <h2>Table of Contents</h2>
+    <div class="toc-grid">
+      <a class="toc-item" href="#overview">1. Architectural Overview</a><a class="toc-item" href="#frontend">2. Frontend Architecture</a><a class="toc-item" href="#backend">3. Backend Architecture</a><a class="toc-item" href="#maps">4. Map & Routing Subsystems</a><a class="toc-item" href="#api">5. Complete REST API Directory</a><a class="toc-item" href="#persistence">6. Data Persistence & Boundaries</a>
+    </div>
+  </div>
+
+  
+  <h2 id="overview">1. Architectural Overview</h2>
+  <p>LineCart 2.0 connects regional sales managers, field sales agents, retail merchants, and delivery drivers over an authenticated REST API served on port 3001.</p>
+  
+  <div class="diagram-container">
+    <div class="diagram-title">Diagram 4: Full-Stack Architecture &amp; Data Flow</div>
+    
+<svg viewBox="0 0 720 240" width="100%" height="240" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <marker id="arrow4" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#475569" />
+    </marker>
+  </defs>
+
+  <!-- Client Tier -->
+  <g transform="translate(10, 10)">
+    <rect width="210" height="215" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <rect width="210" height="26" rx="8" fill="#334155"/>
+    <rect y="18" width="210" height="8" fill="#334155"/>
+    <text x="105" y="17" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">CLIENT SPA LAYER (Browser)</text>
+
+    <text x="10" y="42" font-size="8" font-weight="700" fill="#0f172a">React 18.3 · Vite 6 · TailwindCSS 3.4</text>
+    <text x="10" y="56" font-size="7.5" fill="#475569">• Multi-Role UI Router (App.jsx)</text>
+    <text x="10" y="68" font-size="7.5" fill="#475569">• ErrorBoundary Crash Recovery</text>
+    <text x="10" y="80" font-size="7.5" fill="#475569">• Leaflet 1.9 Map (Resilient Dual Tile)</text>
+    <text x="10" y="92" font-size="7.5" fill="#475569">• OSRM Client + NN Fallback (routing.js)</text>
+    <text x="10" y="104" font-size="7.5" fill="#475569">• Centralized api.js with Bearer Auth</text>
+    <text x="10" y="116" font-size="7.5" fill="#475569">• Laptop View &amp; Mobile Preview Frames</text>
+    <text x="10" y="128" font-size="7.5" fill="#475569">• Icon-Only Back Button (42px mobile)</text>
+
+    <rect x="8" y="142" width="194" height="60" rx="4" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+    <text x="14" y="156" font-size="7.5" font-weight="700" fill="#1e40af">LOCAL STORAGE PERSISTENCE:</text>
+    <text x="14" y="168" font-size="7" fill="#1e40af">• LineCartPref_token (Session UUID)</text>
+    <text x="14" y="178" font-size="7" fill="#1e40af">• LineCartPref_user (Cached User Info)</text>
+    <text x="14" y="188" font-size="7" fill="#1e40af">• Synced with /api/auth/me on mount</text>
+  </g>
+
+  <!-- HTTP Transport Arrows -->
+  <g transform="translate(225, 60)">
+    <line x1="0" y1="15" x2="35" y2="15" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow4)"/>
+    <text x="18" y="8" font-size="7" font-weight="700" fill="#2563eb" text-anchor="middle">HTTP :3001</text>
+    <text x="18" y="27" font-size="6.5" fill="#64748b" text-anchor="middle">Bearer Token</text>
+
+    <line x1="35" y1="45" x2="0" y2="45" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow4)"/>
+    <text x="18" y="40" font-size="7" font-weight="700" fill="#16a34a" text-anchor="middle">JSON Data</text>
+  </g>
+
+  <!-- Server Tier -->
+  <g transform="translate(265, 10)">
+    <rect width="230" height="215" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <rect width="230" height="26" rx="8" fill="#0f172a"/>
+    <rect y="18" width="230" height="8" fill="#0f172a"/>
+    <text x="115" y="17" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">BACKEND API SERVER (Node.js)</text>
+
+    <text x="10" y="42" font-size="8" font-weight="700" fill="#0f172a">Express 4.21 · Port 3001 · Static Host</text>
+    <text x="10" y="56" font-size="7.5" fill="#475569">• Token Session Registry (sessions Map)</text>
+    <text x="10" y="68" font-size="7.5" fill="#475569">• crypto.scryptSync Password Security</text>
+    <text x="10" y="80" font-size="7.5" fill="#475569">• RBAC: requireAdmin, authorizeManager</text>
+    <text x="10" y="92" font-size="7.5" fill="#475569">• Delivery Guard: requireDeliveryAgent</text>
+    <text x="10" y="104" font-size="7.5" fill="#475569">• Multer 1.4 Photo Uploads (uploads/)</text>
+    <text x="10" y="116" font-size="7.5" fill="#475569">• Target &amp; Quotas Calculation Engine</text>
+    <text x="10" y="128" font-size="7.5" fill="#475569">• 48+ REST API Endpoints</text>
+
+    <rect x="8" y="142" width="214" height="60" rx="4" fill="#fefce8" stroke="#fef08a" stroke-width="1"/>
+    <text x="14" y="156" font-size="7.5" font-weight="700" fill="#854d0e">SECURITY ENFORCEMENT:</text>
+    <text x="14" y="168" font-size="7" fill="#854d0e">• Last Active Admin Deletion Block</text>
+    <text x="14" y="178" font-size="7.5" fill="#854d0e">• Timing-safe password comparisons</text>
+    <text x="14" y="188" font-size="7" fill="#854d0e">• Production guard (disables admin dev bypass)</text>
+  </g>
+
+  <!-- Storage & External Arrows -->
+  <line x1="500" y1="75" x2="525" y2="75" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow4)"/>
+  <line x1="500" y1="165" x2="525" y2="165" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow4)"/>
+
+  <!-- Storage Tier -->
+  <g transform="translate(530, 10)">
+    <rect width="180" height="115" rx="6" fill="#faf5ff" stroke="#c084fc" stroke-width="1.5"/>
+    <text x="90" y="18" font-size="8.5" font-weight="700" fill="#6b21a8" text-anchor="middle">DATA STORAGE LAYER</text>
+    
+    <text x="10" y="36" font-size="7.5" font-weight="700" fill="#15803d">DISK PERSISTENT:</text>
+    <text x="10" y="48" font-size="7" fill="#374151">• admin_config.json (Users, Roles,</text>
+    <text x="10" y="58" font-size="7" fill="#374151">  Targets, Assignments, Audit Trail)</text>
+    <text x="10" y="68" font-size="7" fill="#374151">• uploads/ (Storefront Photos)</text>
+    
+    <text x="10" y="84" font-size="7.5" font-weight="700" fill="#b91c1c">IN-MEMORY (RAM):</text>
+    <text x="10" y="96" font-size="7" fill="#374151">• submittedOrders (Orders Ledger)</text>
+    <text x="10" y="106" font-size="7" fill="#374151">• shops (New stores), sessions (Tokens)</text>
+  </g>
+
+  <!-- External Services Tier -->
+  <g transform="translate(530, 135)">
+    <rect width="180" height="90" rx="6" fill="#fff7ed" stroke="#fb923c" stroke-width="1.5"/>
+    <text x="90" y="18" font-size="8.5" font-weight="700" fill="#9a3412" text-anchor="middle">EXTERNAL WEB SERVICES</text>
+    
+    <text x="10" y="36" font-size="7.2" fill="#374151">• OpenStreetMap (Tile Server)</text>
+    <text x="10" y="48" font-size="7.2" fill="#374151">• CartoDB Voyager (Tile Fallback)</text>
+    <text x="10" y="60" font-size="7.2" fill="#374151">• OSRM Public API (Road Routing)</text>
+    <text x="10" y="72" font-size="7.2" fill="#374151">• Google Maps (External Link URL)</text>
+  </g>
+</svg>
+
+    <div class="diagram-caption">Figure 4.1: End-to-end data flow between React SPA, Node.js API server, local persistence, and external map providers.</div>
+  </div>
+
+  <h2 id="frontend" class="page-break">2. Frontend Architecture</h2>
+  <p>The client is a Single-Page Application (SPA) built with <b>React 18.3</b> and <b>Vite 6</b>, utilizing <b>TailwindCSS 3.4</b> for responsive layout styling.</p>
+  <ul>
+    <li><b>Top-Level Error Boundary:</b> <code>ErrorBoundary.jsx</code> wraps all role routes to prevent React unmounting cascades, presenting a recovery card on uncaught exceptions.</li>
+    <li><b>Authoritative Identity Sync:</b> Validates stored tokens on mount against <code>GET /api/auth/me</code>, ensuring client permissions immediately reflect server-side changes.</li>
+    <li><b>Laptop View &amp; Mobile Preview:</b> Offers a 12-column responsive layout on laptop screens (<code>lg:grid-cols-12</code>) and an emulated <code>390×844px</code> smartphone frame with bottom tab navigation in mobile preview mode.</li>
+    <li><b>Accessible Navigation:</b> Universal icon-only Back button (<code>←</code>) with <code>aria-label="Go back"</code>, <code>42px</code> mobile touch targets, and loop-free history tracking.</li>
+  </ul>
+
+  <h2 id="backend">3. Backend Architecture</h2>
+  <p>The backend application in <code>server/index.js</code> runs on <b>Node.js (v18+)</b> using <b>Express 4.21</b>.</p>
+  <ul>
+    <li><b>Token Session Registry:</b> Active sessions are registered in an in-memory <code>sessions</code> Map upon login, storing user ID, role, and timestamp. Logging out removes the token immediately.</li>
+    <li><b>Cryptographic Key Derivation:</b> Passwords use <code>crypto.scryptSync(password, salt, 64)</code> with a 16-byte random salt. Timing-safe comparisons via <code>crypto.timingSafeEqual</code> prevent timing attacks.</li>
+    <li><b>Role Guards:</b> <code>requireAdmin</code> blocks non-admins; <code>authorizeManagerAccess</code> scopes data to assigned teams; <code>requireDeliveryAgent</code> prevents drivers from modifying unassigned orders.</li>
+    <li><b>Last Admin Protection:</b> Blocks deleting, demoting, or deactivating the last active Administrator.</li>
+  </ul>
+
+  <h2 id="maps" class="page-break">4. Map &amp; Routing Subsystems</h2>
+  <div class="diagram-container">
+    <div class="diagram-title">Diagram 5: Shop Map &amp; Road Route Planning Subsystem</div>
+    
+<svg viewBox="0 0 720 180" width="100%" height="180" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <marker id="arrow5" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#475569" />
+    </marker>
+  </defs>
+
+  <!-- Step 1: Shop DB -->
+  <g transform="translate(10, 20)">
+    <rect width="125" height="120" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="62" y="24" font-size="8.5" font-weight="700" fill="#0f172a" text-anchor="middle">1. Store Geocoding</text>
+    <text x="10" y="44" font-size="7.2" fill="#475569">• Saved Latitude/Longitude</text>
+    <text x="10" y="58" font-size="7.2" fill="#475569">• Multi-tenant Markets</text>
+    <text x="10" y="72" font-size="7.2" fill="#475569">• Commercial Bazaars</text>
+    <text x="10" y="86" font-size="7.2" fill="#475569">• Co-located Shops</text>
+    <text x="10" y="100" font-size="7.2" fill="#475569">• Unmapped Coordinate</text>
+    <text x="10" y="112" font-size="7.2" fill="#475569">  detection &amp; fallback</text>
+  </g>
+
+  <line x1="140" y1="80" x2="165" y2="80" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow5)"/>
+
+  <!-- Step 2: Deduplication & Hub grouping -->
+  <g transform="translate(170, 20)">
+    <rect width="125" height="120" rx="6" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+    <text x="62" y="24" font-size="8.5" font-weight="700" fill="#1e40af" text-anchor="middle">2. Hub Detection</text>
+    <text x="10" y="44" font-size="7.2" fill="#1e40af">• Hash coords to ~20m</text>
+    <text x="10" y="58" font-size="7.2" fill="#1e40af">• Identify shared locations</text>
+    <text x="10" y="72" font-size="7.2" fill="#1e40af">• Central hub marker</text>
+    <text x="10" y="86" font-size="7.2" fill="#1e40af">• Stop count badge (e.g. 3)</text>
+    <text x="10" y="100" font-size="7.2" fill="#1e40af">• Detailed stop popup</text>
+    <text x="10" y="112" font-size="7.2" fill="#1e40af">• Shared Address notice</text>
+  </g>
+
+  <line x1="300" y1="80" x2="325" y2="80" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow5)"/>
+
+  <!-- Step 3: Radial Fan-Out -->
+  <g transform="translate(330, 20)">
+    <rect width="125" height="120" rx="6" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+    <text x="62" y="24" font-size="8.5" font-weight="700" fill="#6b21a8" text-anchor="middle">3. Radial Fan-Out</text>
+    <text x="10" y="44" font-size="7.2" fill="#6b21a8">• Geometric radial math</text>
+    <text x="10" y="58" font-size="7.2" fill="#6b21a8">• θ = 2πi/N - π/2</text>
+    <text x="10" y="72" font-size="7.2" fill="#6b21a8">• r ≈ 0.00018° (~20m)</text>
+    <text x="10" y="86" font-size="7.2" fill="#6b21a8">• Dashed leader lines</text>
+    <text x="10" y="100" font-size="7.2" fill="#6b21a8">• Every pin discoverable</text>
+    <text x="10" y="112" font-size="7.2" fill="#6b21a8">• Spiderfy on ShopMap</text>
+  </g>
+
+  <line x1="460" y1="80" x2="485" y2="80" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow5)"/>
+
+  <!-- Step 4: Map Tiles -->
+  <g transform="translate(490, 20)">
+    <rect width="105" height="120" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+    <text x="52" y="24" font-size="8.5" font-weight="700" fill="#166534" text-anchor="middle">4. Dual Tiles</text>
+    <text x="8" y="44" font-size="7.2" fill="#166534">• Primary: OSM</text>
+    <text x="8" y="58" font-size="7.2" fill="#166534">• Automatic Error</text>
+    <text x="8" y="70" font-size="7.2" fill="#166534">  Detection (tileerror)</text>
+    <text x="8" y="84" font-size="7.2" fill="#166534">• Fallback: CartoDB</text>
+    <text x="8" y="96" font-size="7.2" fill="#166534">  Voyager Layer</text>
+    <text x="8" y="108" font-size="7.2" fill="#166534">• Zero-Downtime Map</text>
+  </g>
+
+  <line x1="600" y1="80" x2="620" y2="80" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow5)"/>
+
+  <!-- Step 5: Road Routing -->
+  <g transform="translate(625, 20)">
+    <rect width="85" height="120" rx="6" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+    <text x="42" y="24" font-size="8.5" font-weight="700" fill="#9a3412" text-anchor="middle">5. Routing</text>
+    <text x="6" y="44" font-size="7.2" fill="#9a3412">• Public OSRM</text>
+    <text x="6" y="56" font-size="7.2" fill="#9a3412">  Driving Engine</text>
+    <text x="6" y="68" font-size="7.2" fill="#9a3412">• Street Order</text>
+    <text x="6" y="80" font-size="7.2" fill="#9a3412">• Polyline Path</text>
+    <text x="6" y="94" font-size="7.2" fill="#9a3412">• Nearest-Neigh</text>
+    <text x="6" y="106" font-size="7.2" fill="#9a3412">  Offline Fallback</text>
+  </g>
+
+  <!-- Bottom Summary Line -->
+  <text x="360" y="162" font-size="7.5" fill="#64748b" text-anchor="middle">Guarantees that overlapping market shops remain discoverable and stops are sequenced along real street networks.</text>
+</svg>
+
+    <div class="diagram-caption">Figure 5.1: Geocoded shop deduplication, radial pin expansion geometry, dual-tile resilience, and OSRM road routing.</div>
+  </div>
+
+  <h3>Dual-Tile Map Resilience</h3>
+  <p>Leaflet maps in <code>ShopMapScreen.jsx</code> and <code>DeliveryRouteScreen.jsx</code> implement automatic failover. If OpenStreetMap tiles experience network errors or timeouts, the layer dynamically switches to CartoDB Voyager raster tiles without interruption.</p>
+
+  <h3>Radial Fan-Out Geometry for Co-Located Stores</h3>
+  <p>Shops sharing identical coordinates within ~20m are grouped into a location hub. Pins radiate along a circle of radius <i>r ≈ 0.00018°</i> with dashed leader lines connecting each pin back to the center hub.</p>
+
+  <h3>OSRM Road Routing Engine</h3>
+  <p><code>routing.js</code> queries the public OSRM driving engine to sequence stops by road distance. If the service is unreachable, an internal Nearest-Neighbor heuristic based on Haversine distance takes over with a clear disclaimer.</p>
+
+  <h2 id="api" class="page-break">5. Complete REST API Directory</h2>
+  <p>All 48+ endpoints are organized by operational domain:</p>
+  <table>
+    <tr><th>Endpoint</th><th>Method</th><th>Authorization Guard</th><th>Description &amp; Behavior</th></tr>
+    <tr><td><code>/login</code></td><td>POST</td><td>Public</td><td>Authenticates phone/password; issues Bearer token &amp; mustChangePassword flag.</td></tr>
+    <tr><td><code>/api/auth/me</code></td><td>GET</td><td>Bearer Token</td><td>Returns authoritative user profile, role, and active permissions.</td></tr>
+    <tr><td><code>/api/auth/logout</code></td><td>POST</td><td>Bearer Token</td><td>Destroys active session token in backend sessions Map.</td></tr>
+    <tr><td><code>/api/auth/change-password</code></td><td>POST</td><td>Bearer Token</td><td>Updates password with scrypt encryption; clears mustChangePassword flag.</td></tr>
+    <tr><td><code>/api/admin/dashboard</code></td><td>GET</td><td>requireAdmin</td><td>Returns organization-wide financial KPIs and recent audit log events.</td></tr>
+    <tr><td><code>/api/admin/users</code></td><td>GET / POST</td><td>requireAdmin</td><td>Lists all users or provisions a new user with temporary credentials.</td></tr>
+    <tr><td><code>/api/admin/users/:id</code></td><td>PUT / DELETE</td><td>requireAdmin</td><td>Updates or deletes user; protects last active admin from deletion.</td></tr>
+    <tr><td><code>/api/admin/targets</code></td><td>GET / POST / DEL</td><td>requireAdmin</td><td>CRUD operations for revenue quotas and commodity targets.</td></tr>
+    <tr><td><code>/api/admin/audit</code></td><td>GET</td><td>requireAdmin</td><td>Returns immutable audit trail logs with actor attribution.</td></tr>
+    <tr><td><code>/api/manager/reports</code></td><td>GET</td><td>authorizeManagerAccess</td><td>Returns performance reports scoped strictly to manager's assigned team.</td></tr>
+    <tr><td><code>/api/manager/orders</code></td><td>GET</td><td>authorizeManagerAccess</td><td>Returns orders ledger scoped strictly to manager's assigned team.</td></tr>
+    <tr><td><code>/api/manager/shops</code></td><td>GET</td><td>authorizeManagerAccess</td><td>Returns shop coordinates with ordered status &amp; deduplication.</td></tr>
+    <tr><td><code>/getitemsorder</code></td><td>GET</td><td>Authenticated</td><td>Returns wholesale commodity catalog with live prices and stock.</td></tr>
+    <tr><td><code>/createorder</code></td><td>POST</td><td>checkActionPermission</td><td>Submits wholesale commodity order with GST calculation.</td></tr>
+    <tr><td><code>/addcustomer</code></td><td>POST</td><td>checkActionPermission</td><td>Multipart onboarding of store with GPS coordinates &amp; photo.</td></tr>
+    <tr><td><code>/api/delivery/orders</code></td><td>GET</td><td>requireDeliveryAgent</td><td>Returns orders assigned to caller, grouped by delivery cluster.</td></tr>
+    <tr><td><code>/api/delivery/orders/:id/status</code></td><td>POST</td><td>requireDeliveryAgent</td><td>Advances status (Picked up → Delivered / Could not deliver).</td></tr>
+  </table>
+
+  <h2 id="persistence" class="page-break">6. Data Persistence &amp; Boundaries</h2>
+  <p>LineCart persists all business, transactional, and administrative entities in a relational SQL database (<code>001_initial_schema.sql</code> via PostgreSQL <code>pg.Pool</code> or local WAL SQL storage <code>server/data/linecart.pg.db</code>):</p>
+  <table>
+    <tr><th>Data Entity</th><th>SQL Table / Storage</th><th>Persistence Across Restart</th><th>Notes</th></tr>
+    <tr><td><b>Users &amp; Passwords</b></td><td><code>users</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>Unique 10-digit Indian mobile + scrypt hash</td></tr>
+    <tr><td><b>Role Permissions Matrix</b></td><td><code>role_permissions</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>Immutable Admin guard enforced</td></tr>
+    <tr><td><b>Manager Assignments</b></td><td><code>manager_assignments</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>Composite key (manager_id, agent_id)</td></tr>
+    <tr><td><b>Targets &amp; Quotas</b></td><td><code>sales_targets</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>Scoped by agent, manager, cluster, period</td></tr>
+    <tr><td><b>Security Audit Logs</b></td><td><code>audit_logs</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>Indexed by timestamp and action</td></tr>
+    <tr><td><b>Wholesale Orders</b></td><td><code>orders</code> &amp; <code>order_items</code> tables</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>Transactional serial_no + idempotency_key</td></tr>
+    <tr><td><b>Registered Retail Stores</b></td><td><code>shops</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>314 migrated shops + new onboarded stores</td></tr>
+    <tr><td><b>Session Tokens</b></td><td><code>sessions</code> SQL table</td><td>✅ <b>Persistent</b> (SQL DB)</td><td>SHA-256 token hash, 12-hour TTL</td></tr>
+    <tr><td><b>Storefront Photos</b></td><td><code>server/uploads/shops/</code></td><td>✅ <b>Persistent</b> (On Disk)</td><td>Magic-byte validated, served via auth route</td></tr>
+  </table>
+
+</body>
+</html>

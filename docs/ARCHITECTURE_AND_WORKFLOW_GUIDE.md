@@ -67,24 +67,26 @@ LineCart 2.0 separates concerns cleanly between a modern client single-page appl
                     |                   |
 +-------------------v-------------------v---------------------------------------+
 |                            DATA STORAGE LAYER                                 |
-| - In-Memory State: active sessions (`sessions`), orders (`submittedOrders`)   |
-| - Local JSON Config: `admin_config.json` (Users, Targets, Assignments, Audit)  |
-| - Static Datasets: `data.js` (Baseline mock shops and commodity catalog)      |
-| - Local Uploads: `uploads/` (Storefront verification photographs)             |
+| - Relational SQL Database (`001_initial_schema.sql` via `pg` / `node:sqlite`) |
+|   Tables: `users`, `shops`, `orders`, `order_items`, `manager_assignments`,   |
+|   `sales_targets`, `role_permissions`, `audit_logs`, `app_settings`,          |
+|   `sessions`, `login_attempts`, `clusters`, `items`, `survey_items`           |
+| - Authenticated Uploads: `server/uploads/shops/` (Magic-byte validated photos)|
 +-------------------------------------------------------------------------------+
 ```
 
 ### Request & Response Lifecycle
 1. **Request Dispatch**: The React client issues asynchronous `fetch()` requests carrying the session token in the HTTP `Authorization: Bearer <token>` header.
-2. **Reverse Proxy Normalization**: Legacy paths prefixed with `http://freshcubes.in` are normalized to root-relative routes in `server/index.js`.
-3. **Identity Resolution**: `getCaller(req)` extracts the Bearer token, verifies it against the active `sessions` Map, and resolves the caller's authoritative user record.
+2. **Safe Request Logging & Reverse Proxy Normalization**: Legacy paths prefixed with `http://freshcubes.in` are normalized to root-relative routes, and query strings are stripped from request logs so credentials or tokens never appear in logs.
+3. **Authoritative Session Resolution**: `getCallerAsync(req)` extracts the Bearer token, hashes it with `SHA-256`, and verifies it against the `sessions` and `users` SQL tables (`revoked_at IS NULL`, `expires_at > now`, `active = 1`, `phone_valid = 1`). Forged caller IDs in headers (`X-User-Id`), query strings, or request bodies are never trusted.
 4. **Middleware Enforcement**:
-   - `requireAdmin`: Enforces `caller.role === 'admin'`.
-   - `authorizeManagerAccess`: Enforces that managers only access data for their assigned agents.
-   - `requireDeliveryAgent`: Enforces delivery ownership, preventing agents from altering unassigned deliveries.
-   - `checkActionPermission`: Validates granular permission overrides configured in the permissions matrix.
-5. **Execution & Mutator**: Modifies in-memory arrays and persists configuration updates to `admin_config.json`.
-6. **Audit Logging**: Operations write structured entries with timestamp, actor ID, and change details to the security audit queue.
+   - `requireAuth`: Returns `401 Unauthorized` when no valid session token is present.
+   - `requireAdmin`: Enforces `caller.role === 'Admin'` (`403 Forbidden` otherwise).
+   - `authorizeManagerAccess`: Enforces that Sales Managers only access data for their own `managerId` and assigned agents.
+   - `verifyFieldAgentScope`: Enforces that Field Sales Agents only read or submit records (`spersonId`, `createdby`) for their own account.
+   - `checkActionPermission`: Validates granular permission overrides configured in the `role_permissions` table.
+5. **Transactional Execution**: Mutations execute inside ACID SQL transactions (`db.withTransaction`), enforcing unique constraints (`users.phone`, `orders.idempotency_key`) and atomic order serial generation (`orders.serial_no`).
+6. **Audit Logging**: Operations write structured entries to the `audit_logs` SQL table.
 
 ---
 
@@ -180,12 +182,14 @@ In `client/src/routing.js`:
 ## 5. Complete REST API Directory
 
 ### Authentication & Identity Endpoints
-- `GET /api/system/mode`: Returns environment mode (`development` vs `production`).
-- `GET /api/demo-users`: List of demo accounts for dev testing (disabled in production).
-- `POST /login` (Aliases: `/api/linecart/login`, `/admin_panel/public/api/linecart/login`): Authenticates credentials, creates session token, returns user profile and `mustChangePassword` status.
-- `GET /api/auth/me`: Authenticates active Bearer token, returns authoritative user and role data.
-- `POST /api/auth/logout`: Terminates active session token.
-- `POST /api/auth/change-password`: Validates old password and sets new scrypt-hashed password.
+- `GET /api/system/mode`: Returns environment mode (`development` vs `production`) and `requiresAdminSetup`.
+- `POST /api/system/setup-admin`: One-time initial Administrator setup when no active Admin has a configured password hash.
+- `GET /api/demo-users`: List of non-Admin demo accounts for local dev testing (returns `403` in production).
+- `POST /login` (Aliases: `/api/linecart/login`, `/admin_panel/public/api/linecart/login`): Accepts `{ phone, password }` in the POST JSON body only (rejects query string credentials with `400`), validates 10-digit Indian mobile format (`/^[6-9]\d{9}$/`), enforces rate limiting (`429`), and issues a Bearer session token.
+- `GET /api/auth/me`: Validates active Bearer token against the `sessions` table and returns authoritative user and role data.
+- `POST /api/auth/logout`: Revokes active session token in the `sessions` SQL table.
+- `POST /api/auth/change-password`: Authenticated endpoint to change password (scrypt + 16-byte salt).
+- `GET /users/:id` (Alias: `GET /api/users/:id`): Authenticated user profile lookup enforcing self/manager/Admin authorization.
 
 ### Administrator Endpoints
 - `GET /api/admin/dashboard`: Organization-wide KPI metrics and recent audit events.
@@ -228,17 +232,15 @@ In `client/src/routing.js`:
 
 ---
 
-## 6. Data Storage & Persistence Boundaries
+## 6. Data Storage & Persistence Model
 
-### Hybrid Storage Model
-LineCart 2.0 uses a hybrid storage model:
-- **Persistent Disk Storage (`server/admin_config.json`)**: User accounts, password hashes, role permissions, manager assignments, targets, audit logs, and settings.
-- **In-Memory RAM Storage (`submittedOrders` & `shops`)**: Customer orders and newly registered retail stores live in memory and reset to baseline seed data (`data.js`) when the Node.js server process restarts.
-- **Session Tokens**: Active session tokens reside in server memory and are cleared upon server restart.
-- **Local File Uploads (`server/uploads/`)**: Storefront verification photographs persist on the local filesystem.
+### Relational SQL Database (`001_initial_schema.sql`)
+LineCart 2.0 persists all operational, administrative, and security records in a relational SQL database managed by `server/db.js` and `server/migrate.js`:
+- **PostgreSQL (`pg.Pool`)**: Used when `DATABASE_URL=postgresql://...` is configured in `.env`.
+- **Durable WAL SQL Engine (`node:sqlite`)**: Used automatically at `server/data/linecart.pg.db` when `DATABASE_URL` is unset in single-node/local environments, executing the exact same `$1..$n` parameterized SQL queries and ACID transactions.
+- **Authenticated Shop Photo Storage (`server/uploads/shops/`)**: Storefront photos uploaded via `POST /addcustomer` are validated for size (`<= 5 MB`) and genuine magic bytes (`JPEG`, `PNG`, `WebP`), stored with randomized filenames (`shop_<id>_<uuid>.<ext>`), linked in `shops.photo`, and served exclusively via authenticated `GET /api/uploads/shops/:filename`.
 
-### Server Restart Implications
+### Server Restart Persistence
 When the server process restarts:
-1. All administrative accounts, permissions, targets, and audit trails remain intact.
-2. Orders and newly registered stores reset to the initial seed dataset.
-3. Active users must sign in again as memory sessions are cleared.
+1. All users, password hashes, active sessions, role permissions, manager assignments, sales targets, audit logs, and settings survive intact in the SQL database.
+2. All 314 baseline shops, newly registered shops, storefront photos, wholesale orders, order line items, and delivery status updates survive intact across restarts.

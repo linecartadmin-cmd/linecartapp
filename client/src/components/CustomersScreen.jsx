@@ -416,10 +416,14 @@ export default function CustomersScreen({
               <p>Capture a shop’s details, location coordinates, and weekly requirements to start ordering.</p>
             </div>
             <button
-              className="secondary-button"
+              type="button"
+              className="secondary-button icon-back-btn"
               onClick={() => setViewMode('list')}
+              title="Go back"
+              aria-label="Go back"
             >
-              ← &nbsp;Back to customers
+              <span aria-hidden="true">←</span>
+              <span className="sr-only">Go back</span>
             </button>
           </div>
 

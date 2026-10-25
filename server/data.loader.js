@@ -19,5 +19,7 @@ export const {
   defaultSurveyItems,
   shops,
   clusterStats,
-  submittedOrders
+  submittedOrders,
+  managerAssignments,
+  salesTargets
 } = mod;

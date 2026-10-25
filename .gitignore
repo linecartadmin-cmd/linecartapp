@@ -12,19 +12,31 @@ dist/
 # Documentation screenshots may contain real customer or account details
 docs/screenshots/
 
-# Local sensitive data files & exports (DO NOT COMMIT)
+# Local sensitive data files, databases & backups (DO NOT COMMIT)
 server/data.js
 data.js
+server/data/
+server/backups/
+backups/
+**/backups/
+**/backups/*
+server/manager_config.json
+server/admin_config.json
+server/*_config.json
 *.csv
 *.tsv
 *.xlsx
 *.sql
+!**/migrations/*.sql
 *.sqlite
 *.sqlite3
 *.db
+*.db-*
 *.db-journal
 *.db-shm
 *.db-wal
+*.bak
+*.dump
 
 # Local uploads & customer photos (DO NOT COMMIT)
 uploads/*

@@ -80,6 +80,16 @@ export const salesPersons = [
     clusterid: 2,
     active: 1,
     createdon: "2026-04-01 09:00:00"
+  },
+  {
+    id: 100,
+    name: "Regional Sales Manager",
+    role: "Sales Manager",
+    phone: "9876500001",
+    password: "password123",
+    clusterid: 1,
+    active: 1,
+    createdon: "2026-04-01 09:00:00"
   }
 ];
 
@@ -229,4 +239,82 @@ export const clusterStats = {
   }
 };
 
-export const submittedOrders = [];
+// ============================================================================
+// DEMO FIXTURES ONLY (Not real data. For repository preview/offline testing only.)
+// Real manager assignments & sales targets must be assigned by an Admin.
+// ============================================================================
+export const managerAssignments = {
+  // Demonstration mapping: Manager 100 oversees Demo Agents 1 & 2
+  100: [1, 2]
+};
+
+export const salesTargets = [
+  // Demonstration quotas: Fictitious monthly targets for demo testing
+  {
+    id: 1,
+    managerId: 100,
+    agentId: 1,
+    clusterId: 1,
+    period: "2026-10",
+    targetAmount: 25000,
+    itemTargets: [
+      { itemId: 1, itemName: "Onio Medium", targetQty: 250, price: 53.0, targetAmount: 13250 },
+      { itemId: 2, itemName: "Onion Big", targetQty: 200, price: 55.5, targetAmount: 11100 }
+    ]
+  },
+  {
+    id: 2,
+    managerId: 100,
+    agentId: 2,
+    clusterId: 1,
+    period: "2026-10",
+    targetAmount: 20000,
+    itemTargets: [
+      { itemId: 1, itemName: "Onio Medium", targetQty: 200, price: 53.0, targetAmount: 10600 },
+      { itemId: 2, itemName: "Onion Big", targetQty: 150, price: 55.5, targetAmount: 8325 }
+    ]
+  }
+];
+
+export const submittedOrders = [
+  {
+    id: "S101-24018",
+    orderId: "S101-24018",
+    shopId: "S101",
+    customerId: 101,
+    customer: "Sunrise Fresh Produce",
+    shopCategory: "Retail",
+    spersonid: 1,
+    agentName: "Field Sales Agent 1",
+    clusterId: 1,
+    date: "2026-10-24",
+    createdAt: "2026-10-24T09:30:00.000Z",
+    status: "In progress",
+    itemsCount: 2,
+    total: 4280,
+    orderList: [
+      { itemid: 1, itemName: "Onio Medium", qty: 40, actprice: 53.0, custprice: 53.0 },
+      { itemid: 2, itemName: "Onion Big", qty: 30, actprice: 55.5, custprice: 55.5 }
+    ]
+  },
+  {
+    id: "S103-24017",
+    orderId: "S103-24017",
+    shopId: "S103",
+    customerId: 103,
+    customer: "Sri Krishna Bakery & Cafe",
+    shopCategory: "HoReCa",
+    spersonid: 2,
+    agentName: "Field Sales Agent 2",
+    clusterId: 1,
+    date: "2026-10-23",
+    createdAt: "2026-10-23T11:15:00.000Z",
+    status: "Delivered",
+    itemsCount: 2,
+    total: 3150,
+    orderList: [
+      { itemid: 1, itemName: "Onio Medium", qty: 30, actprice: 53.0, custprice: 53.0 },
+      { itemid: 2, itemName: "Onion Big", qty: 20, actprice: 55.5, custprice: 55.5 }
+    ]
+  }
+];

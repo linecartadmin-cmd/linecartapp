@@ -1,6 +1,6 @@
 # LineCart 2.0 — Web, Laptop & Mobile Operations Suite
 
-LineCart 2.0 is a field sales force automation, store onboarding, wholesale commodity order booking, and delivery fulfillment platform. Re-engineered from the decompiled `linecart.apk` (`com.dalavai.linecart`), this application provides multi-tier role-based access control supporting **Administrators**, **Sales Managers**, **Field Sales Agents**, and **Delivery Agents**.
+LineCart 2.0 is a field sales force automation, store onboarding, wholesale commodity order booking, and delivery fulfillment platform. Re-engineered from the legacy `linecart.apk` (`com.dalavai.linecart`), this application provides multi-tier role-based access control supporting **Administrators**, **Sales Managers**, **Field Sales Agents**, and **Delivery Agents**.
 
 ---
 
@@ -8,39 +8,40 @@ LineCart 2.0 is a field sales force automation, store onboarding, wholesale comm
 
 ### 1. User Manual
 - 📝 **[Editable Markdown](docs/USER_MANUAL.md)** | 📄 **[Download PDF](docs/pdf/LineCart_User_Manual.pdf)**
-Practical, step-by-step operating instructions for all four user roles (Admin, Sales Manager, Field Sales Agent, and Delivery Agent), credential policies, mobile previews, accessible navigation, and operational troubleshooting.
+Practical, step-by-step operating instructions for all four user roles (Admin, Sales Manager, Field Sales Agent, and Delivery Agent), 10-digit Indian mobile authentication rules, mobile previews, accessible navigation, and operational troubleshooting.
 
 ### 2. Architecture & Workflow Guide
 - 📝 **[Editable Markdown](docs/ARCHITECTURE_AND_WORKFLOW_GUIDE.md)** | 📄 **[Download PDF](docs/pdf/LineCart_Architecture_and_Workflow_Guide.pdf)**
-Comprehensive technical architecture detailing frontend/backend design, request lifecycles, token-based session security, Leaflet map engine with dual-tile resilience, OSRM road routing, and complete 48+ route API directory.
+Comprehensive technical architecture detailing frontend/backend design, SQL schema & transactions, Bearer token session security, Leaflet map engine with dual-tile resilience, OSRM road routing, and complete REST API directory.
 
 ### 3. Libraries & Technical Reference Guide
 - 📝 **[Editable Markdown](docs/LIBRARIES_AND_TECHNICAL_GUIDE.md)** | 📄 **[Download PDF](docs/pdf/LineCart_Libraries_and_Technical_Guide.pdf)**
-Complete catalog of installed runtime and development dependencies, external web service providers (OpenStreetMap, CartoDB, OSRM), in-memory persistence boundaries, and production readiness checklist.
+Complete catalog of installed runtime and development dependencies (`pg`, `express`, `multer`, `react`, `leaflet`), external web service providers (OpenStreetMap, CartoDB, OSRM), legacy APK compatibility notes, and staging/pilot deployment guide.
 
 ---
 
 ## ⚡ Quick Start & Prerequisites
 
 ### Prerequisites
-- **Node.js**: v18.0.0 or higher (v20+ recommended).
-- **Package Manager**: `npm` (bundled with Node.js).
-- **Operating System**: Windows, macOS, or Linux.
-- **Modern Web Browser**: Chrome, Edge, Firefox, or Safari.
+- **Node.js**: v20.0.0 or higher (v22/v24 LTS recommended).
+- **Database**: External PostgreSQL (`DATABASE_URL=postgresql://...`) for multi-instance staging/production, or zero-config durable WAL SQL database (`server/data/linecart.pg.db`) for single-node local/pilot deployments.
 
 ---
 
-### Installation & Local Setup
+### Installation, Migration & Local Setup
 
-1. **Clone or Navigate to the Repository**:
+1. **Configure Environment Variables**:
+   Copy `.env.example` to `.env` and set `INITIAL_ADMIN_PHONE` (a valid 10-digit Indian mobile number starting with 6–9) and a strong `INITIAL_ADMIN_PASSWORD`:
    ```bash
    cd linecart-suite
+   cp .env.example .env
    ```
 
-2. **Install Server Dependencies**:
+2. **Install Server Dependencies & Run Repeatable Migrations**:
    ```bash
    cd server
    npm install
+   npm run migrate
    ```
 
 3. **Install Client Dependencies & Build Frontend**:
@@ -53,7 +54,7 @@ Complete catalog of installed runtime and development dependencies, external web
 4. **Start the Application Server**:
    ```bash
    cd ../server
-   node index.js
+   npm start
    ```
 
 5. **Access in Browser**:
@@ -61,50 +62,52 @@ Complete catalog of installed runtime and development dependencies, external web
 
 ---
 
-## 🔑 Default Credentials & Role Landing Pages
+## 🔐 Authentication, Account Security & Role Landing Pages
 
-> [!IMPORTANT]
-> The dev username `admin` is enabled **only** when `NODE_ENV=development`. In production mode (`NODE_ENV=production`), development shortcuts are rejected by server authentication.
+- **Strict 10-Digit Indian Mobile Login**: Sign-in accepts **only** a registered 10-digit Indian mobile number beginning with `6`, `7`, `8`, or `9` (`/^[6-9]\d{9}$/`) plus the account password in the `POST /login` JSON request body. Usernames, country codes (`+91`), spaces, formatted numbers, and credentials in URL query parameters are strictly rejected (`400 Bad Request`).
+- **First Administrator Setup**: Provisioned via `INITIAL_ADMIN_PHONE` and `INITIAL_ADMIN_PASSWORD` in `.env`, or via the one-time setup screen (`POST /api/system/setup-admin`) when no active Administrator has a configured password hash. Known demo/default passwords are rejected.
+- **Rate Limiting & Session Revocation**: Failed sign-in attempts are rate-limited (`429 Too Many Requests` after 5 failed attempts within 15 minutes). Sessions are stored in the `sessions` SQL table (`SHA-256` token hash, 12-hour TTL) and immediately revoked on logout, deactivation, deletion, or role/password change.
 
-| Role | Login Identifier | Password | Default Landing Page | Primary Responsibilities |
-| :--- | :--- | :--- | :--- | :--- |
-| **Administrator** | `admin` *(or phone)* | `admin123` | `/#admin-dashboard` | Full system control, user provisioning, role permissions, manager-agent assignments, target quotas, audit trail. |
-| **Sales Manager** | `9876500001` | `password123` | `/#manager-reports` | Team performance tracking, target vs. achieved volume gap analysis, team orders inspection, cluster store coverage. |
-| **Field Sales Agent** | `9876543210` | `password123` | `/#overview` | Beat routes, wholesale commodity order booking (Eggs, Onions, Potatoes, etc.), store onboarding with GPS & photo capture. |
-| **Delivery Agent** | `9876500050` | `1234` | `/#delivery` | Mobile route map, road-distance sequencing, status progression (Picked Up / Delivered), issue reporting, bilingual audio assistance. |
-
----
-
-## 🏗️ Architecture Summary
-
-- **Frontend**: Single-Page Application (SPA) built with React 18, Vite 6, Leaflet 1.9, Lucide Icons, and responsive design tokens. Includes laptop and mobile-preview view modes with accessible icon-only Back navigation.
-- **Backend**: Node.js & Express REST API running on port 3001. Handles Bearer token authentication, RBAC authorization middleware, route scoping, target calculations, and delivery management.
-- **Persistence Model**:
-  - **Administrative Data**: Stored persistently on disk in `server/admin_config.json` (users, hashed passwords, manager assignments, targets, role permissions, audit logs, settings).
-  - **Transactional Data**: Orders and newly registered retail stores reside in server RAM (resetting to baseline on server restart). For production deployments, a persistent database (PostgreSQL/MongoDB) is required.
-- **Security**: Cryptographic password hashing using Node.js native `crypto.scryptSync` with 16-byte random salts. Mandatory password rotation on initial login.
+| Role | Login Identifier Format | Default Landing Page | Primary Responsibilities |
+| :--- | :--- | :--- | :--- |
+| **Administrator** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#admin-dashboard` | Full system governance, user provisioning, role permissions, manager-agent assignments, target quotas, audit trail. |
+| **Sales Manager** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#manager-reports` | Team performance tracking, target vs. achieved volume gap analysis, team orders inspection, cluster store coverage. |
+| **Field Sales Agent** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#overview` | Beat routes, wholesale commodity order booking, store onboarding with GPS & validated storefront photo capture. |
+| **Delivery Agent** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#delivery` | Mobile route map, road-distance sequencing, status progression (Picked Up / Delivered), issue reporting, bilingual audio assistance. |
 
 ---
 
-## 🛠️ Build Options
+## 🗄️ Database Migrations, Backups & Rollback
 
-### Android APK (Mobile) via Capacitor
-The React frontend can be packaged into an Android APK using Capacitor:
-```powershell
-cd client
-npm install @capacitor/core @capacitor/cli @capacitor/android
-npx cap init "LineCart" "com.dalavai.linecart"
-npx cap add android
-npm run build
-npx cap sync
-npx cap open android
+All business and administrative entities (`users`, `shops`, `orders`, `order_items`, `manager_assignments`, `sales_targets`, `role_permissions`, `audit_logs`, `app_settings`, `sessions`, `login_attempts`) are stored in the SQL database (`server/migrations/001_initial_schema.sql`).
+
+```bash
+# Run repeatable schema & seed migrations (preserves existing IDs and data)
+npm --prefix server run migrate
+
+# Create a full point-in-time JSON database snapshot in server/backups/
+npm --prefix server run db:backup
+
+# Restore / rollback the database transactionally from a snapshot file
+node server/migrate.js --restore server/backups/<snapshot-file>.json
 ```
 
-### Windows Desktop (`.exe`) via Electron
+---
+
+## 📱 Legacy Decompiled APK Compatibility & Capacitor Android Build
+
+### Breaking Changes vs. Legacy `linecart.apk` (`com.dalavai.linecart`)
+The original decompiled Android APK (`http://freshcubes.in/admin_panel/public/api/linecart/`) is **not directly compatible** without rebuilding from the updated client because:
+1. The legacy APK sent `phone` and `password` in URL query parameters (`@POST("login") @Query("phone") @Query("password")`), which the hardened backend now rejects (`400 Bad Request`) to prevent credential exposure in URLs and logs.
+2. The legacy APK did not attach `Authorization: Bearer <token>` headers on subsequent requests (`/gethomereport`, `/clusterinfo`, `/getitemsorder`, `/addcustomer`, `/createorder`), which now require authenticated session tokens (`401 Unauthorized`).
+
+### Building the Hardened Android APK via Capacitor
+Configuration templates are provided in `client/capacitor.config.json` and `client/android-config/` (`AndroidManifest.xml` with `usesCleartextTraffic="false"` and `network_security_config.xml`):
 ```powershell
 cd client
-npm install --save-dev electron electron-builder
-npx electron-builder --win
+$env:VITE_API_BASE_URL="https://staging.linecart.example.com"
+npm run build
+npx cap sync android
 ```
 
 ---
@@ -114,19 +117,16 @@ npx electron-builder --win
 ```
 linecart-suite/
 ├── client/                     # React 18 + Vite Frontend Application
+│   ├── android-config/         # Hardened AndroidManifest.xml & network_security_config.xml
+│   ├── capacitor.config.json   # Capacitor Android HTTPS configuration
 │   ├── dist/                   # Production compiled assets served by Express
-│   ├── src/                    # UI Components, Screens, State Management, and CSS
-│   ├── package.json            # Frontend dependency manifest
-│   └── vite.config.js          # Vite build configuration
-├── server/                     # Node.js + Express Backend API
-│   ├── index.js                # Core API server, auth middleware, and route handlers
-│   ├── admin_config.json       # Persistent administrative configuration and audit logs
-│   ├── data.js                 # Baseline mock shops, catalog, and cluster data
-│   └── package.json            # Server dependency manifest
-├── docs/                       # Project Documentation
-│   ├── USER_GUIDE.md           # Role-based User Manual & Operational Troubleshooting
-│   ├── ARCHITECTURE.md         # Comprehensive Technical Architecture & API Directory
-│   ├── LIBRARIES_AND_TOOLS.md  # Installed libraries & external web services reference
-│   └── KNOWN_LIMITATIONS.md    # In-memory boundaries & production deployment checklist
-└── README.md                   # Project overview & getting started guide
+│   └── src/                    # UI Components, Screens, API client, and CSS
+├── server/                     # Node.js + Express Backend API & SQL Persistence
+│   ├── migrations/             # SQL DDL schema migrations (001_initial_schema.sql)
+│   ├── uploads/shops/          # Durable, magic-byte-validated shop photos (auth-gated)
+│   ├── db.js                   # PostgreSQL (pg.Pool) & embedded WAL SQL adapter
+│   ├── migrate.js              # Repeatable migration, phone audit, backup & restore CLI
+│   └── index.js                # Hardened API server, auth middleware, and route handlers
+├── docs/                       # Project Documentation & Generated PDFs
+└── .env.example                # Staging & production environment template
 ```

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Libraries & Technical Reference Guide — LineCart 2.0</title>
+  <style>
+
+@page {
+  size: A4;
+  margin: 16mm 14mm 16mm 14mm;
+  @bottom-right {
+    content: "Page " counter(page);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #64748b;
+  }
+  @bottom-left {
+    content: "LineCart 2.0 Enterprise Suite";
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #94a3b8;
+  }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #1e293b;
+  background: #ffffff;
+  line-height: 1.5;
+  font-size: 9.5pt;
+  margin: 0;
+  padding: 0;
+}
+
+.cover-header {
+  border-bottom: 3px solid #2563eb;
+  padding-bottom: 14px;
+  margin-bottom: 20px;
+}
+
+.cover-badge {
+  display: inline-block;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 8pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  border: 1px solid #bfdbfe;
+  margin-bottom: 8px;
+}
+
+h1 {
+  font-size: 20pt;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 6px 0;
+  line-height: 1.2;
+}
+
+.doc-subtitle {
+  font-size: 10.5pt;
+  color: #475569;
+  margin: 0 0 10px 0;
+}
+
+.doc-meta {
+  font-size: 8pt;
+  color: #64748b;
+  display: flex;
+  gap: 16px;
+}
+
+h2 {
+  font-size: 13pt;
+  font-weight: 700;
+  color: #0f172a;
+  border-bottom: 1.5px solid #e2e8f0;
+  padding-bottom: 4px;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  break-after: avoid;
+}
+
+h3 {
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: #1e293b;
+  margin-top: 14px;
+  margin-bottom: 6px;
+  break-after: avoid;
+}
+
+p {
+  margin: 0 0 8px 0;
+  color: #334155;
+}
+
+ul, ol {
+  margin: 0 0 10px 0;
+  padding-left: 20px;
+  color: #334155;
+}
+
+li {
+  margin-bottom: 3px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 8.5pt;
+  break-inside: avoid;
+}
+
+th {
+  background: #f1f5f9;
+  color: #0f172a;
+  font-weight: 700;
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+}
+
+td {
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  vertical-align: top;
+}
+
+tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.callout {
+  border-left: 4px solid;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 12px 0;
+  font-size: 8.5pt;
+  break-inside: avoid;
+}
+
+.callout-important {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1e40af;
+}
+
+.callout-warning {
+  background: #fffbeb;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.callout-title {
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8pt;
+  background: #f1f5f9;
+  color: #0f172a;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+}
+
+pre {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 7.8pt;
+  line-height: 1.4;
+  overflow-x: hidden;
+  margin: 10px 0;
+  break-inside: avoid;
+}
+
+pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border: none;
+}
+
+.diagram-container {
+  margin: 14px 0;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  break-inside: avoid;
+  text-align: center;
+}
+
+.diagram-title {
+  font-size: 8.5pt;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+}
+
+.diagram-caption {
+  font-size: 7.8pt;
+  color: #64748b;
+  margin-top: 6px;
+  font-style: italic;
+  text-align: center;
+}
+
+.toc-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  break-inside: avoid;
+}
+
+.toc-card h2 {
+  font-size: 10pt;
+  border-bottom: none;
+  margin-top: 0;
+  margin-bottom: 6px;
+  padding-bottom: 0;
+}
+
+.toc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 8.2pt;
+}
+
+.toc-item {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.page-break {
+  page-break-before: always;
+}
+
+  </style>
+</head>
+<body>
+  <div class="cover-header">
+    <div class="cover-badge">Technical Reference</div>
+    <h1>Libraries & Technical Reference Guide</h1>
+    <div class="doc-subtitle">Installed packages, external services, architectural limitations, and production checklist.</div>
+    <div class="doc-meta">
+      <span><b>Project:</b> LineCart 2.0 Enterprise</span>
+      <span><b>Version:</b> 2.0.4 (October 2026)</span>
+      <span><b>Environment:</b> Production / Staging / Local</span>
+    </div>
+  </div>
+
+  <div class="toc-card">
+    <h2>Table of Contents</h2>
+    <div class="toc-grid">
+      <a class="toc-item" href="#manifests">1. Package Manifests & Dependency Inventory</a><a class="toc-item" href="#ecosystem">2. Libraries & External Services Ecosystem</a><a class="toc-item" href="#installed">3. Installed Libraries & Usage in Code</a><a class="toc-item" href="#external">4. External Web Services Reference</a><a class="toc-item" href="#limitations">5. Known Architectural Limitations</a><a class="toc-item" href="#production">6. Production Deployment Checklist</a>
+    </div>
+  </div>
+
+  
+  <h2 id="manifests">1. Package Manifests &amp; Dependency Inventory</h2>
+  <p>All dependencies and exact version specifiers are verified directly against <code>client/package.json</code> and <code>server/package.json</code>:</p>
+  
+  <table>
+    <tr><th>Tier</th><th>Package Name</th><th>Version</th><th>Category</th><th>Primary Purpose in LineCart 2.0</th></tr>
+    <tr><td>Frontend</td><td><code>react</code></td><td><code>^18.3.1</code></td><td>Runtime</td><td>Core declarative component tree and reactive hooks state management.</td></tr>
+    <tr><td>Frontend</td><td><code>react-dom</code></td><td><code>^18.3.1</code></td><td>Runtime</td><td>DOM rendering engine for modern desktop and mobile browsers.</td></tr>
+    <tr><td>Frontend</td><td><code>leaflet</code></td><td><code>^1.9.4</code></td><td>Runtime</td><td>Interactive map rendering, custom HTML divIcon markers, and popups.</td></tr>
+    <tr><td>Frontend</td><td><code>lucide-react</code></td><td><code>^0.468.0</code></td><td>Runtime</td><td>Accessible SVG icon set for navigation, actions, and status indicators.</td></tr>
+    <tr><td>Frontend</td><td><code>vite</code></td><td><code>^6.0.3</code></td><td>DevTool</td><td>Lightning-fast development server with HMR and production Rollup bundler.</td></tr>
+    <tr><td>Frontend</td><td><code>@vitejs/plugin-react</code></td><td><code>^4.3.4</code></td><td>DevTool</td><td>React plugin providing Fast Refresh and JSX code transformation.</td></tr>
+    <tr><td>Frontend</td><td><code>tailwindcss</code></td><td><code>^3.4.16</code></td><td>DevTool</td><td>Utility-first CSS styling system for responsive layouts and color tokens.</td></tr>
+    <tr><td>Frontend</td><td><code>postcss</code></td><td><code>^8.4.49</code></td><td>DevTool</td><td>CSS transformation tool required by TailwindCSS.</td></tr>
+    <tr><td>Frontend</td><td><code>autoprefixer</code></td><td><code>^10.4.20</code></td><td>DevTool</td><td>PostCSS plugin automatically adding vendor prefixes to CSS rules.</td></tr>
+    <tr><td>Backend</td><td><code>express</code></td><td><code>^4.21.1</code></td><td>Runtime</td><td>Fast, minimalist HTTP server and REST API framework for Node.js.</td></tr>
+    <tr><td>Backend</td><td><code>pg</code></td><td><code>^8.23.1</code></td><td>Runtime</td><td>PostgreSQL database client &amp; connection pool for durable SQL persistence.</td></tr>
+    <tr><td>Backend</td><td><code>cors</code></td><td><code>^2.8.5</code></td><td>Runtime</td><td>Cross-Origin Resource Sharing middleware paired with origin allow-listing.</td></tr>
+    <tr><td>Backend</td><td><code>multer</code></td><td><code>^1.4.5-lts.1</code></td><td>Runtime</td><td>Multipart/form-data handler for validated storefront photo uploads.</td></tr>
+  </table>
+
+  <h2 id="ecosystem" class="page-break">2. Libraries &amp; External Services Ecosystem</h2>
+  <div class="diagram-container">
+    <div class="diagram-title">Diagram 6: Dependency &amp; External Services Architecture</div>
+    
+<svg viewBox="0 0 720 180" width="100%" height="180" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <filter id="shadow6" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.08" />
+    </filter>
+  </defs>
+
+  <!-- Client Libraries -->
+  <g transform="translate(10, 10)">
+    <rect width="165" height="155" rx="6" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" filter="url(#shadow6)"/>
+    <rect width="165" height="24" rx="6" fill="#1d4ed8"/>
+    <rect y="16" width="165" height="8" fill="#1d4ed8"/>
+    <text x="82" y="16" font-size="8.5" font-weight="700" fill="#ffffff" text-anchor="middle">CLIENT RUNTIME</text>
+
+    <text x="10" y="40" font-size="7.8" font-weight="700" fill="#1e40af">react: ^18.3.1</text>
+    <text x="10" y="52" font-size="7" fill="#475569">Declarative component tree</text>
+
+    <text x="10" y="68" font-size="7.8" font-weight="700" fill="#1e40af">react-dom: ^18.3.1</text>
+    <text x="10" y="80" font-size="7" fill="#475569">DOM renderer for browser</text>
+
+    <text x="10" y="96" font-size="7.8" font-weight="700" fill="#1e40af">leaflet: ^1.9.4</text>
+    <text x="10" y="108" font-size="7" fill="#475569">Interactive maps &amp; fan-out</text>
+
+    <text x="10" y="124" font-size="7.8" font-weight="700" fill="#1e40af">lucide-react: ^0.468.0</text>
+    <text x="10" y="136" font-size="7" fill="#475569">Accessible SVG UI icons</text>
+  </g>
+
+  <!-- Dev Tools -->
+  <g transform="translate(185, 10)">
+    <rect width="165" height="155" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" filter="url(#shadow6)"/>
+    <rect width="165" height="24" rx="6" fill="#475569"/>
+    <rect y="16" width="165" height="8" fill="#475569"/>
+    <text x="82" y="16" font-size="8.5" font-weight="700" fill="#ffffff" text-anchor="middle">BUILD &amp; STYLING TOOLS</text>
+
+    <text x="10" y="40" font-size="7.8" font-weight="700" fill="#0f172a">vite: ^6.0.3</text>
+    <text x="10" y="52" font-size="7" fill="#475569">HMR dev server &amp; rollup build</text>
+
+    <text x="10" y="68" font-size="7.8" font-weight="700" fill="#0f172a">@vitejs/plugin-react: ^4.3.4</text>
+    <text x="10" y="80" font-size="7" fill="#475569">Fast Refresh JSX compiler</text>
+
+    <text x="10" y="96" font-size="7.8" font-weight="700" fill="#0f172a">tailwindcss: ^3.4.16</text>
+    <text x="10" y="108" font-size="7" fill="#475569">Responsive styling system</text>
+
+    <text x="10" y="124" font-size="7.8" font-weight="700" fill="#0f172a">postcss &amp; autoprefixer</text>
+    <text x="10" y="136" font-size="7" fill="#475569">Vendor-prefixing pipeline</text>
+  </g>
+
+  <!-- Server Libraries -->
+  <g transform="translate(360, 10)">
+    <rect width="165" height="155" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#shadow6)"/>
+    <rect width="165" height="24" rx="6" fill="#15803d"/>
+    <rect y="16" width="165" height="8" fill="#15803d"/>
+    <text x="82" y="16" font-size="8.5" font-weight="700" fill="#ffffff" text-anchor="middle">SERVER RUNTIME</text>
+
+    <text x="10" y="40" font-size="7.8" font-weight="700" fill="#166534">express: ^4.21.1</text>
+    <text x="10" y="52" font-size="7" fill="#475569">REST API &amp; static SPA host</text>
+
+    <text x="10" y="68" font-size="7.8" font-weight="700" fill="#166534">cors: ^2.8.5</text>
+    <text x="10" y="80" font-size="7" fill="#475569">Cross-origin request support</text>
+
+    <text x="10" y="96" font-size="7.8" font-weight="700" fill="#166534">multer: ^1.4.5-lts.1</text>
+    <text x="10" y="108" font-size="7" fill="#475569">Multipart photo file uploads</text>
+
+    <text x="10" y="124" font-size="7.8" font-weight="700" fill="#166534">Node.js Built-In: crypto</text>
+    <text x="10" y="136" font-size="7" fill="#475569">scryptSync password hashing</text>
+  </g>
+
+  <!-- External Web Services -->
+  <g transform="translate(535, 10)">
+    <rect width="175" height="155" rx="6" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5" filter="url(#shadow6)"/>
+    <rect width="175" height="24" rx="6" fill="#c2410c"/>
+    <rect y="16" width="175" height="8" fill="#c2410c"/>
+    <text x="87" y="16" font-size="8.5" font-weight="700" fill="#ffffff" text-anchor="middle">EXTERNAL WEB SERVICES</text>
+
+    <text x="10" y="40" font-size="7.8" font-weight="700" fill="#9a3412">OpenStreetMap Tiles</text>
+    <text x="10" y="52" font-size="7" fill="#475569">tile.openstreetmap.org</text>
+
+    <text x="10" y="68" font-size="7.8" font-weight="700" fill="#9a3412">CartoDB Voyager Tiles</text>
+    <text x="10" y="80" font-size="7" fill="#475569">basemaps.cartocdn.com (Fallback)</text>
+
+    <text x="10" y="96" font-size="7.8" font-weight="700" fill="#9a3412">OSRM Public Routing</text>
+    <text x="10" y="108" font-size="7" fill="#475569">router.project-osrm.org</text>
+
+    <text x="10" y="124" font-size="7.8" font-weight="700" fill="#9a3412">Google Maps Search</text>
+    <text x="10" y="136" font-size="7" fill="#475569">External navigation redirection</text>
+  </g>
+</svg>
+
+    <div class="diagram-caption">Figure 6.1: Separation between installed npm packages and external network-called web service providers.</div>
+  </div>
+
+  <h2 id="installed">3. Installed Libraries &amp; Usage in Code</h2>
+  <ul>
+    <li><b>React (<code>^18.3.1</code>) &amp; React-DOM:</b> Powers the UI across 17 component screens. Manages state via <code>useState</code>, <code>useEffect</code>, <code>useMemo</code>, and <code>useRef</code>.</li>
+    <li><b>Leaflet (<code>^1.9.4</code>):</b> Powers <code>ShopMapScreen.jsx</code> and <code>DeliveryRouteScreen.jsx</code>. Renders map tiles, polyline routes, custom circular pins, and radial spiderfy expansions.</li>
+    <li><b>Lucide React (<code>^0.468.0</code>):</b> Provides accessible icons including <code>&lt;ArrowLeft /&gt;</code> for the universal back button, <code>&lt;Truck /&gt;</code>, <code>&lt;ShoppingCart /&gt;</code>, and <code>&lt;ShieldCheck /&gt;</code>.</li>
+    <li><b>Express (<code>^4.21.1</code>):</b> Hosts 48+ REST API endpoints on port 3001 and serves compiled static assets from <code>client/dist/</code>.</li>
+    <li><b>Multer (<code>^1.4.5-lts.1</code>):</b> Handles store photo uploads on <code>POST /addcustomer</code>, saving files to <code>server/uploads/</code>.</li>
+    <li><b>Node.js Native <code>crypto</code>:</b> Computes secure key derivations using <code>crypto.scryptSync(password, salt, 64)</code> with 16-byte random salts.</li>
+  </ul>
+
+  <h2 id="external" class="page-break">4. External Web Services Reference</h2>
+  <p>These services are called over the network and are <b>not</b> bundled npm packages:</p>
+  <ul>
+    <li><b>OpenStreetMap Tile Server:</b> <code>https://tile.openstreetmap.org/{z}/{x}/{y}.png</code> — Primary raster tile provider for interactive maps.</li>
+    <li><b>CartoDB Voyager Tile Server:</b> <code>https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png</code> — Automatic zero-downtime fallback layer activated if OSM fails.</li>
+    <li><b>OSRM Public Routing API:</b> <code>https://router.project-osrm.org/route/v1/driving/{coords}</code> — Public road routing engine for sequencing delivery stops. Includes an internal Nearest-Neighbor heuristic fallback.</li>
+    <li><b>Google Maps External Link:</b> <code>https://www.google.com/maps/search/?api=1&amp;query={query}</code> — External redirect when drivers tap <b>"Open Maps"</b> for turn-by-turn navigation.</li>
+  </ul>
+
+  <h2 id="limitations">5. Known Architectural Limitations &amp; Legacy APK Compatibility</h2>
+  <ul>
+    <li><b>Relational SQL Persistence:</b> All users, sessions, shops, orders, order items, targets, assignments, permissions, and audit logs are persisted in the relational SQL database (<code>001_initial_schema.sql</code>) and survive server restarts.</li>
+    <li><b>Legacy Decompiled APK Break:</b> The original decompiled <code>linecart.apk</code> sent credentials in URL query strings (<code>@Query("phone")</code> / <code>@Query("password")</code>) and lacked Bearer session tokens. A fresh APK must be built from the updated client via Capacitor (<code>client/capacitor.config.json</code>).</li>
+    <li><b>Payment Gateway &amp; SMS OTP:</b> Order checkout records payment terms (Credit, Cash) without live banking APIs or SMS OTP dispatch.</li>
+    <li><b>Public OSRM Rate Limits:</b> The public demo server is subject to throttling; production environments should host a local OSRM Docker instance.</li>
+  </ul>
+
+  <h2 id="production" class="page-break">6. Production Deployment Checklist</h2>
+  <p>Complete these steps before deploying to production:</p>
+  <ul>
+    <li>[ ] <b>Set <code>NODE_ENV=production</code>:</b> Strictly disables the development shortcut login (<code>admin</code> / <code>admin123</code>).</li>
+    <li>[ ] <b>Configure HTTPS / TLS Termination:</b> Terminate TLS via Nginx, Caddy, or AWS ALB.</li>
+    <li>[ ] <b>Migrate to Relational Database:</b> Connect PostgreSQL or MySQL with ACID transactions for orders and customer tables.</li>
+    <li>[ ] <b>Clustered Session Store:</b> Migrate the in-memory <code>sessions</code> Map to Redis.</li>
+    <li>[ ] <b>Restrict CORS:</b> Replace open CORS with an explicit origin domain whitelist.</li>
+    <li>[ ] <b>Cloud Storage for Uploads:</b> Move storefront photo uploads from local disk to AWS S3 or Google Cloud Storage.</li>
+    <li>[ ] <b>Rotate Default Passwords:</b> Change all default administrator, manager, and driver passwords upon deployment.</li>
+  </ul>
+
+</body>
+</html>

@@ -85,10 +85,14 @@ export default function RegisterShop({ defaultClusterId, user, onBack, onRegiste
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
         <button
+          type="button"
           onClick={onBack}
-          className="p-2 text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition"
+          title="Go back"
+          aria-label="Go back"
+          className="w-10 h-10 min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+          <span className="sr-only">Go back</span>
         </button>
         <div>
           <h2 className="text-xl font-bold text-slate-800">Register New Retail Store</h2>

@@ -1,176 +1,133 @@
-# LineCart 2.0 — Technical Architecture & System Design Documentation
+# LineCart 2.0 — Architecture & Workflow Technical Guide
 
-This document provides a comprehensive technical reference for the **LineCart** web platform (`linecart-suite`), re-engineered from the original Android APK (`com.dalavai.linecart`, version 1.0) and extended into a multi-role enterprise suite supporting **Administrators**, **Sales Managers**, **Field Sales Agents**, and **Delivery Agents**.
+A comprehensive technical reference detailing the software architecture, authentication lifecycle, role-based authorization guards, API specifications, mapping and routing subsystems, and persistence models of the LineCart 2.0 enterprise platform.
 
 ---
 
-## 1. System Overview
+## Table of Contents
 
-LineCart is a wholesale agricultural route-to-market platform connecting central logistics, regional sales managers, field sales agents, retail merchants, and delivery drivers.
+1. [Architectural Overview](#1-architectural-overview)
+   - [High-Level System Design](#high-level-system-design)
+   - [Request & Response Lifecycle](#request--response-lifecycle)
+2. [Frontend Architecture](#2-frontend-architecture)
+   - [Single-Page Application Structure](#single-page-application-structure)
+   - [State Management & Session Sync](#state-management--session-sync)
+   - [Responsive Layout & Device Previews](#responsive-layout--device-previews)
+   - [Accessible Navigation Stack & Loop Prevention](#accessible-navigation-stack--loop-prevention)
+3. [Backend Architecture](#3-backend-architecture)
+   - [Express REST API & Static Hosting](#express-rest-api--static-hosting)
+   - [Authentication & Session Engine](#authentication--session-engine)
+   - [Cryptographic Password Security](#cryptographic-password-security)
+   - [Role-Based Access Control Middleware](#role-based-access-control-middleware)
+4. [Map & Routing Subsystems](#4-map--routing-subsystems)
+   - [Resilient Dual-Tile Map Layer](#resilient-dual-tile-map-layer)
+   - [Coordinate Deduplication & Radial Fan-Out](#coordinate-deduplication--radial-fan-out)
+   - [OSRM Road Routing Engine & Offline Fallback](#osrm-road-routing-engine--offline-fallback)
+5. [Complete REST API Directory](#5-complete-rest-api-directory)
+   - [Authentication & Identity Endpoints](#authentication--identity-endpoints)
+   - [Administrator Endpoints](#administrator-endpoints)
+   - [Sales Manager Endpoints](#sales-manager-endpoints)
+   - [Field Sales Agent Endpoints](#field-sales-agent-endpoints)
+   - [Delivery Agent Endpoints](#delivery-agent-endpoints)
+6. [Data Storage & Persistence Boundaries](#6-data-storage--persistence-boundaries)
+   - [Hybrid Storage Model](#hybrid-storage-model)
+   - [Server Restart Implications](#server-restart-implications)
+
+---
+
+## 1. Architectural Overview
+
+### High-Level System Design
+
+LineCart 2.0 separates concerns cleanly between a modern client single-page application and a secure Node.js Express backend API:
 
 ```
 +-------------------------------------------------------------------------------+
 |                                CLIENT LAYER                                    |
-|  React 18 Single Page Application (SPA) · Vite 6 · TailwindCSS · Leaflet Map  |
-|  - Multi-Role Shell (Admin, Sales Manager, Field Sales Agent, Delivery Agent) |
-|  - Laptop View & Mobile Preview Emulation (390x844px frame)                   |
-|  - Accessible Icon-Only Back Button with History Stack & Loop Prevention      |
-|  - Responsive 12-Column Layout (Laptop) vs. Stacked Layout (Mobile)          |
+|  React 18 SPA · Vite 6 · TailwindCSS · Leaflet Maps · Lucide Icons            |
+|  - Multi-Role Support: Admin, Sales Manager, Field Agent, Delivery Agent      |
+|  - Responsive Layout: 12-Column Grid (Laptop) vs. Stacked Frame (Mobile)      |
+|  - Resilient Maps: Dual-Tile OSM / CartoDB with Radial Pin Fan-Out            |
+|  - Road Routing: OSRM Public Routing with Offline Haversine Heuristic Fallback|
 +---------------------------------------+---------------------------------------+
                                         | HTTP / JSON (Port 3001)
-                                        | Headers: Authorization: Bearer <token> / X-User-Id
+                                        | Header: Authorization: Bearer <token>
 +---------------------------------------v---------------------------------------+
-|                                EXPRESS BACKEND                                |
-|  Node.js (v18+) · Express 4.21 · Multer 1.4 (Multipart) · Static SPA Server   |
+|                                BACKEND LAYER                                  |
+|  Node.js v18+ · Express 4.21 · Multer 1.4 · Static Production SPA Host        |
 +-------------------+-------------------+-------------------+-------------------+
                     |                   |                   |
       +-------------v----+     +--------v---------+    +----v-------------+
-      |  Security Guards |     | Business Engines |    | Map & Routing    |
-      | - requireAdmin   |     | - Role-Perms     |    | - Leaflet Tiles  |
-      | - managerAuth    |     | - Targets Engine |    |   OSM + CartoDB  |
-      | - deliveryAuth   |     | - Audit Trail    |    | - OSRM Routing   |
-      | - scrypt hashing |     | - Session Store  |    |   + NN Fallback  |
+      |  Security Guards |     | Business Logic   |    | Map & Routing    |
+      | - requireAdmin   |     | - Quotas & Target|    | - Leaflet Tiles  |
+      | - managerAuth    |     | - Audit Trail    |    |   OSM + CartoDB  |
+      | - deliveryAuth   |     | - Role-Perms     |    | - OSRM Routing   |
+      | - scrypt hashing |     | - Session Map    |    |   + NN Fallback  |
       +-------------+----+     +--------+---------+    +------------------+
                     |                   |
 +-------------------v-------------------v---------------------------------------+
 |                            DATA STORAGE LAYER                                 |
-| - In-Memory State: active sessions (`sessions`), orders (`submittedOrders`)   |
-| - Local JSON Config: `admin_config.json` (Users, Targets, Assignments, Audit)  |
-| - Static Seed Datasets: `data.js` (Baseline mock shops and catalog)           |
-| - Local Uploads: `uploads/` (Storefront verification photographs)             |
+| - Relational SQL Database (`001_initial_schema.sql` via `pg` / `node:sqlite`) |
+|   Tables: `users`, `shops`, `orders`, `order_items`, `manager_assignments`,   |
+|   `sales_targets`, `role_permissions`, `audit_logs`, `app_settings`,          |
+|   `sessions`, `login_attempts`, `clusters`, `items`, `survey_items`           |
+| - Authenticated Uploads: `server/uploads/shops/` (Magic-byte validated photos)|
 +-------------------------------------------------------------------------------+
 ```
 
-### Request Lifecycle
-1. **Client Request**: The browser SPA issues asynchronous `fetch()` calls to `http://localhost:3001`. Client requests carry the authenticated session token via the standard `Authorization: Bearer <token>` header (as well as `X-User-Id`).
-2. **Reverse Proxy / Path Normalization**: In `server/index.js`, requests prefixed with the legacy Android proxy URL (`http://freshcubes.in`) are stripped to uniform root-relative paths.
-3. **Authentication & Session Identification**:
-   - `getCaller(req)` reads the Bearer token from the `Authorization` header, looks up the active session in the server's `sessions` Map, and resolves the authenticated user object.
-   - If no token is provided, it falls back to `X-User-Id` or `userid` query parameter.
-   - The `/api/auth/me` endpoint enables the client to verify session validity and sync authoritative user profile and role details on application mount.
-4. **Authorization Middleware**:
-   - `requireAdmin`: Enforces `(caller.role).toLowerCase() === 'admin'`. Rejects unauthorized callers with `403 Forbidden`.
-   - `authorizeManagerAccess`: Verifies that a Sales Manager only receives data belonging to explicitly assigned sales agents (`managerAssignments[managerId]`). Admins bypass this check.
-   - `requireDeliveryAgent`: Verifies that the caller possesses the `delivery_agent` or `admin` role and enforces that delivery agents can only update orders assigned to their specific ID.
-   - `checkActionPermission`: Verifies that the caller's role possesses granular action permissions configured in `rolePermissions`.
-5. **Execution & Mutator Layer**: Route handlers update in-memory arrays (`submittedOrders`, `shops`) and persist configuration changes to disk via `savePersistentConfig()` (`admin_config.json`).
-6. **Audit Trail**: Mutating operations trigger `addAuditLog(req, action, targetType, targetId, details)`, writing timestamped records with the actor's ID and name to the audit queue.
+### Request & Response Lifecycle
+1. **Request Dispatch**: The React client issues asynchronous `fetch()` requests carrying the session token in the HTTP `Authorization: Bearer <token>` header.
+2. **Safe Request Logging & Reverse Proxy Normalization**: Legacy paths prefixed with `http://freshcubes.in` are normalized to root-relative routes, and query strings are stripped from request logs so credentials or tokens never appear in logs.
+3. **Authoritative Session Resolution**: `getCallerAsync(req)` extracts the Bearer token, hashes it with `SHA-256`, and verifies it against the `sessions` and `users` SQL tables (`revoked_at IS NULL`, `expires_at > now`, `active = 1`, `phone_valid = 1`). Forged caller IDs in headers (`X-User-Id`), query strings, or request bodies are never trusted.
+4. **Middleware Enforcement**:
+   - `requireAuth`: Returns `401 Unauthorized` when no valid session token is present.
+   - `requireAdmin`: Enforces `caller.role === 'Admin'` (`403 Forbidden` otherwise).
+   - `authorizeManagerAccess`: Enforces that Sales Managers only access data for their own `managerId` and assigned agents.
+   - `verifyFieldAgentScope`: Enforces that Field Sales Agents only read or submit records (`spersonId`, `createdby`) for their own account.
+   - `checkActionPermission`: Validates granular permission overrides configured in the `role_permissions` table.
+5. **Transactional Execution**: Mutations execute inside ACID SQL transactions (`db.withTransaction`), enforcing unique constraints (`users.phone`, `orders.idempotency_key`) and atomic order serial generation (`orders.serial_no`).
+6. **Audit Logging**: Operations write structured entries to the `audit_logs` SQL table.
 
 ---
 
-## 2. Directory & File Structure
+## 2. Frontend Architecture
 
-```
-linecart-suite/
-├── .env.example                 # Documented template for environment variables
-├── .gitignore                   # Excludes secrets, credentials, node_modules, data.js
-├── README.md                    # Primary project setup & quick-start guide
-│
-├── client/                      # Frontend React SPA
-│   ├── index.html               # SPA entry point
-│   ├── package.json             # Frontend dependencies (React 18, Leaflet, Lucide)
-│   ├── vite.config.js           # Vite configuration & dev server proxy
-│   ├── tailwind.config.js       # Tailwind CSS design system configuration
-│   ├── postcss.config.js        # PostCSS configuration (Autoprefixer, Tailwind)
-│   ├── dist/                    # Compiled production build artifacts (served by Express)
-│   └── src/
-│       ├── main.jsx             # React DOM root render
-│       ├── App.jsx              # Main shell: routing, topbar, history stack, previews
-│       ├── api.js               # Centralized REST API client (Bearer auth, reports, delivery)
-│       ├── routing.js           # OSRM road routing engine & Haversine nearest-neighbor heuristic
-│       ├── utils.js             # Formatting, Google Maps links, coordinate checks
-│       ├── reference-theme.css  # Design system tokens, mobile preview, .sr-only utility
-│       └── components/          # Reusable UI views & modals
-│           ├── AdminDashboardScreen.jsx        # Admin command center & KPI breakdown
-│           ├── AdminUsersScreen.jsx            # User provisioning, editing & deletion
-│           ├── AdminRolesPermissionsScreen.jsx # Role-permissions matrix manager
-│           ├── AdminTargetsScreen.jsx          # Revenue quotas and commodity targets manager
-│           ├── AdminAuditScreen.jsx            # Security audit trail filter & viewer
-│           ├── AdminSettingsScreen.jsx         # Organization branding & maintenance mode
-│           ├── TeamAssignmentsScreen.jsx       # Manager-to-agent mapping interface
-│           ├── ManagerReportsScreen.jsx        # Sales manager target vs achieved analytics
-│           ├── ManagerOrdersScreen.jsx         # Sales manager scoped orders ledger
-│           ├── ShopMapScreen.jsx               # Leaflet map with ordered/non-ordered pins & spiderfying
-│           ├── DeliveryRouteScreen.jsx         # Touch-friendly delivery workflow with Leaflet & speech
-│           ├── OrderEntryScreen.jsx            # Field agent order placement & calculation
-│           ├── OrderBooking.jsx                # Item catalog order booking screen
-│           ├── CustomersScreen.jsx             # Customer shop directory & onboarding form
-│           ├── RegisterShop.jsx                # Retail store registration with GPS capture
-│           ├── LoginScreen.jsx                 # Multi-role authentication & dev shortcuts
-│           ├── ChangePasswordModal.jsx         # Mandatory first-login password change modal
-│           └── ErrorBoundary.jsx               # React runtime error boundary
-│
-├── server/                      # Backend Express Application
-│   ├── index.js                 # Primary server: routing, auth, guards, audit, endpoints
-│   ├── package.json             # Backend dependencies (express, cors, multer)
-│   ├── data.loader.js           # Smart fallback data loader (data.js -> data.demo.js)
-│   ├── data.js                  # Production/real data file (GITIGNORED)
-│   ├── data.demo.js             # Sanitized synthetic dataset for repository sharing
-│   └── admin_config.json        # Local persistent configuration file (GITIGNORED)
-│
-├── docs/                        # Project Documentation
-│   ├── ARCHITECTURE.md          # This technical architecture specification
-│   ├── USER_GUIDE.md            # Role-by-role practical operations manual
-│   ├── LIBRARIES_AND_TOOLS.md   # Installed dependencies and external services reference
-│   └── KNOWN_LIMITATIONS.md     # In-memory boundaries and production deployment checklist
-│
-└── scratch/                     # Automated test suites
-    ├── test_navigation_and_previews.js   # Navigation, Back buttons, logout, previews
-    ├── test_route_map_fix.js             # Leaflet tiles and coordinate fan-out verification
-    └── test_delivery_agent_workflow.js   # Delivery status transitions and security guards
-```
+### Single-Page Application Structure
+- **Core Framework**: React 18 with Vite 6.
+- **Entry Point**: `client/src/main.jsx` renders `<App />` within a top-level `<ErrorBoundary />`.
+- **Component Inventory**:
+  - `AdminDashboardScreen.jsx`: Organization-wide KPI metrics and audit stream.
+  - `AdminUsersScreen.jsx`: User provisioning, role assignment, and deletion protection.
+  - `AdminTargetsScreen.jsx`: Revenue quotas and commodity targets configuration.
+  - `AdminRolesPermissionsScreen.jsx`: Dynamic action permissions grid.
+  - `AdminAuditScreen.jsx` & `AdminSettingsScreen.jsx`: System compliance and branding.
+  - `ManagerReportsScreen.jsx` & `ManagerOrdersScreen.jsx`: Scoped team analytics and orders.
+  - `ShopMapScreen.jsx`: Interactive cluster store map with spiderfy radial pin expansion.
+  - `DeliveryRouteScreen.jsx`: Mobile delivery workflow with road routing and voice prompts.
+  - `OrderEntryScreen.jsx` & `OrderBooking.jsx`: Wholesale commodity catalog ordering.
+  - `RegisterShop.jsx` & `CustomersScreen.jsx`: Store onboarding with GPS geolocation.
+
+### State Management & Session Sync
+The client avoids stale cached roles by validating session tokens on mount via `GET /api/auth/me`. The server returns the authoritative role and profile, ensuring that client permissions reflect server-side assignments immediately.
+
+### Responsive Layout & Device Previews
+- **Laptop View**: Full 12-column layout (`lg:grid-cols-12`) placing data panels, forms, and interactive maps side by side.
+- **Mobile Preview**: Emulates a physical smartphone frame (`390×844px`) with a mobile header, responsive single-column stacked cards, large touch targets (48px to 64px), and role-specific bottom tab navigation.
+
+### Accessible Navigation Stack & Loop Prevention
+- The universal Back button renders an icon-only left arrow (`←`) with `aria-label="Go back"` and hidden `.sr-only` text.
+- Sized to `38×38px` on desktop and expanded to `42×42px` on mobile viewports.
+- Uses an internal history stack. When the user navigates back to their role's home page, further Back taps remain safely on that home screen without looping or triggering logout.
 
 ---
 
-## 3. End-to-End User Workflows
+## 3. Backend Architecture
 
-```mermaid
-flowchart TD
-    Start([User Visits Website]) --> AuthCheck{Session Stored in localStorage?}
-    AuthCheck -- No --> LoginView[Render LoginScreen]
-    AuthCheck -- Yes --> VerifySession[GET /api/auth/me]
+### Express REST API & Static Hosting
+The Express application running on port `3001` serves both the JSON REST API and the production-compiled frontend assets from `client/dist/`.
 
-    LoginView --> Credentials[Enter Phone / Username & Password]
-    Credentials --> SubmitLogin[POST /login]
-
-    SubmitLogin --> CredValidation{Valid Credentials?}
-    CredValidation -- No --> LoginError[Show Error Toast]
-    CredValidation -- Yes --> PasswordCheck{mustChangePassword == true?}
-
-    PasswordCheck -- Yes --> ChangePwdModal[Display ChangePasswordModal]
-    ChangePwdModal --> SubmitPwdChange[POST /api/auth/change-password]
-    SubmitPwdChange --> UpdateStoredUser[Update localStorage: mustChangePassword = false]
-    UpdateStoredUser --> RoleCheck
-
-    PasswordCheck -- No --> RoleCheck{Inspect caller.role}
-    VerifySession --> RoleCheck
-
-    RoleCheck -- Admin --> AdminLanding[#admin-dashboard: Executive Command Center]
-    RoleCheck -- Sales Manager --> ManagerLanding[#manager-reports: Performance Analytics]
-    RoleCheck -- Field Sales Agent --> AgentLanding[#overview: Agent Route Overview]
-    RoleCheck -- Delivery Agent --> DeliveryLanding[#delivery: Delivery Route & Map]
-
-    AdminLanding --> AdminTasks[Users, Roles, Assignments, Targets, Audit, Settings]
-    ManagerLanding --> ManagerTasks[Team Orders, Reports, Quotas, Shop Map]
-    AgentLanding --> AgentTasks[Book Wholesale Orders, Onboard Stores, Beat Route]
-    DeliveryLanding --> DeliveryTasks[Road Route, Pick Up Produce, Deliver, Voice Assist]
-```
-
----
-
-## 4. Authentication, Authorization & Security
-
-### Cryptographic Password Hashing
-Passwords are never stored in plaintext. Passwords are encrypted using Node.js native `crypto.scryptSync`:
-```javascript
-const salt = crypto.randomBytes(16).toString('hex');
-const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-const storedPassword = `scrypt:${salt}:${hash}`;
-```
-During authentication, the candidate password is treated with the stored salt and evaluated using timing-safe comparison (`crypto.timingSafeEqual`).
-
-### Session Invalidation & Logout
-Upon successful authentication, the server generates a cryptographically secure UUID session token and registers it in the `sessions` Map with the user ID, role, and login timestamp:
+### Authentication & Session Engine
+Sessions are registered in an in-memory `sessions` Map upon successful login:
 ```javascript
 sessions.set(sessionToken, {
   userId: user.id,
@@ -178,12 +135,16 @@ sessions.set(sessionToken, {
   createdAt: Date.now()
 });
 ```
-When a user signs out via `POST /api/auth/logout`:
-1. The token is removed from `sessions.delete(sessionToken)`.
-2. Any subsequent request presenting that token receives `401 Unauthorized`.
-3. Client `localStorage` is cleared.
+When a user logs out (`POST /api/auth/logout`), the token is deleted from the Map, immediately invalidating any subsequent requests carrying that token.
 
-### Role & Permission Checks
+### Cryptographic Password Security
+User passwords are encrypted using Node.js native `crypto.scryptSync`:
+- **Salt Generation**: 16 cryptographically random bytes via `crypto.randomBytes(16)`.
+- **Key Derivation**: `crypto.scryptSync(password, salt, 64)`.
+- **Storage Format**: `scrypt:<salt>:<hash>`.
+- **Validation**: Timing-safe equality verification via `crypto.timingSafeEqual` prevents timing attack vulnerabilities.
+
+### Role-Based Access Control Middleware
 - **`requireAdmin`**: Enforces strict administrator role verification.
 - **`authorizeManagerAccess`**: Restricts managers to data belonging exclusively to their supervised team.
 - **`requireDeliveryAgent`**: Protects `/api/delivery/*` routes, ensuring agents cannot alter orders assigned to other drivers.
@@ -191,15 +152,44 @@ When a user signs out via `POST /api/auth/logout`:
 
 ---
 
-## 5. Comprehensive API Directory
+## 4. Map & Routing Subsystems
 
-### System & Authentication Endpoints
-- `GET /api/system/mode`: Returns environment mode (`development` vs `production`).
-- `GET /api/demo-users`: Returns list of demo test accounts (disabled in production).
-- `POST /login` (Aliases: `/api/linecart/login`, `/admin_panel/public/api/linecart/login`): Authenticates credentials, creates session token, returns user profile and `mustChangePassword` status.
-- `GET /api/auth/me`: Authenticates active Bearer token, returns authoritative user and role data.
-- `POST /api/auth/logout`: Terminates active session token.
-- `POST /api/auth/change-password`: Validates old password and sets new scrypt-hashed password.
+### Resilient Dual-Tile Map Layer
+In `ShopMapScreen.jsx` and `DeliveryRouteScreen.jsx`, maps use Leaflet with an automatic dual-tile resilience strategy:
+1. **Primary Tile Provider**: OpenStreetMap (`tile.openstreetmap.org`).
+2. **Fallback Tile Provider**: CartoDB Voyager (`basemaps.cartocdn.com`). If OSM fails or times out, the tile layer automatically switches to CartoDB tiles without interrupting the user.
+
+### Coordinate Deduplication & Radial Fan-Out
+When multiple shops share the same physical address:
+1. Shops sharing coordinates within a ~20m threshold are grouped into a location hub.
+2. A central hub marker renders the count of co-located stops.
+3. Individual pins radiate outward in a circle with dashed guide lines:
+   \[
+   \theta_i = \frac{2\pi \cdot i}{N} - \frac{\pi}{2}
+   \]
+   \[
+   \text{lat}_i = \text{lat}_{\text{base}} + r \cdot \cos(\theta_i), \quad \text{lng}_i = \text{lng}_{\text{base}} + \frac{r}{\cos(\text{lat}_{\text{base}} \cdot \frac{\pi}{180})} \cdot \sin(\theta_i)
+   \]
+   Where \(r \approx 0.00018^\circ\) (~20m). Every stop remains individually visible and inspectable.
+
+### OSRM Road Routing Engine & Offline Fallback
+In `client/src/routing.js`:
+- **Primary Engine**: Public OSRM Road Routing API (`router.project-osrm.org`). Calculates road distances along streets and returns route polylines.
+- **Offline Fallback Engine**: If OSRM is unreachable, an internal Nearest-Neighbor heuristic using Haversine distance sequences stops with an explicit disclaimer notice.
+
+---
+
+## 5. Complete REST API Directory
+
+### Authentication & Identity Endpoints
+- `GET /api/system/mode`: Returns environment mode (`development` vs `production`) and `requiresAdminSetup`.
+- `POST /api/system/setup-admin`: One-time initial Administrator setup when no active Admin has a configured password hash.
+- `GET /api/demo-users`: List of non-Admin demo accounts for local dev testing (returns `403` in production).
+- `POST /login` (Aliases: `/api/linecart/login`, `/admin_panel/public/api/linecart/login`): Accepts `{ phone, password }` in the POST JSON body only (rejects query string credentials with `400`), validates 10-digit Indian mobile format (`/^[6-9]\d{9}$/`), enforces rate limiting (`429`), and issues a Bearer session token.
+- `GET /api/auth/me`: Validates active Bearer token against the `sessions` table and returns authoritative user and role data.
+- `POST /api/auth/logout`: Revokes active session token in the `sessions` SQL table.
+- `POST /api/auth/change-password`: Authenticated endpoint to change password (scrypt + 16-byte salt).
+- `GET /users/:id` (Alias: `GET /api/users/:id`): Authenticated user profile lookup enforcing self/manager/Admin authorization.
 
 ### Administrator Endpoints
 - `GET /api/admin/dashboard`: Organization-wide KPI metrics and recent audit events.
@@ -238,58 +228,19 @@ When a user signs out via `POST /api/auth/logout`:
 
 ### Delivery Agent Endpoints
 - `GET /api/delivery/orders`: Returns orders assigned to the authenticated delivery agent, grouped by cluster. Supports optional `?clusterId=...` filter.
-- `POST /api/delivery/orders/:id/status`: Advances delivery status:
-  - Valid transitions: `In progress` / `Pending` -> `Picked up` -> `Delivered`.
-  - Issue transition: `Could not deliver` (requires `reason` string).
-  - Validates ownership: Rejects updates to orders not assigned to the calling agent with `403 Forbidden`.
-  - Duplicate guard: Rejects duplicate status advancements with `400 Bad Request`.
-  - Audit logging: Writes event to administrative audit log.
+- `POST /api/delivery/orders/:id/status`: Advances delivery status (`Picked up` → `Delivered` or `Could not deliver` with failure reason).
 
 ---
 
-## 6. Map & Routing Architecture
+## 6. Data Storage & Persistence Model
 
-### Dual-Layer Resilient Map Engine
-Interactive maps in `ShopMapScreen.jsx` and `DeliveryRouteScreen.jsx` use Leaflet with a resilient dual-tile strategy:
-1. **Primary Tile Layer**: OpenStreetMap (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`).
-2. **Automatic Fallback Layer**: CartoDB Voyager (`https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png`). If OSM tiles experience network errors or timeouts, the client dynamically activates CartoDB tiles without interrupting the user.
+### Relational SQL Database (`001_initial_schema.sql`)
+LineCart 2.0 persists all operational, administrative, and security records in a relational SQL database managed by `server/db.js` and `server/migrate.js`:
+- **PostgreSQL (`pg.Pool`)**: Used when `DATABASE_URL=postgresql://...` is configured in `.env`.
+- **Durable WAL SQL Engine (`node:sqlite`)**: Used automatically at `server/data/linecart.pg.db` when `DATABASE_URL` is unset in single-node/local environments, executing the exact same `$1..$n` parameterized SQL queries and ACID transactions.
+- **Authenticated Shop Photo Storage (`server/uploads/shops/`)**: Storefront photos uploaded via `POST /addcustomer` are validated for size (`<= 5 MB`) and genuine magic bytes (`JPEG`, `PNG`, `WebP`), stored with randomized filenames (`shop_<id>_<uuid>.<ext>`), linked in `shops.photo`, and served exclusively via authenticated `GET /api/uploads/shops/:filename`.
 
-### Coordinate Collision & Radial Fan-Out Geometry
-In wholesale markets and commercial complexes, multiple retail shops frequently share identical GPS coordinates. To make every shop discoverable:
-1. **Coordinate Hashing**: Identical or co-located coordinates (within ~20m) are grouped into a location hub.
-2. **Central Hub Marker**: Renders a numbered badge showing the total number of deliveries/shops at that address.
-3. **Radial Fan-Out Calculation**:
-   \[
-   \theta_i = \frac{2\pi \cdot i}{N} - \frac{\pi}{2}
-   \]
-   \[
-   \text{lat}_i = \text{lat}_{\text{base}} + r \cdot \cos(\theta_i)
-   \]
-   \[
-   \text{lng}_i = \text{lng}_{\text{base}} + \frac{r}{\cos(\text{lat}_{\text{base}} \cdot \frac{\pi}{180})} \cdot \sin(\theta_i)
-   \]
-   Where \(r \approx 0.00018^\circ\) (~20 meters). Individual stop pins radiate outward with dashed guide lines connecting them to the center hub, making every stop clickable.
-
-### OSRM Road Routing Engine with Offline Heuristic
-In `client/src/routing.js`:
-- **Primary Engine**: Public Open Source Routing Machine (OSRM) REST API (`router.project-osrm.org/route/v1/driving/...`). Calculates actual driving paths along streets and returns road-ordered stops and geometry polylines.
-- **Offline Fallback Engine**: If OSRM is unreachable, the system executes an internal Nearest-Neighbor heuristic using Haversine distance:
-  \[
-  d = 2R \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta\phi}{2}\right) + \cos(\phi_1)\cos(\phi_2)\sin^2\left(\frac{\Delta\lambda}{2}\right)}\right)
-  \]
-  Stops are sequenced with a clear disclaimer: *"Offline fallback order (road routing service unavailable)."*
-
----
-
-## 7. Responsive Navigation & Accessibility
-
-### Accessible Icon-Only Back Button
-- Implemented across the topbar and form headers.
-- **Visual Presentation**: Clear left-arrow icon (`←`) with no text clutter.
-- **Screen Reader Support**: Equipped with `aria-label="Go back"`, `title="Go back"`, and `<span className="sr-only">Go back</span>`.
-- **Mobile Touch Target**: Sized to `38×38px` on desktop and expanded to `42×42px` on mobile screens (`@media (max-width: 780px)`) to comply with mobile accessibility standards.
-- **Navigation Stack & Loop Prevention**: Tracks visited pages. When on the role home (e.g., `#admin-dashboard`, `#manager-reports`, `#delivery`, `#overview`), pressing Back remains safely on the role home without causing an infinite redirect loop.
-
-### Dual Device Layouts
-- **Laptop View**: 12-column responsive grid (`lg:grid-cols-12`) placing the interactive route map (`lg:col-span-6`) and the stop list side by side.
-- **Mobile Preview**: Stacked single-column view (`grid-cols-1`) inside an emulated smartphone container with high-contrast touch controls and dedicated bottom tab navigation.
+### Server Restart Persistence
+When the server process restarts:
+1. All users, password hashes, active sessions, role permissions, manager assignments, sales targets, audit logs, and settings survive intact in the SQL database.
+2. All 314 baseline shops, newly registered shops, storefront photos, wholesale orders, order line items, and delivery status updates survive intact across restarts.

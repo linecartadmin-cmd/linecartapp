@@ -58,18 +58,20 @@ http://localhost:3001
 ```
 For local network deployment, replace `localhost` with your host IP (e.g. `http://192.168.1.50:3001`).
 
-### Default & Development Credentials
-In local development (`NODE_ENV=development`), shortcut credentials and demo accounts are available:
+### Mobile Number Sign-In & First-Admin Setup
+LineCart enforces strict mobile-number authentication across all roles:
 
-| Role | Username / Phone | Password | Landing Page | Operational Scope |
-| :--- | :--- | :--- | :--- | :--- |
-| **Administrator** | `admin` *(or phone)* | `admin123` | `/#admin-dashboard` | Organization-wide administration, quotas, users, audit. |
-| **Sales Manager** | `9876500001` | `password123` | `/#manager-reports` | Team analytics, quota tracking, assigned orders ledger. |
-| **Field Sales Agent** | `9876543210` | `password123` | `/#overview` | Store onboarding, wholesale order booking, beat routes. |
-| **Delivery Agent** | `9876500050` | `1234` | `/#delivery` | Delivery routes, stop sequencing, status advancement. |
+- **10-Digit Indian Mobile Requirement**: Users must sign in using their registered **10-digit Indian mobile number beginning with `6`, `7`, `8`, or `9`** (`/^[6-9]\d{9}$/`) plus their password. Usernames (such as `admin`), country codes (`+91`), spaces, dashes, and short/long numbers are rejected on both the login screen and backend (`400 Bad Request`).
+- **POST Body Credentials Only**: Credentials are sent exclusively in the `POST /login` JSON request body and are never accepted in URL query parameters.
+- **Login Rate Limiting**: After 5 failed login attempts within 15 minutes for a mobile number, sign-in is temporarily rate-limited (`429 Too Many Requests`).
+- **Initial Administrator Setup**: On a new deployment without an active Administrator password hash, the first Administrator is configured via `INITIAL_ADMIN_PHONE` and `INITIAL_ADMIN_PASSWORD` in `.env` or via the one-time **First-Time Setup** form (`POST /api/system/setup-admin`). Known demo/default passwords are rejected.
 
-> [!IMPORTANT]
-> The development shortcut username `admin` is automatically disabled when `NODE_ENV=production`. In production, all users must authenticate with their registered 10-digit phone number.
+| Role | Login Identifier Format | Landing Page | Operational Scope |
+| :--- | :--- | :--- | :--- |
+| **Administrator** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#admin-dashboard` | Organization-wide administration, quotas, users, audit. |
+| **Sales Manager** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#manager-reports` | Team analytics, quota tracking, assigned orders ledger. |
+| **Field Sales Agent** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#overview` | Store onboarding, wholesale order booking, beat routes. |
+| **Delivery Agent** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#delivery` | Delivery routes, stop sequencing, status advancement. |
 
 ### First-Time Login & Mandatory Password Change
 When an account is flagged with `mustChangePassword: true` (newly created accounts or after an admin reset):

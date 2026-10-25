@@ -206,10 +206,14 @@ export default function OrderEntryScreen({
           <p>Add wholesale items for a customer and review the live delivery total.</p>
         </div>
         <button
-          className="secondary-button"
+          type="button"
+          className="secondary-button icon-back-btn"
           onClick={() => onNavigate('overview')}
+          title="Go back"
+          aria-label="Go back"
         >
-          ← &nbsp;Back to overview
+          <span aria-hidden="true">←</span>
+          <span className="sr-only">Go back</span>
         </button>
       </div>
 

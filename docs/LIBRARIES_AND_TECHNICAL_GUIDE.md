@@ -61,10 +61,17 @@ A technical reference detailing all installed software libraries, frameworks, bu
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "migrate": "node migrate.js",
+    "db:backup": "node migrate.js --backup",
+    "db:restore": "node migrate.js --restore"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.23.1"
   }
 }
 ```
@@ -93,14 +100,17 @@ A technical reference detailing all installed software libraries, frameworks, bu
 ### Backend Runtime Libraries
 - **`express` (`^4.21.1`)**
   - HTTP web server and REST API framework hosting API routes on port 3001 and serving static production assets.
+- **`pg` (`^8.23.1`)**
+  - PostgreSQL client and connection pool (`pg.Pool`) used by `server/db.js` when `DATABASE_URL` is configured.
 - **`cors` (`^2.8.5`)**
-  - Cross-Origin Resource Sharing middleware enabling client-server communication during local development.
+  - Cross-Origin Resource Sharing support paired with strict origin allow-listing (`CORS_ALLOWED_ORIGINS`).
 - **`multer` (`^1.4.5-lts.1`)**
-  - Multipart/form-data middleware handling storefront photo file uploads (`POST /addcustomer`), stored in `server/uploads/`.
+  - Multipart/form-data middleware handling storefront photo file uploads (`POST /addcustomer`), validated by magic bytes (`JPEG`, `PNG`, `WebP`, `<= 5 MB`) and stored in `server/uploads/shops/`.
 
 ### Node.js Built-In Standard Modules
-- **`crypto`**: Generates 16-byte random salts and computes password hashes via `crypto.scryptSync(password, salt, 64)`. Validates credentials with `crypto.timingSafeEqual`.
-- **`fs` & `path`**: Handles atomic reads and writes to `server/admin_config.json`.
+- **`node:sqlite`**: Built-in C++ SQLite WAL engine used by `server/db.js` at `server/data/linecart.pg.db` when `DATABASE_URL` is unset, providing zero-dependency ACID SQL transactions on local/single-node hosts.
+- **`crypto`**: Generates 16-byte random salts, computes password hashes via `crypto.scryptSync(password, salt, 64)`, validates credentials with `crypto.timingSafeEqual`, and hashes session tokens with `SHA-256`.
+- **`fs` & `path`**: Handles migration SQL loading, database backups (`server/backups/`), and authenticated shop photo serving (`server/uploads/shops/`).
 
 ---
 
@@ -129,23 +139,23 @@ The application communicates with several external web services over the network
 
 ---
 
-## 4. Known Architectural Limitations
+## 4. Data Persistence & Architectural Boundaries
 
-### In-Memory State & Reset Boundaries
-LineCart currently operates on a hybrid storage architecture:
+### Durable SQL Persistence (`001_initial_schema.sql`)
+All operational and administrative records are durably persisted in the relational SQL database (`server/db.js`):
 
-| Data Entity | Storage Location | State Across Server Restarts |
+| Data Entity | SQL Table / Storage Location | State Across Server Restarts |
 | :--- | :--- | :--- |
-| **Users & Hashed Passwords** | `server/admin_config.json` | ✅ **Persistent** (Saved to disk) |
-| **Role Permissions Matrix** | `server/admin_config.json` | ✅ **Persistent** (Saved to disk) |
-| **Manager-Agent Assignments** | `server/admin_config.json` | ✅ **Persistent** (Saved to disk) |
-| **Sales & Commodity Targets** | `server/admin_config.json` | ✅ **Persistent** (Saved to disk) |
-| **Administrative Audit Logs** | `server/admin_config.json` | ✅ **Persistent** (Saved to disk) |
-| **System Branding & Settings** | `server/admin_config.json` | ✅ **Persistent** (Saved to disk) |
-| **Customer Wholesale Orders** | In-Memory Array (`submittedOrders`) | ❌ **Non-Persistent** (Resets to baseline) |
-| **Newly Registered Shops** | In-Memory Array (`shops`) | ❌ **Non-Persistent** (Resets to baseline) |
-| **Active Session Tokens** | In-Memory JavaScript `Map` | ❌ **Non-Persistent** (Cleared on restart) |
-| **Storefront Photo Uploads** | Local Filesystem (`server/uploads/`) | ✅ **Persistent** (Saved to disk) |
+| **Users & Hashed Passwords** | `users` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **Role Permissions Matrix** | `role_permissions` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **Manager-Agent Assignments** | `manager_assignments` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **Sales & Commodity Targets** | `sales_targets` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **Administrative Audit Logs** | `audit_logs` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **System Branding & Settings** | `app_settings` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **Customer Wholesale Orders** | `orders` & `order_items` SQL tables | ✅ **Persistent** (Saved in SQL DB) |
+| **Registered Retail Shops** | `shops` SQL table | ✅ **Persistent** (Saved in SQL DB) |
+| **Active Session Tokens** | `sessions` SQL table (`SHA-256`) | ✅ **Persistent** (Saved in SQL DB) |
+| **Storefront Photo Uploads** | `server/uploads/shops/` + `shops.photo` | ✅ **Persistent** (Auth-gated on disk) |
 
 ### Mocked & Incomplete Integrations
 1. **Payment Gateway**: Wholesale orders record payment terms (Credit, Cash, UPI) but do not connect to banking APIs (e.g. Razorpay, Stripe).

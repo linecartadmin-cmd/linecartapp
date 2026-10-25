@@ -1,489 +1,323 @@
-# LineCart 2.0 — Comprehensive User Manual & Operations Guide
+# LineCart 2.0 — User Manual & Operations Guide
 
-This guide provides practical, step-by-step operating instructions for all user roles in LineCart 2.0: **Administrator (Admin)**, **Sales Manager**, **Field Sales Agent**, and **Delivery Agent**. It covers standard workflows, operational responsibilities, security procedures, mobile previews, accessible navigation, and practical troubleshooting steps.
+A comprehensive, role-by-role operating guide for LineCart 2.0 covering all operational workflows, permissions, and device experiences for **Administrators**, **Sales Managers**, **Field Sales Agents**, and **Delivery Agents**.
 
 ---
 
 ## Table of Contents
 
 1. [System Access & Authentication](#1-system-access--authentication)
-   - [Accessing the Application](#accessing-the-application)
+   - [Accessing LineCart](#accessing-linecart)
    - [Default & Development Credentials](#default--development-credentials)
    - [First-Time Login & Mandatory Password Change](#first-time-login--mandatory-password-change)
    - [Session Management & Global Logout](#session-management--global-logout)
    - [Accessible Back Navigation & Loop Prevention](#accessible-back-navigation--loop-prevention)
-   - [Device Previews: Laptop View vs. Mobile Preview](#device-previews-laptop-view-vs-mobile-preview)
-2. [Administrator (Admin) Workflows](#2-administrator-admin-workflows)
-   - [Admin Landing: Executive Dashboard](#admin-landing-executive-dashboard)
-   - [User Management (CRUD, Roles & Activation)](#user-management-crud-roles--activation)
+   - [Laptop View vs. Mobile Preview](#laptop-view-vs-mobile-preview)
+2. [Role & Permission Overview](#2-role--permission-overview)
+   - [Role Hierarchy & Security Scopes](#role-hierarchy--security-scopes)
+   - [Permission Matrix](#permission-matrix)
+3. [Administrator (Admin) Workflows](#3-administrator-admin-workflows)
+   - [Executive Command Center (Dashboard)](#executive-command-center-dashboard)
+   - [User Management (CRUD, Roles & Protection)](#user-management-crud-roles--protection)
    - [Manager-to-Agent Team Assignments](#manager-to-agent-team-assignments)
-   - [Role-Based Permissions Configuration](#role-based-permissions-configuration)
-   - [Setting Revenue Quotas & Commodity Targets](#setting-revenue-quotas--commodity-targets)
-   - [Audit Trail & Security Logs](#audit-trail--security-logs)
-   - [System & Application Settings](#system--application-settings)
-3. [Sales Manager Workflows](#3-sales-manager-workflows)
-   - [Manager Landing: Performance Analytics](#manager-landing-performance-analytics)
-   - [Target vs. Achieved Performance Analysis](#target-vs-achieved-performance-analysis)
-   - [Commodity Volume & Target Gap Tracking](#commodity-volume--target-gap-tracking)
+   - [Role Permissions Configuration](#role-permissions-configuration)
+   - [Setting Sales Quotas & Commodity Targets](#setting-sales-quotas--commodity-targets)
+   - [Audit Trail & Compliance Logs](#audit-trail--compliance-logs)
+   - [System Settings & Branding](#system-settings--branding)
+4. [Sales Manager Workflows](#4-sales-manager-workflows)
+   - [Manager Performance Reports](#manager-performance-reports)
+   - [Target vs. Achieved Analytics](#target-vs-achieved-analytics)
+   - [Commodity Volume & Deficit Gap Tracking](#commodity-volume--deficit-gap-tracking)
    - [Team Orders Ledger & Order Verification](#team-orders-ledger--order-verification)
    - [Cluster Store Coverage Map & Spiderfying](#cluster-store-coverage-map--spiderfying)
    - [Supervised Team Roster](#supervised-team-roster)
-4. [Field Sales Agent Workflows](#4-field-sales-agent-workflows)
-   - [Agent Landing: Daily Route Overview](#agent-landing-daily-route-overview)
+5. [Field Sales Agent Workflows](#5-field-sales-agent-workflows)
+   - [Agent Daily Route Overview](#agent-daily-route-overview)
    - [Booking Wholesale Commodity Orders](#booking-wholesale-commodity-orders)
    - [Onboarding New Retail Stores (GPS & Photos)](#onboarding-new-retail-stores-gps--photos)
    - [Order History & Status Tracking](#order-history--status-tracking)
-5. [Delivery Agent Workflows](#5-delivery-agent-workflows)
-   - [Delivery Agent Portal & Mobile Design](#delivery-agent-portal--mobile-design)
-   - [Cluster Selection & Stop Overview](#cluster-selection--stop-overview)
+6. [Delivery Agent Workflows](#6-delivery-agent-workflows)
+   - [Touch-Optimized Mobile Interface](#touch-optimized-mobile-interface)
+   - [Cluster Selection & Delivery Summary](#cluster-selection--delivery-summary)
    - [Road Routing & Map Navigation](#road-routing--map-navigation)
    - [Co-Located Stops & Radial Fan-Out Markers](#co-located-stops--radial-fan-out-markers)
-   - [Step-by-Step Order Status Progression (Picked Up & Delivered)](#step-by-step-order-status-progression-picked-up--delivered)
+   - [Advancing Order Status (Picked Up & Delivered)](#advancing-order-status-picked-up--delivered)
    - [Handling Delivery Issues (Could Not Deliver)](#handling-delivery-issues-could-not-deliver)
-   - [Bilingual Support & Voice Assistant](#bilingual-support--voice-assistant)
-6. [Troubleshooting & Operational FAQ](#6-troubleshooting--operational-faq)
-   - [Blank Page or Render Error Recovery](#blank-page-or-render-error-recovery)
-   - [Server Port Conflicts (Port 3001)](#server-port-conflicts-port-3001)
-   - [Authentication & Access Denied Errors](#authentication--access-denied-errors)
-   - [Data Persistence Across Server Restarts](#data-persistence-across-server-restarts)
+   - [Bilingual Toggle & Voice Assistant](#bilingual-toggle--voice-assistant)
+7. [Order Lifecycle & Delivery Status Flow](#7-order-lifecycle--delivery-status-flow)
+8. [Troubleshooting & Operational FAQ](#8-troubleshooting--operational-faq)
 
 ---
 
 ## 1. System Access & Authentication
 
-### Accessing the Application
-
-LineCart 2.0 is accessible through modern web browsers (Chrome, Edge, Firefox, Safari) at:
+### Accessing LineCart
+LineCart is accessible through any modern desktop or mobile web browser at:
 ```
 http://localhost:3001
 ```
-For local network deployment, replace `localhost` with the server host IP (e.g., `http://192.168.1.50:3001`).
+For local network deployment, replace `localhost` with your host IP (e.g. `http://192.168.1.50:3001`).
 
----
+### Mobile Number Sign-In & First-Admin Setup
+LineCart enforces strict mobile-number authentication across all roles:
 
-### Default & Development Credentials
+- **10-Digit Indian Mobile Requirement**: Users must sign in using their registered **10-digit Indian mobile number beginning with `6`, `7`, `8`, or `9`** (`/^[6-9]\d{9}$/`) plus their password. Usernames (such as `admin`), country codes (`+91`), spaces, dashes, and short/long numbers are rejected on both the login screen and backend (`400 Bad Request`).
+- **POST Body Credentials Only**: Credentials are sent exclusively in the `POST /login` JSON request body and are never accepted in URL query parameters.
+- **Login Rate Limiting**: After 5 failed login attempts within 15 minutes for a mobile number, sign-in is temporarily rate-limited (`429 Too Many Requests`).
+- **Initial Administrator Setup**: On a new deployment without an active Administrator password hash, the first Administrator is configured via `INITIAL_ADMIN_PHONE` and `INITIAL_ADMIN_PASSWORD` in `.env` or via the one-time **First-Time Setup** form (`POST /api/system/setup-admin`). Known demo/default passwords are rejected.
 
-> [!IMPORTANT]
-> The temporary username `admin` with password `admin123` is enabled **only** when `NODE_ENV` is set to `development` (the default local configuration). When running in `NODE_ENV=production`, this development credential is strictly disabled by backend authorization rules.
-
-| Role | Login Identifier | Default Password | Environment | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| **Administrator** | `admin` *(or phone)* | `admin123` | Development Only | Direct admin username bypass for local testing. |
-| **Administrator** | `9999999999` *(example)* | Bootstrapped via `.env` | Production / Staging | Configured via `ADMIN_PHONE` and `ADMIN_PASSWORD` in `.env`. |
-| **Sales Manager** | `9876500001` | `password123` | Demo / Test | Demo Sales Manager (Priya Sharma). |
-| **Delivery Agent** | `9876500050` | `1234` | Demo / Test | Demo Delivery Agent (Murugan K - Pollachi Route). |
-| **Field Sales Agent** | `9876543210` | `password123` | Demo / Test | Demo Field Agent (Ramesh Kumar - HSR Layout). |
-| **Field Sales Agent** | `9876543211` | `password123` | Demo / Test | Demo Field Agent (Suresh Patel - Koramangala). |
-| **Field Sales Agent** | `9876543212` | `password123` | Demo / Test | Demo Field Agent (Anil Verma - BTM Layout). |
-
----
+| Role | Login Identifier Format | Landing Page | Operational Scope |
+| :--- | :--- | :--- | :--- |
+| **Administrator** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#admin-dashboard` | Organization-wide administration, quotas, users, audit. |
+| **Sales Manager** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#manager-reports` | Team analytics, quota tracking, assigned orders ledger. |
+| **Field Sales Agent** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#overview` | Store onboarding, wholesale order booking, beat routes. |
+| **Delivery Agent** | 10-digit mobile (`6-9xxxxxxxxx`) | `/#delivery` | Delivery routes, stop sequencing, status advancement. |
 
 ### First-Time Login & Mandatory Password Change
-
-When an account is flagged with `mustChangePassword: true` (such as newly provisioned accounts or reset accounts):
-
-1. **Sign In**: Enter your phone number or identifier and temporary password on the login screen.
-2. **Password Change Modal**: Upon verification, the application immediately displays the **Change Password Required** dialog before allowing navigation to any functional screens.
-3. **Password Complexity Rules**:
-   - Minimum length: **8 characters**.
-   - Must contain at least **one uppercase letter** (`A-Z`).
-   - Must contain at least **one lowercase letter** (`a-z`).
-   - Must contain at least **one digit** (`0-9`).
-   - Cannot match your existing temporary password.
-4. **Confirmation**: Confirm the new password and click **Update Password**. The backend computes a fresh `scrypt` hash with a unique 16-byte cryptographic salt, clears `mustChangePassword`, and redirects you to your role landing page.
-
----
+When an account is flagged with `mustChangePassword: true` (newly created accounts or after an admin reset):
+1. **Sign In**: Enter registered identifier and temporary password.
+2. **Password Dialog**: The application immediately displays the **Password Change Required** modal.
+3. **Password Rules**: Minimum 8 characters, containing at least one uppercase letter, one lowercase letter, and one number.
+4. **Secure Update**: The backend verifies the temporary password, derives a new cryptographic hash using `scrypt` with a 16-byte random salt, clears the flag, and redirects the user to their role landing page.
 
 ### Session Management & Global Logout
-
-- **Session Persistence**: Sessions use cryptographically generated UUID tokens stored in browser `localStorage` under `LineCartPref_token` and `LineCartPref_user`. Requests send this credential via the standard `Authorization: Bearer <token>` header (as well as `X-User-Id`).
-- **Authoritative Identity Verification**: On initial load or refresh, the frontend validates the active token against `/api/auth/me`. The server determines the user's role from active session state and redirects them to their designated landing page:
-  - **Administrator**: `/#admin-dashboard`
-  - **Sales Manager**: `/#manager-reports`
-  - **Delivery Agent**: `/#delivery`
-  - **Field Sales Agent**: `/#overview`
+- **Cryptographic Session Tokens**: Authenticated sessions generate a secure UUID token stored in `localStorage` under `LineCartPref_token`. All API requests carry this token in the `Authorization: Bearer <token>` header.
+- **Authoritative Identity Sync**: On application load, the frontend validates the active token against `/api/auth/me`. The server determines user permissions and redirects them to their designated landing page.
 - **Global Logout**:
-  - **Desktop / Laptop View**: Click the red **Sign out** button (`🚪 Sign out`) located in the top navigation header.
-  - **Mobile Preview / Phone View**: Tap the **Sign out** button in the top bar or tap the **Sign out** icon tab in the bottom navigation bar.
-  - **Session Invalidation**: Signing out triggers an authenticated `POST /api/auth/logout` request, immediately terminating the session token in the server's session registry, clearing browser storage, and returning to the sign-in screen.
-
----
+  - **Desktop / Laptop View**: Click **Sign out** (`🚪 Sign out`) in the top navigation header.
+  - **Mobile View / Preview**: Tap **Sign out** in the topbar or tap the **Sign out** tab in the mobile bottom navigation bar.
+  - **Server Invalidation**: Logging out triggers `POST /api/auth/logout`, permanently destroying the server session token and clearing client storage.
 
 ### Accessible Back Navigation & Loop Prevention
+- **Icon-Only Display**: The back button renders only a clean left arrow (`←`) without visible text.
+- **Screen-Reader Accessibility**: Includes `aria-label="Go back"`, `title="Go back"`, and visually hidden text `<span className="sr-only">Go back</span>`.
+- **Large Touch Target**: Sized to `38×38px` on desktop and expanded to `42×42px` on mobile screens to ensure easy tapping.
+- **Loop Prevention**: Maintains an internal navigation stack. When users reach their role's home page, tapping Back remains safely on that home screen rather than causing redirect loops or accidental logouts.
 
-The topbar and forms across all signed-in screens provide an accessible, icon-only **Back** button:
-- **Icon-Only Display**: Displays a clean left-arrow icon (`←`) without visible text clutter.
-- **Screen-Reader Accessibility**: Includes `aria-label="Go back"`, `title="Go back"`, and a hidden text span (`<span className="sr-only">Go back</span>`) for assistive devices.
-- **Mobile Touch Sizing**: Styled to `38×38px` on desktop and expanded to `42×42px` on mobile viewports to provide a comfortable tap target.
-- **Loop Prevention**: Maintains an in-app page history stack. When the user reaches their role's home page (or opens an un-nested link), pressing Back safely remains on the role home without trapping the user in infinite redirects or exiting the application prematurely.
-
----
-
-### Device Previews: Laptop View vs. Mobile Preview
-
-LineCart includes an integrated device toggle in the top header (`💻 Laptop view` / `📱 Mobile preview`):
-- **Laptop View**: Utilizes full screen width, displaying rich data tables, multi-column forms, and side-by-side interactive maps.
-- **Mobile Preview**: Emulates a physical smartphone frame (`390×844px` canvas) with mobile status bar, high-contrast buttons, and bottom tab navigation, allowing managers and administrators to test the mobile driver and field agent experiences directly on laptop displays.
+### Laptop View vs. Mobile Preview
+LineCart features an integrated device preview toggle in the top header (`💻 Laptop view` / `📱 Mobile preview`):
+- **Laptop View**: Full-width desktop experience with side-by-side maps, multi-column forms, and detailed data tables.
+- **Mobile Preview**: Emulates a real smartphone frame (`390×844px`) with responsive single-column layouts, large touch targets, and mobile bottom navigation.
 
 ---
 
-## 2. Administrator (Admin) Workflows
+## 2. Role & Permission Overview
 
-The **Administrator** role provides full control over users, roles, team assignments, revenue targets, audit trails, and system settings.
+LineCart enforces strict role-based access control across four distinct user roles:
 
-### Admin Landing: Executive Dashboard
-- **URL**: `http://localhost:3001/#admin-dashboard`
-- **Primary Metrics**:
-  - Total System Revenue (₹) aggregated across all finalized bookings.
-  - Total Orders Booked and Total Active Retail Stores.
-  - Active Clusters Count and Active Sales Managers Count.
-- **Quick Action Grid**: One-click navigation to User Management, Role Permissions, Team Assignments, Targets, Audit Trail, and Settings.
-- **Recent System Activity**: An audit feed displaying the 5 most recent administrative, security, and transaction events with timestamps and user attribution.
+```
++-----------------------------------------------------------------------------------+
+|                           LINECART ROLE & PERMISSION MATRIX                       |
++---------------------+-------------------+-------------------+---------------------+
+| ROLE                | LANDING PAGE      | DATA SCOPE        | KEY PERMISSIONS     |
++---------------------+-------------------+-------------------+---------------------+
+| Administrator       | #admin-dashboard  | Organization-wide | All permissions     |
+| Sales Manager       | #manager-reports  | Assigned Team     | Reports, Quotas     |
+| Field Sales Agent   | #overview         | Personal Route    | Book, Onboard       |
+| Delivery Agent      | #delivery         | Assigned Stops    | Route, Status       |
++---------------------+-------------------+-------------------+---------------------+
+```
 
----
-
-### User Management (CRUD, Roles & Activation)
-- **URL**: `http://localhost:3001/#admin-users`
-- **Listing & Filtering**:
-  - Filter user accounts by role (`admin`, `sales_manager`, `field_sales_agent`, `delivery_agent`).
-  - Search by Name, Phone Number, or Assigned Cluster.
-- **Creating a New User**:
-  1. Click the **+ Add User** button.
-  2. Enter the user's Full Name, Phone Number (10 digits), and select their Primary Role.
-  3. (Optional) Assign an initial cluster or territory.
-  4. Specify an initial temporary password. The system automatically marks `mustChangePassword: true`.
-  5. Click **Save User**. An audit log event (`USER_CREATED`) is written to `server/admin_config.json`.
-- **Editing User Details**:
-  - Click the **Edit** button beside any user row.
-  - Modify the display name, assigned role, or cluster route.
-  - Toggle account status between **Active** and **Inactive**. Inactive users are immediately rejected at login by backend authentication.
-- **Deleting a User**:
-  - Click the **Delete** button in the user row or within the Edit modal.
-  - Confirm the permanent deletion prompt. The backend automatically cleans up their team mappings and assigned target quotas.
-  - **Security Safeguards**:
-    - Administrators cannot delete their own authenticated account.
-    - The last active Administrator is permanently protected from deletion, demotion, or deactivation to prevent system lockout.
-- **Forcing Password Reset**:
-  - Enter a new password (min. 8 characters) in the Edit modal. The user will be required to change it upon their next sign-in.
+- **Administrator**: Unconstrained read and write access across all clusters, users, teams, and settings.
+- **Sales Manager**: Read and write access strictly limited to field sales agents assigned to their team.
+- **Field Sales Agent**: Operational access to book wholesale orders and register shops within their daily cluster.
+- **Delivery Agent**: Execution access to view assigned delivery orders, sequence stops, and advance delivery statuses.
 
 ---
+
+## 3. Administrator (Admin) Workflows
+
+### Executive Command Center (Dashboard)
+- **URL**: `/#admin-dashboard`
+- **KPI Metrics**: Real-time total system revenue (₹), total orders booked, registered retail stores count, active clusters, and supervising managers.
+- **Quick Links**: One-tap access to Users, Permissions, Team Assignments, Targets, Audit, and Settings.
+- **Recent Audit Feed**: Live stream of the last 5 administrative events with timestamps and user attribution.
+
+### User Management (CRUD, Roles & Protection)
+- **URL**: `/#admin-users`
+- **Filter & Search**: Filter by role (`admin`, `sales_manager`, `field_sales_agent`, `delivery_agent`) or search by name and phone.
+- **Create User**: Click **+ Add User**, provide name, phone, initial role, cluster assignment, and temporary password.
+- **Edit User**: Modify user attributes, change role, or toggle active/inactive status. Inactive accounts are immediately blocked from logging in.
+- **Delete User**: Permanently removes user account, target quotas, and team mappings.
+- **Safety Safeguard**: The system prevents an administrator from deleting their own active account, and permanently blocks deletion, demotion, or deactivation of the last active Administrator.
 
 ### Manager-to-Agent Team Assignments
-- **URL**: `http://localhost:3001/#admin-assignments`
+- **URL**: `/#admin-assignments`
+- Only administrators can assign field sales agents to sales managers.
+- Select a manager, review their current team, and click **Assign to Manager** from the list of unassigned agents.
+- Removing an agent immediately revokes the manager's visibility over that agent's orders and reports.
 
-> [!IMPORTANT]
-> Sales Managers are strictly forbidden from assigning agents to themselves. Only administrators can alter manager-to-agent supervision structures.
+### Role Permissions Configuration
+- **URL**: `/#admin-permissions`
+- Manage action permissions (`view`, `create`, `edit`, `delete`, `export`, `assign`, `set_targets`) across screens.
+- When updated, permissions are persisted to disk in `server/admin_config.json` and enforced by backend middleware.
 
-1. **Select Manager**: Choose a Sales Manager from the dropdown list.
-2. **Review Current Team**: The table displays all currently assigned Field Sales Agents, their phone numbers, and primary clusters.
-3. **Assign New Agent**:
-   - In the "Available Unassigned Agents" section, locate the target field agent.
-   - Click **Assign to Manager**.
-   - The backend updates the mapping in `admin_config.json` and logs the assignment event.
-4. **Unassign Agent**:
-   - Click the **Remove / Unassign** button next to an assigned agent.
-   - The agent is immediately unlinked; the manager will no longer see this agent's orders, performance, or customer visits.
+### Setting Sales Quotas & Commodity Targets
+- **URL**: `/#admin-targets`
+- **Summary Cards**: Total Assigned Quota (₹), Achieved Sales (₹), Fulfillment Rate (%), and Covered Agents.
+- **Set Target**: Click **+ Set New Target**, select agent, enter target period (`YYYY-MM`), set total monthly revenue target (₹), and allocate specific commodity volume quotas (e.g. Eggs in crates, Onions in kg).
+- **Edit / Delete**: Adjust existing quotas or delete outdated targets.
 
----
+### Audit Trail & Compliance Logs
+- **URL**: `/#admin-audit`
+- Chronological immutable log of system actions: `LOGIN_SUCCESS`, `USER_CREATED`, `USER_UPDATED`, `TEAM_ASSIGNMENT_CHANGED`, `TARGETS_UPDATED`, `PERMISSIONS_UPDATED`, `DELIVERY_STATUS_UPDATED`.
+- Export logs to CSV for compliance audits.
 
-### Role-Based Permissions Configuration
-- **URL**: `http://localhost:3001/#admin-permissions`
-- **Matrix Configuration**:
-  - View permissions across actions: `view`, `create`, `edit`, `delete`, `export`, `assign`, `set_targets`.
-  - View permissions across screens: `dashboard`, `reports`, `orders`, `shops`, `team`, `users`, `permissions`, `targets`, `audit_logs`, `settings`.
-- **Enforcement Mechanics**:
-  - **Backend API Rules**: When an admin toggles a permission switch, the backend saves this in `admin_config.json`. Any subsequent API call without the required permission returns `403 Forbidden`.
-  - **Frontend Adaptation**: The user interface hides action buttons and navigation links dynamically based on the permissions returned by `/api/role-permissions`.
-
----
-
-### Setting Revenue Quotas & Commodity Targets
-- **URL**: `http://localhost:3001/#admin-targets`
-- **Executive Summary Dashboard**:
-  - **Total Quota Assigned**: Aggregated quota in ₹ for the selected filter and period.
-  - **Achieved Sales**: Real-time sales transactions achieved by target agents.
-  - **Overall Fulfillment Rate**: Computed achievement percentage with visual status indicator.
-  - **Covered Agents**: Count of active field agents with configured targets.
-- **Filter Controls**:
-  - Filter by Target Cycle / Period (e.g. `2026-10`, `2026-11`, `2026-12`, All Cycles).
-  - Filter by Wholesale Cluster route and Supervising Manager.
-  - Real-time search across agent names, phone numbers, and IDs.
-- **Configuring a New Target**:
-  1. Click **+ Set New Target**.
-  2. Select the Field Sales Agent from the dropdown. The supervising manager and cluster route are automatically detected.
-  3. Enter the Target Period (`YYYY-MM`) and Total Monthly Target Amount (₹).
-  4. (Optional) Click **+ Add Commodity** to allocate specific commodity item volume quotas (e.g., Onion Medium, Potato, Tomato, Green Chilli) with target kg quantities and values.
-  5. Click **Save Target Quota**. The quota is recorded immediately in `admin_config.json` and logged in the Security Audit Trail.
-- **Editing & Deleting Targets**:
-  - Click **Edit** beside any target row to adjust quota amounts or item targets.
-  - Click **Delete** to permanently remove a quota record. Real order transactions remain unaffected.
+### System Settings & Branding
+- **URL**: `/#admin-settings`
+- Manage organization name, support contact numbers, currency symbol (`₹`), default GST percentage (5%), and system feature flags.
 
 ---
 
-### Audit Trail & Security Logs
-- **URL**: `http://localhost:3001/#admin-audit`
-- **Log Inspection**:
-  - Chronological table showing Timestamp, Actor Name, Role, Action Type, Target Resource, IP Address, and Detailed Change Payload.
-  - Event categories captured: `LOGIN_SUCCESS`, `LOGIN_FAILURE`, `PASSWORD_CHANGED`, `USER_CREATED`, `USER_UPDATED`, `TEAM_ASSIGNMENT_CHANGED`, `TARGETS_UPDATED`, `PERMISSIONS_UPDATED`, `SETTINGS_SAVED`, `DELIVERY_STATUS_UPDATED`.
-- **Exporting**: Click **Export Audit Trail (CSV)** to download an immutable audit record for compliance reviews.
+## 4. Sales Manager Workflows
 
----
+### Manager Performance Reports
+- **URL**: `/#manager-reports`
+- Default landing page for Sales Managers.
+- Scoped strictly to Field Sales Agents assigned to this manager by an Administrator.
 
-### System & Application Settings
-- **URL**: `http://localhost:3001/#admin-settings`
-- **Configurable Options**:
-  - Company Legal Entity Name and Brand Display Name.
-  - Currency Symbol and Default Number Formatting (`INR / ₹`).
-  - Standard GST / Tax Percentage (default: 5% on applicable wholesale lines).
-  - Help Desk Phone Number and Support Email.
-  - System Feature Flags (e.g., enable/disable camera uploads, toggle offline mode caching).
+### Target vs. Achieved Analytics
+- Filter performance by date range (Today, This Week, This Month, Custom) and specific team agent.
+- Displays revenue target gauge, achieved sales total, percentage achieved, and remaining revenue deficit.
 
----
-
-## 3. Sales Manager Workflows
-
-The **Sales Manager** oversees an assigned team of Field Sales Agents. Managers track performance against quotas, monitor store visits, verify wholesale commodity bookings, and review cluster market penetration.
-
-### Manager Landing: Performance Analytics
-- **URL**: `http://localhost:3001/#manager-reports`
-- **Default View**: Upon signing in, the Sales Manager is greeted directly with the **Performance Reports** dashboard.
-- **Team-Scoped Visibility**: A manager **only** sees data corresponding to agents explicitly assigned to them by an Administrator. Data belonging to unassigned agents or other managers is filtered out on the server.
-
----
-
-### Target vs. Achieved Performance Analysis
-- **Filter Controls**:
-  - **Date Range**: Today, Yesterday, This Week, This Month, or Custom Date Picker.
-  - **Agent Selector**: "All Assigned Agents" (aggregated view) or select a specific agent.
-  - **Cluster Filter**: Filter orders and shops by operational cluster (e.g., Pollachi, Udumalaipet).
-- **Comparison Visualizations**:
-  - **Revenue Bar / Progress Gauge**: Shows Total Target (₹) vs. Achieved Revenue (₹).
-  - **Achievement Percentage**: Calculated as `(Achieved / Target) * 100`.
-  - **Target Gap (₹)**: Displays the exact monetary deficit remaining to hit the quota.
-
----
-
-### Commodity Volume & Target Gap Tracking
-LineCart tracks wholesale agricultural commodities individually:
-
-| Item / Commodity | Unit | Target Volume | Achieved Volume | Volume Gap | Target Value (₹) | Achieved Value (₹) | Value Gap (₹) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Eggs (30/Crate)** | Crates | 200 | 145 | -55 Crates | ₹24,000 | ₹17,400 | -₹6,600 |
-| **Onions (Grade A)** | Kg | 1,500 | 1,220 | -280 Kg | ₹52,500 | ₹42,700 | -₹9,800 |
-| **Potatoes** | Kg | 1,200 | 1,250 | **Met (+50)** | ₹36,000 | ₹37,500 | **+₹1,500** |
-| **Tomatoes** | Crates | 150 | 95 | -55 Crates | ₹30,000 | ₹19,000 | -₹11,000 |
-| **Green Chillies**| Kg | 300 | 210 | -90 Kg | ₹18,000 | ₹12,600 | -₹5,400 |
-
-Managers use this breakdown to guide agents on which specific commodities to prioritize during store visits.
-
----
+### Commodity Volume & Deficit Gap Tracking
+Inspect volume quotas for key wholesale produce items:
+- **Eggs**: Target crates vs achieved crates.
+- **Onions**: Target kg vs achieved kg.
+- **Potatoes / Tomatoes / Green Chillies**: Real-time volume metrics and monetary value gap.
 
 ### Team Orders Ledger & Order Verification
-- **URL**: `http://localhost:3001/#manager-orders`
-- **Features**:
-  - Comprehensive ledger of all orders booked by the manager's assigned agents.
-  - Status filters: `Pending`, `Confirmed`, `Delivered`, `Cancelled`.
-  - Click on any order row to inspect itemized line items, unit rates, calculated GST, customer contact, and delivery notes.
-
----
+- **URL**: `/#manager-orders`
+- View all wholesale orders submitted by supervised agents.
+- Filter by status (`Pending`, `Confirmed`, `Delivered`, `Cancelled`).
+- Click any order row to review line items, unit rates, calculated GST, customer contact, and delivery notes.
 
 ### Cluster Store Coverage Map & Spiderfying
-- **URL**: `http://localhost:3001/#map`
-- **Role-Based Scoping**:
-  - **Administrator**: Organization-wide visibility across all clusters and agents, with an optional Manager filter to inspect individual teams.
-  - **Sales Manager**: Strictly scoped to assigned team agents and their customer bookings.
-- **Store Status Indicators & Visual Badges**:
-  - **Green Pin (`✓`)**: Store placed at least one confirmed order in the filter period.
-  - **Gray Pin (`•`)**: Idle store with zero orders recorded in the period.
-  - **Shared Location Hub Pins (`N`)**: Stores located within the same commercial complex, bazaar, or street address that share identical GPS coordinates are aggregated into a numbered hub pin showing the count of shops.
-- **Overlapping Pin Discovery & Spiderfying**:
-  - **Spiderfy / Fan-Out (`🕸️`)**: Click **Fan Out Pins on Map** to radiate overlapping markers in a geometric circle around the center hub with dashed guide lines, enabling individual inspection of each store pin on the canvas. Click **Collapse** to return to the group hub.
-  - **Location Store Tabs**: The bottom inspection card includes tab buttons to seamlessly cycle through all stores sharing that location.
-
----
+- **URL**: `/#map`
+- Visualizes customer stores across operational clusters.
+- **Status Pins**: Green pins (`✓`) for stores that placed orders in the period; gray pins (`•`) for idle stores.
+- **Spiderfying Overlapping Pins**: Click **Fan Out Pins on Map** (`🕸️`) to radially expand stores that share identical physical coordinates, revealing individual pins connected by dashed guide lines.
+- **Store Details Tab**: Click any pin to open owner name, contact number, category, and order history.
 
 ### Supervised Team Roster
-- **URL**: `http://localhost:3001/#manager-team`
-- Displays the read-only roster of Field Sales Agents currently assigned to this manager.
-- Shows agent phone numbers, active status, and order counts for today.
-- *Note: To add or remove agents from this roster, contact an Administrator.*
+- **URL**: `/#manager-team`
+- Displays active Field Sales Agents assigned to the manager, including phone numbers and orders booked today.
 
 ---
 
-## 4. Field Sales Agent Workflows
+## 5. Field Sales Agent Workflows
 
-The **Field Sales Agent** works on the ground, visiting Kirana stores, supermarkets, and wholesale buyers. Key responsibilities are onboarding new stores and booking wholesale orders.
-
-### Agent Landing: Daily Route Overview
-- **URL**: `http://localhost:3001/#overview`
-- **Daily Dashboard**:
-  - Assigned cluster for today's beat.
-  - Target store visits vs. completed visits.
-  - Running total of daily sales value booked today.
-
----
+### Agent Daily Route Overview
+- **URL**: `/#overview`
+- Daily dashboard displaying assigned cluster, target store visits, completed visits, and total sales booked today.
 
 ### Booking Wholesale Commodity Orders
-- **URL**: `http://localhost:3001/#order-create` (or click **+ New Order** from store card)
-1. **Select Retail Store**: Search and pick the customer shop from your assigned cluster list.
-2. **Add Products**:
-   - Select commodity lines: Eggs, Onions, Potatoes, Tomatoes, Chillies.
-   - Enter quantity in standard wholesale units (Crates, Bags, or Kg).
-   - Real-time calculations: The screen automatically computes line totals, applies commodity tax (5% GST where applicable), and displays the grand total.
-3. **Delivery Date & Payment Mode**: Select promised delivery date and payment method (Cash on Delivery, UPI, or Credit Terms).
-4. **Submit Order**: Click **Confirm & Book Order**. A confirmation modal displays the generated Order ID (e.g., `ORD-20261025-XXXX`).
-
----
+- **URL**: `/#order-create`
+1. **Select Retail Shop**: Pick customer store from assigned cluster.
+2. **Add Items**: Select commodities (Eggs, Onions, Potatoes, Tomatoes, Chillies) and enter quantities.
+3. **Review Calculations**: Automatically calculates line item totals, applies 5% GST, and updates delivery grand total.
+4. **Payment Mode & Date**: Choose payment terms (Credit, Cash on Delivery, UPI) and promised delivery date.
+5. **Confirm**: Submit order to generate unique Order ID.
 
 ### Onboarding New Retail Stores (GPS & Photos)
-- **URL**: `http://localhost:3001/#shop-new` (or click **+ Add Store**)
-1. **Store Details**: Enter Store Name, Owner / Contact Name, and 10-digit Mobile Number.
-2. **Location & Address**:
-   - Enter street address, landmark, and select cluster.
-   - Click **Capture GPS Coordinates** to save accurate latitude/longitude coordinates via the browser geolocation API.
-3. **Business Classification**: Select store category (Kirana, General Store, Supermarket, Restaurant).
-4. **GSTIN / Tax ID**: (Optional) Enter the customer's 15-character GSTIN.
-5. **Shop Front Photo**: Upload or capture a storefront photo for route verification.
-6. **Submit**: Click **Register Store**. The store is added to the cluster roster immediately.
-
----
+- **URL**: `/#shop-new`
+1. **Store Details**: Enter store name, contact owner, and 10-digit mobile number.
+2. **Location & GPS**: Select cluster, enter address, and tap **Capture GPS Coordinates** using the device geolocation sensor.
+3. **Store Photo**: Upload or capture a storefront photo for driver route verification.
+4. **Submit**: Registers store immediately in the cluster directory.
 
 ### Order History & Status Tracking
-- **URL**: `http://localhost:3001/#orders`
-- View all orders submitted by your account.
-- Check fulfillment status (`Submitted`, `Dispatched`, `Delivered`).
-- Inspect itemized breakdown and delivery instructions.
+- **URL**: `/#orders`
+- Track status of submitted orders (`Submitted` → `Dispatched` → `Delivered`).
 
 ---
 
-## 5. Delivery Agent Workflows
+## 6. Delivery Agent Workflows
 
-The **Delivery Agent** portal (`#delivery`) is specifically tailored for phone usage, featuring a mobile-first, high-contrast, touch-optimized interface designed for drivers who may find long text difficult:
-- **Large Touch Targets**: Action buttons have minimum heights of 48px to 64px with generous tap areas.
-- **Clear Universal Icons**: Uses intuitive visual symbols (📦 Box/Pickup, 🚚 Van/Transit, ✅ Delivered, ❌ Issue/Failure, 📞 Call Shop, 🗺️ Map).
-- **Spoken Audio Assistant**: Tapping the 🔊 icon next to any stop reads out the shop name, address, and current action aloud.
-- **Bilingual English / தமிழ் (Tamil) Toggle**: Tap the `🌐 தமிழ்` / `🌐 English` toggle in the top header to instantly switch all labels and audio prompts.
+### Touch-Optimized Mobile Interface
+- **URL**: `/#delivery`
+- High-contrast, mobile-first design with large touch targets (48px to 64px) and clear status icons.
 
----
-
-### Cluster Selection & Stop Overview
-1. **Sign In**: Enter your registered phone number (e.g., `9876500050`) and password (`1234`). You are directed to `/#delivery`.
-2. **Select Delivery Area (Cluster)**:
-   - Tap your assigned area button at the top (e.g., `📍 Pollachi and Udumalaipet`).
-   - The KPI summary displays Total Stops, Pending, Delivered, and Delivery Issues.
-
----
+### Cluster Selection & Delivery Summary
+- Select delivery cluster (e.g. `📍 Pollachi and Udumalaipet`).
+- Real-time KPI summary: Total Assigned Stops, Pending Stops, Delivered Stops, Delivery Issues.
 
 ### Road Routing & Map Navigation
-- **Interactive Leaflet Map**:
-  - Displays color-coded numbered stop pins:
-    - 🟡 **Amber**: Pending / In progress.
-    - 🔵 **Blue**: Picked up (on the delivery truck).
-    - 🟢 **Green**: Delivered successfully.
-    - 🔴 **Red**: Delivery issue / could not deliver.
-  - **Tile Resilience**: Automatically loads OpenStreetMap tiles with an automatic zero-downtime fallback to CartoDB Voyager tiles.
-- **Start Route (OSRM Road Routing)**:
-  - Tap the prominent **🚚 Start route** button.
-  - Stops are ordered in a road-distance-efficient sequence using the public OSRM road routing engine along real streets. If the routing service is unavailable, an offline Nearest-Neighbor heuristic sequence is provided with a clear disclaimer.
-  - The first active stop is marked with a pulsing blue border and **⭐ NEXT STOP** badge.
-- **Open Maps Navigation**:
-  - Tapping **🗺️ Open Maps** launches Google Maps with exact coordinates (or address fallback) for turn-by-turn turn navigation.
-
----
+- **Interactive Leaflet Map**: Displays color-coded numbered stops (Amber = Pending, Blue = Picked up, Green = Delivered, Red = Issue).
+- **Dual-Tile Resilience**: Loads OpenStreetMap tiles with automatic fallback to CartoDB Voyager if OSM is unavailable.
+- **Start Route**: Tap **🚚 Start route** to arrange stops in a road-distance-efficient order via the public OSRM road routing engine (with offline Nearest-Neighbor fallback).
+- **Open Maps**: Tap **🗺️ Open Maps** to navigate via Google Maps.
 
 ### Co-Located Stops & Radial Fan-Out Markers
-When multiple assigned customer shops share identical or co-located GPS coordinates (such as several vendors in the same market or complex):
-1. **Central Hub Marker**: The map displays a central numbered hub pin indicating how many stops share that location.
-2. **Radial Fan-Out**: Individual stop pins radiate outward in a neat circular fan-out with dashed leader lines connecting them to the center hub. Every stop marker remains individually visible, clickable, and inspectable.
-3. **Shared Address Badge**: Stop cards in the delivery list display a `🏢 Shared Address (N stops at this address)` badge so drivers know in advance they have multiple deliveries at one stop.
+- When multiple shops share the same physical address, LineCart renders a central hub marker showing the total stops count.
+- Stop pins radiate radially around the hub with dashed leader lines, keeping every delivery accessible.
+- Stop cards display a `🏢 Shared Address` badge.
 
----
-
-### Step-by-Step Order Status Progression (Picked Up & Delivered)
-
-1. **Step 1: Mark as Picked Up**
-   - When loading wholesale produce at the distribution hub, tap **📦 Mark as Picked Up**.
-   - A confirmation dialog clearly identifies the shop name and order ID. Tap **Confirm** to advance the order to *Picked up*.
-2. **Step 2: Mark as Delivered**
-   - Upon arriving at the shop, tap the prominent green **✅ Mark as Delivered** button.
-   - The confirmation sheet displays the store name and order ID. Tap **Confirm Update**.
-   - The status updates immediately in the persistent backend store, the stop card turns green, and a success voice confirmation is spoken aloud.
-   - **Protection against duplicates**: Tapping an already delivered order displays a friendly notice and prevents duplicate API calls.
-
----
+### Advancing Order Status (Picked Up & Delivered)
+1. **Mark as Picked Up**: When loading goods at the hub, tap **📦 Mark as Picked Up**, verify shop name and order ID, and tap Confirm.
+2. **Mark as Delivered**: Upon store delivery, tap **✅ Mark as Delivered**, verify order ID, and tap Confirm.
+3. **Duplicate Protection**: Prevents duplicate submissions and rejects transitions out of sequence.
 
 ### Handling Delivery Issues (Could Not Deliver)
-
 If delivery cannot be completed:
 1. Tap **❌ Could not deliver**.
-2. Select one of the clear reason options:
-   - 🔒 **Shop Closed** (கடை மூடப்பட்டுள்ளது)
-   - 👤 **Owner Not Available** (உரிமையாளர் இல்லை)
-   - 🚫 **Order Cancelled / Rejected** (ஆர்டர் ரத்து)
-   - 📍 **Wrong Address / Location Not Found** (தவறான முகவரி)
-3. (Optional) Enter short notes and tap **Confirm Not Delivered**.
-4. The stop status is updated to `Delivery failed`, saved to the backend database, and recorded in the administrative audit log.
+2. Select a reason: **Shop Closed**, **Owner Not Available**, **Order Cancelled / Rejected**, or **Wrong Address / Location Not Found**.
+3. Confirm update. The status advances to `Delivery failed` and logs to the audit trail.
+
+### Bilingual Toggle & Voice Assistant
+- **Language Toggle**: Tap `🌐 தமிழ்` / `🌐 English` in the header to instantly switch all UI labels.
+- **Voice Assistant**: Tap 🔊 on any stop card to have the browser speak stop instructions aloud.
 
 ---
 
-### Bilingual Support & Voice Assistant
+## 7. Order Lifecycle & Delivery Status Flow
 
-- **One-Tap Language Toggle**: Switch between **English** and **தமிழ் (Tamil)** at any time using the `🌐` button in the header.
-- **Text-to-Speech Assistant**: Tapping the 🔊 icon triggers the browser's native Web Speech Synthesis API (`window.speechSynthesis`) to pronounce stop details in the active language.
-
----
-
-## 6. Troubleshooting & Operational FAQ
-
-### Blank Page or Render Error Recovery
-
-#### Root Cause & Fix
-In earlier builds, undefined variable references or unhandled null responses could lead to an unhandled React error. This has been resolved with:
-1. **React Error Boundary**: A top-level [`ErrorBoundary`](file:///c:/Users/samma/Desktop/rea/linecart-suite/client/src/components/ErrorBoundary.jsx) wraps all route views. If any screen encounters an unexpected error, a clean recovery card is displayed with a **Reload Application** button instead of a white screen.
-2. **Explicit Fallback States**: Loading skeletons and error cards render when network APIs are in-flight or return errors.
-
-#### Troubleshooting Steps
-1. Open Developer Tools (`F12` or `Ctrl + Shift + I`).
-2. Hard-refresh the browser cache: press `Ctrl + F5` (Windows) or `Cmd + Shift + R` (macOS).
-3. Verify the server is running on port 3001:
-   ```powershell
-   Get-Process -Name node
-   ```
-
----
-
-### Server Port Conflicts (Port 3001)
-
-If you see `Error: listen EADDRINUSE: address already in use :::3001`:
-1. Terminate the blocking process:
-   ```powershell
-   Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue | Select-Object OwningProcess
-   Stop-Process -Id <OwningProcessId> -Force
-   ```
-2. Or start on a different port:
-   ```powershell
-   $env:PORT="3002"
-   node server/index.js
-   ```
+```
+[Field Agent Books Order]
+         │
+         ▼
+[Status: Pending / In Progress]
+         │
+         ▼
+[Delivery Agent: Mark as Picked Up]
+         │
+         ▼
+[Status: Picked Up (On Truck)]
+         │
+    ┌────┴──────────────────────────┐
+    ▼                               ▼
+[Delivered to Store]        [Delivery Issue Encountered]
+    │                               │
+    ▼                               ▼
+[Status: Delivered]         [Status: Delivery Failed]
+(Final Success)             (Saved with Reason)
+```
 
 ---
 
-### Authentication & Access Denied Errors
+## 8. Troubleshooting & Operational FAQ
 
-- **Issue**: "Access Denied: Administrator role required" error.
-  - *Cause*: Stale browser storage or missing Bearer token in the request.
-  - *Resolution*: Click **Sign In Again** or sign out. Log in freshly with your Administrator credentials. The frontend syncs your authoritative identity with `/api/auth/me`.
-- **Issue**: Dev login `admin` / `admin123` fails.
-  - *Cause*: `NODE_ENV` is set to `production`.
-  - *Resolution*: Set `$env:NODE_ENV="development"` for local testing or use your registered 10-digit administrator phone number.
+### Blank Page or White Screen Recovery
+- **React Error Boundary**: If an uncaught error occurs, LineCart displays a user-friendly error card with a **Reload Application** button instead of a blank page.
+- **Hard Refresh**: Press `Ctrl + F5` (Windows) or `Cmd + Shift + R` (Mac) to bypass stale cached scripts.
+- **Verify Server**: Confirm the server is running on port 3001:
+  ```powershell
+  Get-Process -Name node
+  ```
 
----
+### Server Port Conflict (Port 3001)
+If you see `Error: listen EADDRINUSE :::3001`:
+```powershell
+Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue | Select-Object OwningProcess
+Stop-Process -Id <OwningProcessId> -Force
+```
 
-### Data Persistence Across Server Restarts
+### Access Denied: Administrator Role Required
+If the dashboard displays an access denied warning:
+1. Click **Sign In Again** or sign out via the topbar.
+2. Log in freshly with your Administrator credentials.
+3. The app synchronizes active session credentials with `/api/auth/me`.
 
-> [!WARNING]
-> LineCart 2.0 uses a hybrid storage model:
-> - **Persistent Disk Storage (`server/admin_config.json`)**: User accounts, password hashes, role permissions, manager-to-agent assignments, target quotas, audit logs, and settings persist across restarts.
-> - **In-Memory RAM Storage (`submittedOrders` & `shops`)**: Submitted customer orders and newly onboarded retail stores reside in server memory and reset to baseline seed data (`data.js`) when the Node.js server process is restarted.
-> 
-> *For production deployments, an enterprise database engine (PostgreSQL or MongoDB) must be connected to persist transactional orders and customer store tables permanently.*
+### Data Reset on Server Restart
+- **Administrative Records Persist**: Users, password hashes, targets, assignments, and audit logs are saved on disk in `server/admin_config.json` and persist across restarts.
+- **Transactional Records Reset**: Submitted orders and newly onboarded stores reside in server memory and reset to baseline mock data (`data.js`) when the Node server restarts.

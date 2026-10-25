@@ -6,32 +6,107 @@ import ReportsScreen from './components/ReportsScreen';
 import CustomersScreen from './components/CustomersScreen';
 import SummaryReportScreen from './components/SummaryReportScreen';
 import LoginScreen from './components/LoginScreen';
+import ManagerReportsScreen from './components/ManagerReportsScreen';
+import ManagerOrdersScreen from './components/ManagerOrdersScreen';
+import ShopMapScreen from './components/ShopMapScreen';
+import TeamAssignmentsScreen from './components/TeamAssignmentsScreen';
+import AdminDashboardScreen from './components/AdminDashboardScreen';
+import AdminUsersScreen from './components/AdminUsersScreen';
+import AdminRolesPermissionsScreen from './components/AdminRolesPermissionsScreen';
+import AdminAuditScreen from './components/AdminAuditScreen';
+import AdminSettingsScreen from './components/AdminSettingsScreen';
+import AdminTargetsScreen from './components/AdminTargetsScreen';
+import DeliveryRouteScreen from './components/DeliveryRouteScreen';
+import ChangePasswordModal from './components/ChangePasswordModal';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const DEFAULT_ORDERS = [
-  { id: 'LC-24018', customer: 'Bharkathi briyani hotel', date: '2026-10-24', itemsCount: 4, total: 4280, status: 'In progress' },
-  { id: 'LC-24017', customer: 'hotel saro', date: '2026-10-23', itemsCount: 3, total: 3150, status: 'Delivered' },
-  { id: 'LC-24016', customer: 'Hasini Vegitables', date: '2026-10-23', itemsCount: 5, total: 6720, status: 'Delivered' },
-  { id: 'LC-24015', customer: 'City bakes & cafe', date: '2026-10-22', itemsCount: 2, total: 1980, status: 'Pending' },
-  { id: 'LC-24014', customer: 'amirtha hotel', date: '2026-10-22', itemsCount: 4, total: 4870, status: 'Delivered' },
-  { id: 'LC-24013', customer: 'yuvamukil mess', date: '2026-10-21', itemsCount: 3, total: 3620, status: 'Delivered' },
-  { id: 'LC-24012', customer: 'KS vegitable shop', date: '2026-10-21', itemsCount: 2, total: 1840, status: 'Cancelled' }
+  { id: 'S101-24018', customer: 'Sunrise Fresh Produce', date: '2026-10-24', itemsCount: 2, total: 4280, status: 'In progress' },
+  { id: 'S103-24017', customer: 'Sri Krishna Bakery & Cafe', date: '2026-10-23', itemsCount: 2, total: 3150, status: 'Delivered' }
 ];
 
 export default function App() {
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem('LineCartPref_user');
-      return saved ? JSON.parse(saved) : { id: 6, name: 'GURUPRASATH A', role: 'Field Sales Agent', phone: '9876543210' };
+      return saved ? JSON.parse(saved) : null;
     } catch {
-      return { id: 6, name: 'GURUPRASATH A', role: 'Field Sales Agent', phone: '9876543210' };
+      return null;
     }
   });
 
+  const roleLower = (user?.role || '').toLowerCase();
+  const isAdmin = roleLower === 'admin';
+  const isManager = roleLower === 'sales manager';
+  const isDelivery = roleLower === 'delivery agent';
+  const isAgent = !isAdmin && !isManager && !isDelivery;
+
+  const [permissions, setPermissions] = useState(null);
+
+  // Authoritative identity sync: verify session token with backend on mount
+  useEffect(() => {
+    const token = localStorage.getItem('LineCartPref_token');
+    const savedUser = localStorage.getItem('LineCartPref_user');
+
+    if (!token && !savedUser) {
+      if (user) setUser(null);
+      return;
+    }
+
+    api.getAuthMe().then((res) => {
+      if (res && res.status === 200 && res.user) {
+        setUser(res.user);
+        localStorage.setItem('LineCartPref_user', JSON.stringify(res.user));
+        localStorage.setItem('LineCartPref_userid', String(res.user.id));
+      } else if (res && (res.status === 401 || res.status === 403)) {
+        localStorage.removeItem('LineCartPref_token');
+        localStorage.removeItem('LineCartPref_user');
+        localStorage.removeItem('LineCartPref_userid');
+        setUser(null);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Load active role permissions from backend
+  useEffect(() => {
+    api.getRolePermissions()
+      .then((res) => {
+        if (res && res.rolePermissions) {
+          setPermissions(res.rolePermissions);
+        }
+      })
+      .catch(() => {});
+  }, [user]);
+
+  const isPageAllowed = (pageId) => {
+    if (pageId.startsWith('admin-')) {
+      return isAdmin;
+    }
+    if (isAdmin) return true;
+    if (!permissions) return true;
+    const uRole = user?.role || 'Field Sales Agent';
+    const rPerms = permissions[uRole];
+    if (!rPerms || !Array.isArray(rPerms.pages)) return true;
+    return rPerms.pages.includes(pageId);
+  };
+
   const [page, setPage] = useState(() => {
     const hash = window.location.hash.replace('#', '');
-    return ['overview', 'orders', 'reports', 'customers', 'summary'].includes(hash)
-      ? hash
-      : 'overview';
+    const valid = [
+      'overview', 'orders', 'reports', 'customers', 'summary', 'map', 'team', 'delivery',
+      'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
+      'admin-targets', 'admin-orders', 'admin-reports', 'admin-audit', 'admin-settings'
+    ];
+    if (valid.includes(hash)) return hash;
+    try {
+      const saved = localStorage.getItem('LineCartPref_user');
+      const u = saved ? JSON.parse(saved) : null;
+      const r = (u?.role || '').toLowerCase();
+      if (r === 'admin') return 'admin-dashboard';
+      if (r === 'sales manager') return 'reports';
+      if (r === 'delivery agent') return 'delivery';
+    } catch {}
+    return 'overview';
   });
 
   const [androidPreview, setAndroidPreview] = useState(false);
@@ -63,18 +138,91 @@ export default function App() {
   useEffect(() => {
     const handleHash = () => {
       const hash = window.location.hash.replace('#', '');
-      if (['overview', 'orders', 'reports', 'customers', 'summary'].includes(hash)) {
-        setPage(hash);
+      const validAdminPages = [
+        'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
+        'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery'
+      ];
+      const validManagerPages = ['reports', 'orders', 'map', 'team', 'customers'];
+      const validAgentPages = ['overview', 'orders', 'reports', 'customers', 'summary'];
+      const validDeliveryPages = ['delivery'];
+
+      const validList = isAdmin ? validAdminPages : isManager ? validManagerPages : isDelivery ? validDeliveryPages : validAgentPages;
+      if (validList.includes(hash)) {
+        if (!isAdmin && hash.startsWith('admin-')) {
+          showToast(`Access Denied: Administrator role required`);
+          const fallback = isManager ? 'reports' : isDelivery ? 'delivery' : 'overview';
+          setPage(fallback);
+          window.location.hash = `#${fallback}`;
+          return;
+        }
+        if (!isAdmin && !isPageAllowed(hash)) {
+          showToast(`Access Denied: '${hash}' disabled by Administrator`);
+          return;
+        }
+        setPage((prevPage) => {
+          if (prevPage && prevPage !== hash) {
+            setNavHistory((h) => [...h, prevPage]);
+          }
+          return hash;
+        });
       }
     };
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
-  }, []);
+  }, [isAdmin, isManager, isDelivery, permissions]);
+
+  // Route security guard: automatically redirect away if non-admin is on admin route
+  useEffect(() => {
+    if (user && page.startsWith('admin-') && !isAdmin) {
+      const fallback = isManager ? 'reports' : isDelivery ? 'delivery' : 'overview';
+      setPage(fallback);
+      window.location.hash = `#${fallback}`;
+      showToast('Access Denied: Administrator role required.');
+    }
+  }, [page, isAdmin, isManager, isDelivery, user]);
+
+  const [navHistory, setNavHistory] = useState([]);
+
+  const getRoleHome = () => {
+    if (isAdmin) return 'admin-dashboard';
+    if (isManager) return 'reports';
+    if (isDelivery) return 'delivery';
+    return 'overview';
+  };
 
   const navigate = (nextPage) => {
+    if (nextPage !== page) {
+      setNavHistory((prev) => [...prev, page]);
+    }
     setPage(nextPage);
     window.location.hash = `#${nextPage}`;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBack = () => {
+    const roleHome = getRoleHome();
+    if (!navHistory.length) {
+      if (page !== roleHome) {
+        navigate(roleHome);
+      }
+      return;
+    }
+
+    const historyCopy = [...navHistory];
+    let prev = historyCopy.pop();
+    while (historyCopy.length && (prev === page || (prev.startsWith('admin-') && !isAdmin))) {
+      prev = historyCopy.pop();
+    }
+
+    if (prev && prev !== page && (!prev.startsWith('admin-') || isAdmin)) {
+      setNavHistory(historyCopy);
+      setPage(prev);
+      window.location.hash = `#${prev}`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (page !== roleHome) {
+      setNavHistory([]);
+      navigate(roleHome);
+    }
   };
 
   // Sync body class for android-preview
@@ -82,9 +230,9 @@ export default function App() {
     document.body.classList.toggle('android-preview', androidPreview);
   }, [androidPreview]);
 
-  // Load cluster and shops data from backend
+  // Load cluster and shops data from backend (skipped for Delivery Agents who use /api/delivery/orders)
   useEffect(() => {
-    if (!user) return;
+    if (!user || isDelivery) return;
     api.getClusterInfo(user.id).then((res) => {
       if ((res.status === 200 || res.status === 1) && res.result?.clusterList) {
         setClusters(res.result.clusterList);
@@ -127,9 +275,14 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    api.logout();
+    localStorage.removeItem('LineCartPref_token');
     localStorage.removeItem('LineCartPref_userid');
     localStorage.removeItem('LineCartPref_user');
     setUser(null);
+    setNavHistory([]);
+    setPage('overview');
+    window.location.hash = '#overview';
   };
 
   const todayStr = new Date().toLocaleDateString('en-IN', {
@@ -149,16 +302,36 @@ export default function App() {
 
   const pageLabels = {
     overview: 'Overview',
-    orders: 'Order entry',
-    reports: 'Reports',
-    customers: 'Customers',
-    summary: 'Summary Report'
+    orders: isAdmin ? 'All Company Orders' : isManager ? 'Team Orders' : 'Order entry',
+    reports: isAdmin ? 'Executive Reports' : isManager ? 'Performance Reports' : 'Reports',
+    customers: 'Customer Shops',
+    summary: 'Summary Report',
+    map: 'Cluster Shop Map',
+    team: 'Sales Team Supervision',
+    delivery: 'Delivery Route Fulfillment',
+    'admin-dashboard': 'Executive Command Center',
+    'admin-users': 'User Accounts & Roles',
+    'admin-roles': 'Roles & Permissions',
+    'admin-assignments': 'Team Assignments',
+    'admin-targets': 'Targets & Quotas',
+    'admin-audit': 'Security Audit Trail',
+    'admin-settings': 'System Settings'
   };
 
   if (!user) {
     return (
       <>
-        <LoginScreen onLoginSuccess={(u) => setUser(u)} showToast={showToast} />
+        <LoginScreen
+          onLoginSuccess={(u) => {
+            setUser(u);
+            const r = (u?.role || '').toLowerCase();
+            if (r === 'admin') navigate('admin-dashboard');
+            else if (r === 'sales manager') navigate('reports');
+            else if (r === 'delivery agent') navigate('delivery');
+            else navigate('overview');
+          }}
+          showToast={showToast}
+        />
         <div className={`toast ${toastMsg ? 'visible' : ''}`} role="status">
           {toastMsg}
         </div>
@@ -168,15 +341,31 @@ export default function App() {
 
   return (
     <div className={`app-shell`}>
+      {user?.mustChangePassword && (
+        <ChangePasswordModal
+          user={user}
+          onSuccess={() => {
+            const updated = { ...user, mustChangePassword: false };
+            setUser(updated);
+            localStorage.setItem('LineCartPref_user', JSON.stringify(updated));
+          }}
+          onClose={() => {
+            const updated = { ...user, mustChangePassword: false };
+            setUser(updated);
+            localStorage.setItem('LineCartPref_user', JSON.stringify(updated));
+          }}
+          showToast={showToast}
+        />
+      )}
       {/* --- DESKTOP SIDEBAR --- */}
       <aside className="sidebar">
         {/* Brand */}
         <a
           className="brand"
-          href="#overview"
+          href={isAdmin ? '#admin-dashboard' : isManager ? '#reports' : isDelivery ? '#delivery' : '#overview'}
           onClick={(e) => {
             e.preventDefault();
-            navigate('overview');
+            navigate(isAdmin ? 'admin-dashboard' : isManager ? 'reports' : isDelivery ? 'delivery' : 'overview');
           }}
           aria-label="Linecart home"
         >
@@ -184,55 +373,204 @@ export default function App() {
           <span>linecart<span className="brand-dot">.</span></span>
         </a>
 
-        <div className="workspace-label">WORKSPACE</div>
+        <div className="workspace-label">
+          {isAdmin ? '🛡 EXECUTIVE GOVERNANCE' : isManager ? 'SALES MANAGER PORTAL' : isDelivery ? '🚚 DELIVERY ROUTE FLEET' : 'WORKSPACE'}
+        </div>
 
         {/* Main Nav */}
-        <nav className="main-nav" aria-label="Main navigation">
-          <button
-            className={`nav-item ${page === 'overview' ? 'active' : ''}`}
-            onClick={() => navigate('overview')}
-          >
-            <span className="nav-icon">▦</span>Overview
-          </button>
+        {isAdmin ? (
+          <nav className="main-nav" aria-label="Administrator navigation">
+            <button
+              className={`nav-item ${page === 'admin-dashboard' ? 'active' : ''}`}
+              onClick={() => navigate('admin-dashboard')}
+            >
+              <span className="nav-icon">▦</span>Dashboard
+            </button>
 
-          <button
-            className={`nav-item ${page === 'orders' ? 'active' : ''}`}
-            onClick={() => {
-              setPrefCustomer('');
-              navigate('orders');
-            }}
-          >
-            <span className="nav-icon">▤</span>Order entry
-          </button>
+            <button
+              className={`nav-item ${page === 'admin-users' ? 'active' : ''}`}
+              onClick={() => navigate('admin-users')}
+            >
+              <span className="nav-icon">👥</span>User Management
+            </button>
 
-          <button
-            className={`nav-item ${page === 'reports' ? 'active' : ''}`}
-            onClick={() => navigate('reports')}
-          >
-            <span className="nav-icon">▥</span>Reports
-          </button>
+            <button
+              className={`nav-item ${page === 'admin-roles' ? 'active' : ''}`}
+              onClick={() => navigate('admin-roles')}
+            >
+              <span className="nav-icon">🛡</span>Roles &amp; Permissions
+            </button>
 
-          <button
-            className={`nav-item ${page === 'customers' ? 'active' : ''}`}
-            onClick={() => navigate('customers')}
-          >
-            <span className="nav-icon">♙</span>Customers
-          </button>
+            <button
+              className={`nav-item ${page === 'admin-assignments' ? 'active' : ''}`}
+              onClick={() => navigate('admin-assignments')}
+            >
+              <span className="nav-icon">🔗</span>Team Assignments
+            </button>
 
-          <button
-            className={`nav-item ${page === 'summary' ? 'active' : ''}`}
-            onClick={() => navigate('summary')}
-          >
-            <span className="nav-icon">📋</span>Summary Report
-          </button>
-        </nav>
+            <button
+              className={`nav-item ${page === 'admin-targets' ? 'active' : ''}`}
+              onClick={() => navigate('admin-targets')}
+            >
+              <span className="nav-icon">🎯</span>Targets &amp; Quotas
+            </button>
+
+            <button
+              className={`nav-item ${page === 'orders' ? 'active' : ''}`}
+              onClick={() => navigate('orders')}
+            >
+              <span className="nav-icon">📦</span>Company Orders
+            </button>
+
+            <button
+              className={`nav-item ${page === 'reports' ? 'active' : ''}`}
+              onClick={() => navigate('reports')}
+            >
+              <span className="nav-icon">📈</span>Executive Reports
+            </button>
+
+            <button
+              className={`nav-item ${page === 'map' ? 'active' : ''}`}
+              onClick={() => navigate('map')}
+            >
+              <span className="nav-icon">🗺</span>Cluster Shop Map
+            </button>
+
+            <button
+              className={`nav-item ${page === 'delivery' ? 'active' : ''}`}
+              onClick={() => navigate('delivery')}
+            >
+              <span className="nav-icon">🚚</span>Delivery Fleet
+            </button>
+
+            <button
+              className={`nav-item ${page === 'admin-audit' ? 'active' : ''}`}
+              onClick={() => navigate('admin-audit')}
+            >
+              <span className="nav-icon">📜</span>Security Audit
+            </button>
+
+            <button
+              className={`nav-item ${page === 'admin-settings' ? 'active' : ''}`}
+              onClick={() => navigate('admin-settings')}
+            >
+              <span className="nav-icon">⚙️</span>System Settings
+            </button>
+          </nav>
+        ) : isManager ? (
+          <nav className="main-nav" aria-label="Manager navigation">
+            {isPageAllowed('reports') && (
+              <button
+                className={`nav-item ${page === 'reports' ? 'active' : ''}`}
+                onClick={() => navigate('reports')}
+              >
+                <span className="nav-icon">▥</span>Reports &amp; Performance
+              </button>
+            )}
+
+            {isPageAllowed('orders') && (
+              <button
+                className={`nav-item ${page === 'orders' ? 'active' : ''}`}
+                onClick={() => navigate('orders')}
+              >
+                <span className="nav-icon">▤</span>Team Orders
+              </button>
+            )}
+
+            {isPageAllowed('map') && (
+              <button
+                className={`nav-item ${page === 'map' ? 'active' : ''}`}
+                onClick={() => navigate('map')}
+              >
+                <span className="nav-icon">🗺</span>Cluster Shop Map
+              </button>
+            )}
+
+            {isPageAllowed('team') && (
+              <button
+                className={`nav-item ${page === 'team' ? 'active' : ''}`}
+                onClick={() => navigate('team')}
+              >
+                <span className="nav-icon">👥</span>My Sales Team
+              </button>
+            )}
+
+            {isPageAllowed('customers') && (
+              <button
+                className={`nav-item ${page === 'customers' ? 'active' : ''}`}
+                onClick={() => navigate('customers')}
+              >
+                <span className="nav-icon">♙</span>Customer Shops
+              </button>
+            )}
+          </nav>
+        ) : isDelivery ? (
+          <nav className="main-nav" aria-label="Delivery agent navigation">
+            <button
+              className={`nav-item ${page === 'delivery' ? 'active' : ''}`}
+              onClick={() => navigate('delivery')}
+            >
+              <span className="nav-icon">🚚</span>Delivery Route
+            </button>
+          </nav>
+        ) : (
+          <nav className="main-nav" aria-label="Sales agent navigation">
+            {isPageAllowed('overview') && (
+              <button
+                className={`nav-item ${page === 'overview' ? 'active' : ''}`}
+                onClick={() => navigate('overview')}
+              >
+                <span className="nav-icon">▦</span>Overview
+              </button>
+            )}
+
+            {isPageAllowed('orders') && (
+              <button
+                className={`nav-item ${page === 'orders' ? 'active' : ''}`}
+                onClick={() => {
+                  setPrefCustomer('');
+                  navigate('orders');
+                }}
+              >
+                <span className="nav-icon">▤</span>Order entry
+              </button>
+            )}
+
+            {isPageAllowed('reports') && (
+              <button
+                className={`nav-item ${page === 'reports' ? 'active' : ''}`}
+                onClick={() => navigate('reports')}
+              >
+                <span className="nav-icon">▥</span>Reports
+              </button>
+            )}
+
+            {isPageAllowed('customers') && (
+              <button
+                className={`nav-item ${page === 'customers' ? 'active' : ''}`}
+                onClick={() => navigate('customers')}
+              >
+                <span className="nav-icon">♙</span>Customers
+              </button>
+            )}
+
+            {isPageAllowed('summary') && (
+              <button
+                className={`nav-item ${page === 'summary' ? 'active' : ''}`}
+                onClick={() => navigate('summary')}
+              >
+                <span className="nav-icon">📋</span>Summary Report
+              </button>
+            )}
+          </nav>
+        )}
 
         {/* Sidebar Bottom: Help Card & Profile Card */}
         <div className="sidebar-bottom">
           <div className="help-card">
             <div className="help-mark">?</div>
-            <strong>Need a hand?</strong>
-            <span>All your routes and store orders in one place.</span>
+            <strong>{isAdmin ? 'System Governance' : isManager ? 'Manager Assistance' : isDelivery ? 'Delivery Assistance' : 'Need a hand?'}</strong>
+            <span>{isAdmin ? 'Full administrative authority and audit monitoring.' : isManager ? 'Team targets, order tracking & cluster mapping.' : isDelivery ? 'Road-distance ordered stops and quick status updates.' : 'All your routes and store orders in one place.'}</span>
           </div>
 
           <button
@@ -243,7 +581,7 @@ export default function App() {
             <span className="avatar">{initials(user.name)}</span>
             <span className="profile-copy">
               <b>{user.name}</b>
-              <small>{user.role || 'Field Sales Agent'} · Sign out</small>
+              <small>{user.role || (isAdmin ? 'Admin' : isManager ? 'Sales Manager' : isDelivery ? 'Delivery Agent' : 'Field Sales Agent')} · Sign out</small>
             </span>
             <span className="more">···</span>
           </button>
@@ -260,22 +598,34 @@ export default function App() {
 
         {/* Top Sticky Header */}
         <header className="topbar">
-          <div className="breadcrumbs">
-            <span>Linecart</span>
-            <span className="crumb-slash">/</span>
-            <strong id="crumbCurrent">{pageLabels[page] || 'Overview'}</strong>
+          <div className="topbar-left">
+            <button
+              className="back-nav-button"
+              onClick={handleBack}
+              title="Go back"
+              aria-label="Go back"
+            >
+              <span className="back-arrow" aria-hidden="true">←</span>
+              <span className="sr-only">Go back</span>
+            </button>
+            <div className="breadcrumbs">
+              <span>Linecart</span>
+              <span className="crumb-slash">/</span>
+              <strong id="crumbCurrent">{pageLabels[page] || 'Overview'}</strong>
+            </div>
           </div>
 
           <div className="top-actions">
             <span className="today-label" id="todayLabel">{todayStr}</span>
 
-            {/* Android Preview Toggle Button */}
+            {/* Laptop / Mobile Preview Toggle Button */}
             <button
-              className="android-toggle"
+              className="android-toggle device-preview-toggle"
               onClick={() => setAndroidPreview(!androidPreview)}
-              title="Toggle Android mobile preview device frame"
+              title="Toggle view between Laptop and Mobile preview"
+              aria-label="Toggle device preview"
             >
-              ▯ &nbsp;{androidPreview ? 'Desktop view' : 'Android preview'}
+              {androidPreview ? '💻 Laptop view' : '📱 Mobile preview'}
             </button>
 
             {/* Notifications */}
@@ -284,7 +634,17 @@ export default function App() {
               onClick={() => showToast('All wholesale delivery routes are active')}
               aria-label="Notifications"
             >
-              ♧<i></i>
+              🔔<i></i>
+            </button>
+
+            {/* Sign out Button in Topbar */}
+            <button
+              className="topbar-signout-btn"
+              onClick={handleLogout}
+              title="Sign out of LineCart"
+              aria-label="Sign out"
+            >
+              🚪 Sign out
             </button>
 
             {/* Avatar Pill */}
@@ -296,7 +656,77 @@ export default function App() {
 
         {/* Main Content Router */}
         <div className="page-content" id="pageContent">
-          {page === 'overview' && (
+          <ErrorBoundary>
+            {/* Administrator Exclusive Screens */}
+            {page === 'admin-dashboard' && (
+            <AdminDashboardScreen
+              user={user}
+              onNavigate={navigate}
+              showToast={showToast}
+            />
+          )}
+
+          {page === 'admin-users' && (
+            <AdminUsersScreen
+              user={user}
+              clusters={clusters}
+              onNavigate={navigate}
+              showToast={showToast}
+            />
+          )}
+
+          {page === 'admin-roles' && (
+            <AdminRolesPermissionsScreen
+              user={user}
+              onNavigate={navigate}
+              showToast={showToast}
+            />
+          )}
+
+          {page === 'admin-assignments' && (
+            <TeamAssignmentsScreen
+              user={user}
+              clusters={clusters}
+              showToast={showToast}
+            />
+          )}
+
+          {page === 'admin-targets' && (
+            <AdminTargetsScreen
+              user={user}
+              clusters={clusters}
+              onNavigate={navigate}
+              showToast={showToast}
+            />
+          )}
+
+          {page === 'admin-audit' && (
+            <AdminAuditScreen
+              user={user}
+              showToast={showToast}
+            />
+          )}
+
+          {page === 'admin-settings' && (
+            <AdminSettingsScreen
+              user={user}
+              showToast={showToast}
+            />
+          )}
+
+          {(page === 'delivery' || isDelivery) && (
+            <DeliveryRouteScreen
+              user={user}
+              onLogout={handleLogout}
+              onBack={handleBack}
+              isMobilePreview={androidPreview}
+              onTogglePreview={() => setAndroidPreview(!androidPreview)}
+              showToast={showToast}
+            />
+          )}
+
+          {/* Operational Screens */}
+          {page === 'overview' && !isAdmin && !isManager && (
             <OverviewScreen
               user={user}
               orders={orders}
@@ -308,26 +738,60 @@ export default function App() {
             />
           )}
 
-          {page === 'orders' && (
-            <OrderEntryScreen
+          {(page === 'orders' || page === 'admin-orders') && (
+            (isAdmin || isManager) ? (
+              <ManagerOrdersScreen
+                user={user}
+                clusters={clusters}
+                shops={shops}
+                showToast={showToast}
+              />
+            ) : (
+              <OrderEntryScreen
+                user={user}
+                clusters={clusters}
+                shops={shops}
+                catalogItems={catalogItems}
+                preselectedShop={prefCustomer}
+                onOrderPlaced={handleOrderPlaced}
+                onNavigate={navigate}
+                showToast={showToast}
+              />
+            )
+          )}
+
+          {(page === 'reports' || page === 'admin-reports') && (
+            (isAdmin || isManager) ? (
+              <ManagerReportsScreen
+                user={user}
+                clusters={clusters}
+                onNavigate={navigate}
+                showToast={showToast}
+              />
+            ) : (
+              <ReportsScreen
+                user={user}
+                clusters={clusters}
+                shops={shops}
+                orders={orders}
+                onNavigate={navigate}
+                showToast={showToast}
+              />
+            )
+          )}
+
+          {page === 'map' && (
+            <ShopMapScreen
               user={user}
               clusters={clusters}
-              shops={shops}
-              catalogItems={catalogItems}
-              preselectedShop={prefCustomer}
-              onOrderPlaced={handleOrderPlaced}
-              onNavigate={navigate}
               showToast={showToast}
             />
           )}
 
-          {page === 'reports' && (
-            <ReportsScreen
+          {page === 'team' && (
+            <TeamAssignmentsScreen
               user={user}
               clusters={clusters}
-              shops={shops}
-              orders={orders}
-              onNavigate={navigate}
               showToast={showToast}
             />
           )}
@@ -343,50 +807,180 @@ export default function App() {
             />
           )}
 
-          {page === 'summary' && (
+          {page === 'summary' && !isAdmin && !isManager && (
             <SummaryReportScreen
               user={user}
               showToast={showToast}
             />
           )}
+          </ErrorBoundary>
         </div>
 
         {/* Mobile & Android Preview Bottom Navigation */}
-        <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-          <button
-            className={page === 'overview' ? 'active' : ''}
-            onClick={() => navigate('overview')}
-          >
-            <span>⌂</span>Home
-          </button>
-          <button
-            className={page === 'orders' ? 'active' : ''}
-            onClick={() => {
-              setPrefCustomer('');
-              navigate('orders');
-            }}
-          >
-            <span>▤</span>Orders
-          </button>
-          <button
-            className={page === 'customers' ? 'active' : ''}
-            onClick={() => navigate('customers')}
-          >
-            <span>♙</span>Shops
-          </button>
-          <button
-            className={page === 'reports' ? 'active' : ''}
-            onClick={() => navigate('reports')}
-          >
-            <span>▥</span>Reports
-          </button>
-          <button
-            className={page === 'summary' ? 'active' : ''}
-            onClick={() => navigate('summary')}
-          >
-            <span>📋</span>Summary
-          </button>
-        </nav>
+        {isDelivery ? (
+          <nav className="mobile-bottom-nav" aria-label="Mobile delivery navigation">
+            <button
+              className={page === 'delivery' ? 'active' : ''}
+              onClick={() => navigate('delivery')}
+            >
+              <span>🚚</span>Route
+            </button>
+            <button
+              className="mobile-nav-signout"
+              onClick={handleLogout}
+              title="Sign out of LineCart"
+              aria-label="Sign out"
+            >
+              <span>🚪</span>Sign out
+            </button>
+          </nav>
+        ) : isAdmin ? (
+          <nav className="mobile-bottom-nav" aria-label="Mobile admin navigation">
+            <button
+              className={page === 'admin-dashboard' ? 'active' : ''}
+              onClick={() => navigate('admin-dashboard')}
+            >
+              <span>▦</span>Overview
+            </button>
+            <button
+              className={page === 'admin-users' ? 'active' : ''}
+              onClick={() => navigate('admin-users')}
+            >
+              <span>👥</span>Users
+            </button>
+            <button
+              className={page === 'orders' ? 'active' : ''}
+              onClick={() => navigate('orders')}
+            >
+              <span>📦</span>Orders
+            </button>
+            <button
+              className={page === 'admin-roles' ? 'active' : ''}
+              onClick={() => navigate('admin-roles')}
+            >
+              <span>🛡</span>Roles
+            </button>
+            <button
+              className={page === 'admin-settings' ? 'active' : ''}
+              onClick={() => navigate('admin-settings')}
+            >
+              <span>⚙️</span>Settings
+            </button>
+            <button
+              className="mobile-nav-signout"
+              onClick={handleLogout}
+              title="Sign out of LineCart"
+              aria-label="Sign out"
+            >
+              <span>🚪</span>Sign out
+            </button>
+          </nav>
+        ) : isManager ? (
+          <nav className="mobile-bottom-nav" aria-label="Mobile manager navigation">
+            {isPageAllowed('reports') && (
+              <button
+                className={page === 'reports' ? 'active' : ''}
+                onClick={() => navigate('reports')}
+              >
+                <span>▥</span>Reports
+              </button>
+            )}
+            {isPageAllowed('orders') && (
+              <button
+                className={page === 'orders' ? 'active' : ''}
+                onClick={() => navigate('orders')}
+              >
+                <span>▤</span>Orders
+              </button>
+            )}
+            {isPageAllowed('map') && (
+              <button
+                className={page === 'map' ? 'active' : ''}
+                onClick={() => navigate('map')}
+              >
+                <span>🗺</span>Map
+              </button>
+            )}
+            {isPageAllowed('team') && (
+              <button
+                className={page === 'team' ? 'active' : ''}
+                onClick={() => navigate('team')}
+              >
+                <span>👥</span>Team
+              </button>
+            )}
+            {isPageAllowed('customers') && (
+              <button
+                className={page === 'customers' ? 'active' : ''}
+                onClick={() => navigate('customers')}
+              >
+                <span>♙</span>Shops
+              </button>
+            )}
+            <button
+              className="mobile-nav-signout"
+              onClick={handleLogout}
+              title="Sign out of LineCart"
+              aria-label="Sign out"
+            >
+              <span>🚪</span>Sign out
+            </button>
+          </nav>
+        ) : (
+          <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+            {isPageAllowed('overview') && (
+              <button
+                className={page === 'overview' ? 'active' : ''}
+                onClick={() => navigate('overview')}
+              >
+                <span>⌂</span>Home
+              </button>
+            )}
+            {isPageAllowed('orders') && (
+              <button
+                className={page === 'orders' ? 'active' : ''}
+                onClick={() => {
+                  setPrefCustomer('');
+                  navigate('orders');
+                }}
+              >
+                <span>▤</span>Orders
+              </button>
+            )}
+            {isPageAllowed('customers') && (
+              <button
+                className={page === 'customers' ? 'active' : ''}
+                onClick={() => navigate('customers')}
+              >
+                <span>♙</span>Shops
+              </button>
+            )}
+            {isPageAllowed('reports') && (
+              <button
+                className={page === 'reports' ? 'active' : ''}
+                onClick={() => navigate('reports')}
+              >
+                <span>▥</span>Reports
+              </button>
+            )}
+            {isPageAllowed('summary') && (
+              <button
+                className={page === 'summary' ? 'active' : ''}
+                onClick={() => navigate('summary')}
+              >
+                <span>📋</span>Summary
+              </button>
+            )}
+            <button
+              className="mobile-nav-signout"
+              onClick={handleLogout}
+              title="Sign out of LineCart"
+              aria-label="Sign out"
+            >
+              <span>🚪</span>Sign out
+            </button>
+          </nav>
+        )}
 
         {/* Android System Gesture Bar (Visible in Android preview) */}
         <div className="android-system-nav">
@@ -400,7 +994,7 @@ export default function App() {
           className="exit-android"
           onClick={() => setAndroidPreview(false)}
         >
-          ← &nbsp; Exit Android preview
+          ← &nbsp; Exit Mobile preview (Laptop view)
         </button>
       )}
 
