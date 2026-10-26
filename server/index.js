@@ -575,23 +575,33 @@ app.use((req, res, next) => {
 });
 
 // Restricted CORS Configuration
-const getAllowedOrigins = () => {
+const getAllowedOrigins = (req) => {
   const configured = (process.env.CORS_ALLOWED_ORIGINS || '').trim();
-  if (configured) {
-    return configured.split(',').map((o) => o.trim()).filter(Boolean);
+  const allowed = configured
+    ? configured.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
+
+  // Always permit same-origin requests (frontend served by the same host)
+  const host = req?.get ? req.get('host') : req?.headers?.host;
+  if (host) {
+    allowed.push(`https://${host}`, `http://${host}`);
   }
-  if (isProduction) {
-    return ['capacitor://localhost', 'https://localhost'];
+
+  // Mobile APK (Capacitor) origins
+  allowed.push('capacitor://localhost', 'https://localhost', 'http://localhost');
+
+  if (!isProduction) {
+    allowed.push(
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3001'
+    );
   }
-  return [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-    'capacitor://localhost',
-    'http://localhost',
-    'https://localhost'
-  ];
+
+  return allowed;
 };
 
 app.use((req, res, next) => {
@@ -599,8 +609,21 @@ app.use((req, res, next) => {
   if (!origin) {
     return next();
   }
-  const allowed = getAllowedOrigins();
-  if (allowed.includes(origin)) {
+  const allowed = getAllowedOrigins(req);
+  let isAllowed = allowed.includes(origin);
+
+  // Also check if origin host matches the request's own host (same-origin)
+  if (!isAllowed) {
+    try {
+      const originHost = new URL(origin).host;
+      const reqHost = req.get('host');
+      if (originHost && reqHost && originHost === reqHost) {
+        isAllowed = true;
+      }
+    } catch {}
+  }
+
+  if (isAllowed) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
