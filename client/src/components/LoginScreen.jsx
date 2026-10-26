@@ -1,7 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { api, INDIAN_MOBILE_REGEX } from '../api';
 
-const IS_DEV_BUILD = Boolean(import.meta.env && import.meta.env.DEV);
+const ENABLE_DEMO = Boolean(
+  (import.meta.env && import.meta.env.DEV) ||
+  (import.meta.env && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true')
+);
+
+const DemoRoleLoginSection = ENABLE_DEMO
+  ? React.lazy(() => import('./DemoRoleLoginSection'))
+  : null;
 
 export default function LoginScreen({ onLoginSuccess, showToast }) {
   const [phone, setPhone] = useState('');
@@ -9,6 +16,7 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
   const [agentsList, setAgentsList] = useState([]);
+  const [demoRoles, setDemoRoles] = useState([]);
   const [systemMode, setSystemMode] = useState({
     production: true,
     demoMode: false,
@@ -25,9 +33,10 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
     api.getSystemMode().then((res) => {
       if (res) {
         setSystemMode(res);
-        if (IS_DEV_BUILD && res.demoMode && !res.production) {
+        if (ENABLE_DEMO && res.demoMode && !res.production) {
           api.getDemoUsers().then((uRes) => {
             if (uRes?.users) setAgentsList(uRes.users);
+            if (uRes?.demoRoles) setDemoRoles(uRes.demoRoles);
           }).catch(() => {});
         }
       }
@@ -258,106 +267,24 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
           </form>
         )}
 
-        {/* Demo Credentials Box: STRICTLY ISOLATED TO DEV BUILD + DEMO MODE */}
-        {IS_DEV_BUILD && systemMode.demoMode && !systemMode.production && (
-          <div className="mt-6 pt-5 border-t border-[#edf0f2] text-left">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] text-amber-600 block font-semibold">
-                Development / Demo Shortcuts:
-              </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium border border-amber-200">
-                DEV ONLY
-              </span>
-            </div>
-
-            <select
-              className="select w-full text-xs mb-3"
-              value={phone}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val) {
-                  setPhone(val);
-                  const matched = agentsList.find((u) => u.phone === val);
-                  const isDeliv = (matched?.role || '').toLowerCase() === 'delivery agent';
-                  setPassword(isDeliv ? '1234' : 'password123');
-                  setFormError('');
+        {/* Clearly labeled Demo role login section: STRICTLY ISOLATED TO DEV/DEMO BUILD + DEV/DEMO MODE */}
+        {ENABLE_DEMO && DemoRoleLoginSection && systemMode.demoMode && !systemMode.production ? (
+          <Suspense fallback={null}>
+            <DemoRoleLoginSection
+              demoRoles={demoRoles}
+              agentsList={agentsList}
+              currentPhone={phone}
+              onApplyCredentials={(creds) => {
+                if (creds?.phone) setPhone(creds.phone);
+                if (creds?.password) setPassword(creds.password);
+                setFormError('');
+                if (creds?.toastMessage && showToast) {
+                  showToast(creds.toastMessage);
                 }
               }}
-            >
-              <option value="">-- Quick-select Test Account --</option>
-              {agentsList.filter((u) => (u.role || '').toLowerCase() === 'delivery agent').length > 0 && (
-                <optgroup label="Delivery Agents">
-                  {agentsList
-                    .filter((u) => (u.role || '').toLowerCase() === 'delivery agent')
-                    .map((d) => (
-                      <option key={d.id} value={d.phone}>
-                        🚚 {d.name} ({d.phone})
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-              {agentsList.filter((u) => (u.role || '').toLowerCase() === 'sales manager').length > 0 && (
-                <optgroup label="Sales Managers">
-                  {agentsList
-                    .filter((u) => (u.role || '').toLowerCase() === 'sales manager')
-                    .map((m) => (
-                      <option key={m.id} value={m.phone}>
-                        👔 {m.name} ({m.phone})
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-              <optgroup label="Field Sales Agents">
-                {agentsList
-                  .filter((u) => (u.role || '').toLowerCase() !== 'sales manager' && (u.role || '').toLowerCase() !== 'admin' && (u.role || '').toLowerCase() !== 'delivery agent')
-                  .map((a) => (
-                    <option key={a.id} value={a.phone}>
-                      📋 {a.name} ({a.phone})
-                    </option>
-                  ))}
-              </optgroup>
-            </select>
-
-            <div className="flex gap-1.5 flex-wrap">
-              <button
-                type="button"
-                className="secondary-button text-[10px] py-1 px-2 flex-1"
-                onClick={() => {
-                  setPhone('9876500050');
-                  setPassword('1234');
-                  setFormError('');
-                }}
-              >
-                🚚 Delivery Agent
-              </button>
-              <button
-                type="button"
-                className="secondary-button text-[10px] py-1 px-2 flex-1"
-                onClick={() => {
-                  setPhone('9876500001');
-                  setPassword('password123');
-                  setFormError('');
-                }}
-              >
-                👔 Manager
-              </button>
-              <button
-                type="button"
-                className="secondary-button text-[10px] py-1 px-2 flex-1"
-                onClick={() => {
-                  setPhone('9876543210');
-                  setPassword('password123');
-                  setFormError('');
-                }}
-              >
-                📋 Field Agent
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-              Admin accounts require environment-configured credentials and are never exposed in demo shortcuts.
-            </p>
-          </div>
-        )}
+            />
+          </Suspense>
+        ) : null}
       </div>
     </div>
   );

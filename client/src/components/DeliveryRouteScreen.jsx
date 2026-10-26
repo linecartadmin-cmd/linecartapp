@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { api } from '../api';
 import { planRoadDeliveryRoute } from '../routing';
 import { getGoogleMapsUrl } from '../utils';
+import { createMapTileLayer, getMapTileConfig } from '../mapConfig';
 
 const I18N = {
   en: {
@@ -341,23 +342,8 @@ export default function DeliveryRouteScreen({
         scrollWheelZoom: true
       });
 
-      // Primary OSM tile layer with automatic CartoDB fallback on network/tile error
-      const primaryTileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-      const fallbackTileUrl = 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-
-      const tileLayer = L.tileLayer(primaryTileUrl, {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
-        crossOrigin: true
-      });
-
-      tileLayer.on('tileerror', (error) => {
-        if (error && error.tile && error.coords) {
-          const { x, y, z } = error.coords;
-          error.tile.src = `https://basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
-        }
-      });
-
+      // Legitimate, policy-compliant tile layer with caching & fallback
+      const tileLayer = createMapTileLayer(L);
       tileLayer.addTo(map);
 
       markersLayerRef.current = L.layerGroup().addTo(map);
@@ -1097,7 +1083,7 @@ export default function DeliveryRouteScreen({
                 />
                 <div className="bg-slate-50 p-2.5 px-3.5 text-[11px] text-slate-500 flex items-center justify-between border-t border-slate-200">
                   <span className="font-semibold">Tap marker pins to inspect contact</span>
-                  <span className="font-mono text-slate-400">Leaflet | OpenStreetMap</span>
+                  <span className="font-mono text-slate-400">Leaflet | Map data © OSM / CARTO</span>
                 </div>
               </div>
             </div>

@@ -128,6 +128,23 @@ function readSingleHiddenTtyLine(promptText) {
   });
 }
 
+function readSingleTtyLine(promptText) {
+  return new Promise((resolve) => {
+    process.stdout.write(promptText);
+    const stdin = process.stdin;
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    const onData = (chunk) => {
+      const line = String(chunk).replace(/[\r\n]+$/, '');
+      stdin.removeListener('data', onData);
+      stdin.pause();
+      resolve(line);
+    };
+    stdin.once('data', onData);
+  });
+}
+
 async function promptForNewAdminPassword() {
   if (process.stdin.isTTY) {
     const first = await readSingleHiddenTtyLine('Enter new password for Admin (9870000001) [hidden]: ');
@@ -252,6 +269,54 @@ async function main() {
       console.error('[Restore Error] Provide a valid path to a backup JSON file.');
       process.exit(1);
     }
+
+    const hasForceFlag = args.includes('--force') || args.includes('--confirm-restore');
+    const allowProd = args.includes('--allow-production-restore');
+
+    // Safety Gate 1: Strict Production Environment Guard
+    if (isProduction && !allowProd) {
+      console.error('\n============================================================');
+      console.error('[RESTORE BLOCKED] Production Safety Gate Violation');
+      console.error('============================================================');
+      console.error('The target environment is running in PRODUCTION mode (NODE_ENV=production).');
+      console.error('To protect live operational data, destructive database restores are blocked.');
+      console.error('If this is an intentional disaster recovery operation, you must explicitly supply:');
+      console.error('  --allow-production-restore --force\n');
+      process.exit(1);
+    }
+
+    // Mask any password in PostgreSQL connection URL
+    const targetDesc = db.mode === 'postgres'
+      ? (process.env.DATABASE_URL || '').replace(/:([^:@]+)@/, ':****@')
+      : (db.dbPath || 'embedded SQLite');
+
+    console.warn('\n============================================================');
+    console.warn('[CAUTION: DESTRUCTIVE ACTION] DATABASE RESTORE');
+    console.warn(`Target Engine: ${db.mode.toUpperCase()}`);
+    console.warn(`Target DB:     ${targetDesc}`);
+    console.warn(`Source File:   ${restoreFile}`);
+    console.warn('WARNING: This will permanently DELETE all records in the target database');
+    console.warn('and replace them with records from the snapshot.');
+    console.warn('============================================================\n');
+
+    // Safety Gate 2: Explicit Confirmation Guard
+    if (!hasForceFlag) {
+      if (process.stdin.isTTY) {
+        const answer = await readSingleTtyLine("Type 'CONFIRM-RESTORE' to proceed with wiping and restoring: ");
+        if (answer.trim() !== 'CONFIRM-RESTORE') {
+          console.log('\n[Restore Aborted] Confirmation did not match "CONFIRM-RESTORE". No changes were made.\n');
+          await db.close();
+          return;
+        }
+        console.log('[Safety Gate Passed] Confirmation accepted. Proceeding with restore...\n');
+      } else {
+        console.error('[RESTORE BLOCKED] Safety Gate Violation:');
+        console.error('Non-interactive execution requires an explicit confirmation flag.');
+        console.error('Re-run with: --force or --confirm-restore\n');
+        process.exit(1);
+      }
+    }
+
     const snapshot = JSON.parse(fs.readFileSync(path.resolve(restoreFile), 'utf8'));
     const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '001_initial_schema.sql'), 'utf8');
     await db.execRaw(migrationSql);
@@ -342,6 +407,83 @@ async function main() {
     });
 
     console.log(`[Restore] Successfully restored database from ${restoreFile}`);
+    await db.close();
+    return;
+  }
+
+  if (args.includes('--verify')) {
+    const fileIdx = args.indexOf('--verify') + 1;
+    const backupFile = args[fileIdx] && !args[fileIdx].startsWith('--') ? args[fileIdx] : null;
+    let baseline = null;
+    if (backupFile && fs.existsSync(path.resolve(backupFile))) {
+      baseline = JSON.parse(fs.readFileSync(path.resolve(backupFile), 'utf8'));
+    }
+
+    // STRICTLY READ-ONLY: Never execute DDL (schema setup) or write operations in verify mode.
+    // If schema setup is needed, run `node server/migrate.js` separately.
+    const counts = {};
+    const tables = [
+      'users', 'shops', 'orders', 'order_items',
+      'manager_assignments', 'sales_targets',
+      'role_permissions', 'audit_logs', 'app_settings'
+    ];
+    for (const tbl of tables) {
+      try {
+        const res = await db.query(`SELECT COUNT(*) AS cnt FROM ${tbl}`);
+        counts[tbl] = Number(res.rows[0]?.cnt || 0);
+      } catch {
+        counts[tbl] = null; // Table does not exist in target database
+      }
+    }
+
+    console.log('\n============================================================');
+    console.log(`[DB Verification - READ ONLY] Database Engine: ${db.mode.toUpperCase()}`);
+    if (baseline) {
+      console.log(`Baseline Snapshot: ${backupFile}`);
+    }
+    console.log('============================================================');
+    console.log('Table                 Target DB Records   Baseline Snapshot    Status');
+    console.log('--------------------------------------------------------------------');
+    let allMatched = true;
+    for (const tbl of tables) {
+      const current = counts[tbl];
+      let baseCount = 'N/A';
+      let status = 'INFO';
+      if (baseline?.tables) {
+        if (tbl === 'users') baseCount = (baseline.tables.users || []).length;
+        else if (tbl === 'shops') baseCount = (baseline.tables.shops || []).length;
+        else if (tbl === 'orders') baseCount = (baseline.tables.orders || []).length;
+        else if (tbl === 'order_items') {
+          baseCount = (baseline.tables.orders || []).reduce((sum, o) => sum + (o.orderList || []).length, 0);
+        }
+        else if (tbl === 'manager_assignments') {
+          baseCount = Object.values(baseline.tables.managerAssignments || {}).reduce((sum, arr) => sum + (arr || []).length, 0);
+        }
+        else if (tbl === 'sales_targets') baseCount = (baseline.tables.salesTargets || []).length;
+        else if (tbl === 'role_permissions') baseCount = Object.keys(baseline.tables.rolePermissions || {}).length;
+        else if (tbl === 'audit_logs') baseCount = (baseline.tables.auditLogs || []).length;
+        else if (tbl === 'app_settings') baseCount = baseline.tables.appSettings ? 1 : 0;
+
+        if (current === null) {
+          status = 'TABLE MISSING';
+          allMatched = false;
+        } else {
+          const match = current === baseCount;
+          status = match ? '✔ MATCH' : 'MISMATCH';
+          if (!match) allMatched = false;
+        }
+      } else if (current === null) {
+        status = 'TABLE MISSING';
+      }
+      const currentDisplay = current === null ? 'MISSING' : String(current);
+      console.log(`${tbl.padEnd(22)} ${currentDisplay.padStart(9)}       ${String(baseCount).padStart(9)}        ${status}`);
+    }
+    console.log('============================================================');
+    if (baseline && allMatched) {
+      console.log('🎉 Record counts match the baseline snapshot exactly!\n');
+    } else if (baseline) {
+      console.warn('⚠️ Discrepancies detected between target DB and baseline snapshot.\n');
+    }
     await db.close();
     return;
   }

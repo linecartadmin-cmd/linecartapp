@@ -1,0 +1,14 @@
+{
+  "name": "linecart-suite",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm install --prefix server && npm install --prefix client && npm run build --prefix client",
+    "start": "node server/index.js",
+    "db:migrate": "node server/migrate.js",
+    "db:backup": "node server/migrate.js --backup",
+    "db:restore": "node server/migrate.js --restore",
+    "db:verify": "node server/migrate.js --verify"
+  }
+}

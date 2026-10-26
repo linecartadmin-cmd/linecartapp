@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../api';
+import { createMapTileLayer } from '../mapConfig';
 
 export default function ShopMapScreen({ user, clusters, showToast }) {
   const [loading, setLoading] = useState(true);
@@ -157,12 +158,11 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
     if (!mapInstanceRef.current) {
       const map = L.map(mapContainerRef.current, {
         zoomControl: true,
-        attributionControl: false
+        attributionControl: true
       }).setView([10.5758, 77.2415], 12);
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      }).addTo(map);
+      const tileLayer = createMapTileLayer(L);
+      tileLayer.addTo(map);
 
       const markersGroup = L.layerGroup().addTo(map);
       markersLayerRef.current = markersGroup;

@@ -447,7 +447,7 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
                     type="tel"
                     required
                     className="filter-input"
-                    placeholder="e.g. 9876500099"
+                    placeholder="e.g. 9870000002"
                     value={createForm.phone}
                     onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })}
                   />

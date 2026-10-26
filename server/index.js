@@ -85,6 +85,92 @@ if (!fs.existsSync(shopUploadsDir)) {
   fs.mkdirSync(shopUploadsDir, { recursive: true });
 }
 
+// Durable Photo Storage: Local disk by default, Supabase Storage when configured
+const supabaseStorageUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const supabaseBucket = (process.env.SUPABASE_BUCKET || 'shop-photos').trim();
+const useSupabaseStorage = Boolean(supabaseStorageUrl && supabaseServiceKey);
+
+async function saveShopPhoto(filename, buffer, mimeType) {
+  const destPath = path.join(shopUploadsDir, filename);
+
+  // If Supabase Storage is configured, remote upload is authoritative and REQUIRED.
+  // We must not silently report success if the remote upload fails.
+  if (useSupabaseStorage) {
+    let uploadRes;
+    let errText = '';
+    try {
+      const uploadUrl = `${supabaseStorageUrl}/storage/v1/object/${supabaseBucket}/${filename}`;
+      uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+          'Content-Type': mimeType || 'image/jpeg',
+          'x-upsert': 'true'
+        },
+        body: buffer
+      });
+    } catch (err) {
+      throw new Error(`Remote photo storage connection failed: ${err.message}`);
+    }
+
+    if (!uploadRes.ok) {
+      try { errText = await uploadRes.text(); } catch {}
+      throw new Error(`Remote photo storage rejected upload (HTTP ${uploadRes.status}): ${errText || uploadRes.statusText}`);
+    }
+
+    console.log(`[Storage] Persisted ${filename} to Supabase Storage (${supabaseBucket})`);
+  }
+
+  // Local write: acts as local cache when cloud storage is configured,
+  // or primary storage for local development when cloud storage is not configured.
+  try {
+    fs.writeFileSync(destPath, buffer);
+  } catch (err) {
+    if (!useSupabaseStorage) {
+      // In local development, failure to write to disk is a hard failure
+      throw new Error(`Local photo storage write failed: ${err.message}`);
+    } else {
+      console.warn(`[Storage Warning] Failed to write local cache for ${filename}:`, err.message);
+    }
+  }
+}
+
+async function getShopPhoto(filename) {
+  const destPath = path.join(shopUploadsDir, filename);
+  if (fs.existsSync(destPath)) {
+    return { buffer: fs.readFileSync(destPath), local: true };
+  }
+
+  // If not on local disk (e.g. after container restart), fetch from Supabase Storage
+  if (useSupabaseStorage) {
+    try {
+      // Supabase Storage REST API download: GET /storage/v1/object/{bucket}/{filename}
+      // Service role key bypasses Row-Level Security (RLS) for private buckets
+      const downloadUrl = `${supabaseStorageUrl}/storage/v1/object/${supabaseBucket}/${filename}`;
+      const res = await fetch(downloadUrl, {
+        headers: {
+          'Authorization': `Bearer ${supabaseServiceKey}`
+        }
+      });
+      if (res.ok) {
+        const arrayBuf = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        // Cache to local disk for fast subsequent reads
+        try { fs.writeFileSync(destPath, buf); } catch {}
+        return { buffer: buf, local: false };
+      } else if (res.status !== 404) {
+        const errText = await res.text();
+        console.warn(`[Storage Warning] Supabase Storage download error for ${filename} (${res.status}):`, errText);
+      }
+    } catch (err) {
+      console.warn(`[Storage Warning] Failed to retrieve ${filename} from Supabase Storage:`, err.message);
+    }
+  }
+
+  return null;
+}
+
 const DEFAULT_ROLE_PERMISSIONS = {
   Admin: {
     pages: ['admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments', 'admin-targets', 'admin-orders', 'admin-reports', 'admin-shops', 'admin-audit', 'admin-settings'],
@@ -467,10 +553,17 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 + 1024 } // Handled explicitly with clear 400 message
 });
 
+// Reverse Proxy Support (Render, Cloudflare, AWS, etc.)
+if (process.env.TRUST_PROXY === 'true' || isProduction) {
+  app.set('trust proxy', 1);
+}
+
 // Security Headers Middleware
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
+  // Strict site-wide privacy: never leak application paths, query strings, or origins in standard HTTP traffic.
+  // Map tile layers that require origin validation configure element-scoped referrerPolicy on their own <img> elements.
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
   res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(self), microphone=()');
@@ -552,7 +645,14 @@ app.use('/items', express.static(itemsDir));
 app.use('/admin_panel/storage/app/public/LC_customer/items', express.static(itemsDir));
 
 // Serve static frontend build
-const clientDist = path.join(__dirname, '../client/dist');
+// In production, strictly serve production dist (no demo controls/credentials).
+// In development/pilot mode, serve dist-demo if available, otherwise dist.
+const clientDistDemo = path.join(__dirname, '../client/dist-demo');
+const clientDistProd = path.join(__dirname, '../client/dist');
+const clientDist = (!isProduction && fs.existsSync(clientDistDemo))
+  ? clientDistDemo
+  : clientDistProd;
+console.log(`[Frontend] Serving static frontend from: ${clientDist} (isProduction: ${isProduction})`);
 app.use(express.static(clientDist));
 
 // ============================================================================
@@ -651,18 +751,98 @@ app.post('/api/system/setup-admin', async (req, res) => {
   });
 });
 
+// Canonical synthetic demo accounts for local development and testing
+const DEV_DEMO_ACCOUNTS = [
+  {
+    id: 950,
+    name: 'Demo Admin',
+    role: 'Admin',
+    phone: '9876500099',
+    password: 'password123',
+    cluster_id: 1,
+    description: 'System administration, user roles & command center'
+  },
+  {
+    id: 100,
+    name: 'Demo Sales Manager',
+    role: 'Sales Manager',
+    phone: '9876500001',
+    password: 'password123',
+    cluster_id: 1,
+    description: 'Team performance, orders, maps & quotas'
+  },
+  {
+    id: 6,
+    name: 'Demo Field Agent',
+    role: 'Field Sales Agent',
+    phone: '9876543210',
+    password: 'password123',
+    cluster_id: 1,
+    description: 'Shop orders, customer registration & catalogs'
+  },
+  {
+    id: 50,
+    name: 'Demo Delivery Agent',
+    role: 'Delivery Agent',
+    phone: '9876500050',
+    password: 'password123',
+    cluster_id: 1,
+    description: 'Delivery route fulfillment & stop updates'
+  }
+];
+
+async function ensureDevelopmentDemoAccounts() {
+  if (isProduction) return;
+
+  await db.withTransaction(async (tx) => {
+    for (const acc of DEV_DEMO_ACCOUNTS) {
+      const existing = await tx.query(
+        'SELECT id, phone, password_hash FROM users WHERE id = $1 OR phone = $2',
+        [acc.id, acc.phone]
+      );
+      const pwdHash = hashPassword(acc.password);
+      if (existing.rowCount === 0) {
+        await tx.query(
+          `INSERT INTO users (id, name, role, phone, phone_valid, password_hash, must_change_password, cluster_id, active, created_on)
+           VALUES ($1, $2, $3, $4, 1, $5, 0, $6, 1, '2026-04-01 09:00:00')`,
+          [acc.id, acc.name, acc.role, acc.phone, pwdHash, acc.cluster_id]
+        );
+      } else {
+        const u = existing.rows[0];
+        // Ensure demo password hash is set for dev testing (Real Admin 900 / 9870000001 is NEVER touched)
+        if (Number(u.id) !== 900 && u.phone !== '9870000001') {
+          await tx.query(
+            'UPDATE users SET password_hash = $1, must_change_password = 0, active = 1, phone_valid = 1 WHERE id = $2',
+            [pwdHash, Number(u.id)]
+          );
+        }
+      }
+    }
+  });
+}
+
 // Demo users helper endpoint (strictly disabled in production; only returns non-sensitive dev preview metadata)
 app.get('/api/demo-users', async (req, res) => {
   if (isProduction) {
     return res.status(403).json({
       status: 403,
       message: 'Demo accounts are disabled in production mode.',
+      demoRoles: [],
       users: []
     });
   }
   await refreshStateFromDb();
+
+  const demoRoles = DEV_DEMO_ACCOUNTS.map((dr) => ({
+    role: dr.role,
+    name: dr.name,
+    phone: dr.phone,
+    defaultPassword: dr.password,
+    description: dr.description
+  }));
+
   const safeUsers = salesPersons
-    .filter((u) => (u.role || '').toLowerCase() !== 'admin' && u.phoneValid && Number(u.active) === 1)
+    .filter((u) => u.phone !== '9870000001' && u.phoneValid && Number(u.active) === 1)
     .map((u) => ({
       id: u.id,
       name: u.name,
@@ -674,6 +854,7 @@ app.get('/api/demo-users', async (req, res) => {
 
   res.json({
     status: 200,
+    demoRoles,
     users: safeUsers
   });
 });
@@ -717,7 +898,7 @@ const handleLogin = async (req, res) => {
       });
     }
 
-    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+    const clientIp = req.ip || (req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : null) || req.socket?.remoteAddress || 'unknown';
     if (await isLoginRateLimited(clientIp, rawPhone)) {
       return res.status(429).json({
         status: 429,
@@ -730,6 +911,25 @@ const handleLogin = async (req, res) => {
 
     // Look up strictly by exact 10-digit Indian mobile number
     const found = salesPersons.find((s) => s.phone === rawPhone && s.phoneValid);
+
+    // In production mode, strictly reject synthetic demo accounts and known demo passwords
+    if (isProduction) {
+      if (isKnownDemoPassword(rawPassword)) {
+        await recordFailedLoginAttempt(clientIp, rawPhone);
+        return res.status(401).json({
+          status: 401,
+          message: 'Security Policy: Demo credentials and known default passwords are strictly rejected in production.',
+          result: []
+        });
+      }
+      if (found && (Number(found.id) === 950 || found.phone === '9876500099')) {
+        return res.status(403).json({
+          status: 403,
+          message: 'Security Policy: Demo accounts are disabled in production mode.',
+          result: []
+        });
+      }
+    }
 
     if (!found || !found.passwordHash) {
       await recordFailedLoginAttempt(clientIp, rawPhone);
@@ -1166,8 +1366,7 @@ const handleAddCustomer = async (req, res) => {
 
       if (uploadedFile && photoValidation?.valid) {
         savedPhotoName = `shop_${savedShopId}_${crypto.randomUUID()}.${photoValidation.ext}`;
-        const destPath = path.join(shopUploadsDir, savedPhotoName);
-        fs.writeFileSync(destPath, uploadedFile.buffer);
+        await saveShopPhoto(savedPhotoName, uploadedFile.buffer, uploadedFile.mimetype || 'image/jpeg');
       }
 
       const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -1208,9 +1407,10 @@ const handleAddCustomer = async (req, res) => {
     });
   } catch (err) {
     console.error('[AddCustomer Error]', err.message);
-    res.status(400).json({
-      status: 400,
-      message: 'Failed To Create Customer',
+    const isStorageError = err.message.includes('photo storage') || err.message.includes('Remote photo');
+    res.status(isStorageError ? 502 : 400).json({
+      status: isStorageError ? 502 : 400,
+      message: isStorageError ? `Failed to create customer: ${err.message}` : 'Failed To Create Customer',
       id: '0'
     });
   }
@@ -1241,8 +1441,8 @@ app.get('/api/uploads/shops/:filename', requireAuth, async (req, res) => {
     return res.status(400).json({ status: 400, message: 'Invalid photo filename.' });
   }
 
-  const fullPath = path.join(shopUploadsDir, safeName);
-  if (!fs.existsSync(fullPath)) {
+  const photo = await getShopPhoto(safeName);
+  if (!photo) {
     return res.status(404).json({ status: 404, message: 'Shop photo not found.' });
   }
 
@@ -1251,7 +1451,7 @@ app.get('/api/uploads/shops/:filename', requireAuth, async (req, res) => {
   res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Disposition', 'inline');
   res.setHeader('Cache-Control', 'private, max-age=3600');
-  return res.sendFile(fullPath);
+  return res.send(photo.buffer);
 });
 
 // 5. GET /getitemsorder
@@ -2995,6 +3195,12 @@ async function startServer() {
     defaultRolePermissions: DEFAULT_ROLE_PERMISSIONS
   });
   invalidPhoneAccounts = migResult.invalidPhoneAccounts || [];
+
+  // In development mode, ensure canonical demo role accounts are seeded with test credentials
+  if (!isProduction) {
+    await ensureDevelopmentDemoAccounts();
+  }
+
   await refreshStateFromDb();
 
   if (invalidPhoneAccounts.length > 0) {

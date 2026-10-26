@@ -8,6 +8,8 @@ yarn-error.log*
 # Production build artifacts
 client/dist/
 dist/
+client/dist-demo/
+dist-demo/
 
 # Documentation screenshots may contain real customer or account details
 docs/screenshots/

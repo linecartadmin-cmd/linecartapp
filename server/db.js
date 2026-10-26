@@ -65,17 +65,21 @@ class DatabaseAdapter {
     const dbUrl = (process.env.DATABASE_URL || '').trim();
     if (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://')) {
       this.mode = 'postgres';
+      const useSsl = process.env.DB_SSL === 'true' || dbUrl.includes('sslmode=require') || dbUrl.includes('supabase.com');
+      // Normal TLS certificate verification enabled by default (rejectUnauthorized: true).
+      // Only disabled if explicitly requested via DB_SSL_REJECT_UNAUTHORIZED=false for legacy self-signed certificates.
+      const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
       this.pool = new Pool({
         connectionString: dbUrl,
-        max: Number(process.env.DB_POOL_MAX || 20),
+        max: Number(process.env.DB_POOL_MAX || (dbUrl.includes('supabase.com') ? 10 : 20)),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
-        ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' } : undefined
+        ssl: useSsl ? { rejectUnauthorized } : undefined
       });
       // Verify connection
       const client = await this.pool.connect();
       client.release();
-      console.log('[DB] Connected to external PostgreSQL database via DATABASE_URL');
+      console.log(`[DB] Connected to external PostgreSQL database (${dbUrl.includes('supabase.com') ? 'Supabase' : 'Remote Postgres'}) via DATABASE_URL`);
     } else {
       this.mode = 'embedded-postgres-compat';
       const dataDir = path.join(__dirname, 'data');
