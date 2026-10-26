@@ -63,24 +63,62 @@ class DatabaseAdapter {
 
   async init() {
     const dbUrl = (process.env.DATABASE_URL || '').trim();
+    const isCloudOrStaging = (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
+                             (process.env.APP_ENV || '').toLowerCase() === 'staging' ||
+                             Boolean(process.env.RENDER);
+
     if (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://')) {
       this.mode = 'postgres';
       const useSsl = process.env.DB_SSL === 'true' || dbUrl.includes('sslmode=require') || dbUrl.includes('supabase.com');
-      // Normal TLS certificate verification enabled by default (rejectUnauthorized: true).
-      // Only disabled if explicitly requested via DB_SSL_REJECT_UNAUTHORIZED=false for legacy self-signed certificates.
-      const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
+      
+      let sslOptions = undefined;
+      if (useSsl) {
+        sslOptions = { rejectUnauthorized: true };
+        // Check for Root CA certificate: from environment variable or mounted secret file
+        const caContent = (process.env.DB_CA_CERT || process.env.SUPABASE_CA_CERT || '').trim();
+        const candidateCaPaths = [
+          process.env.DB_CA_CERT_PATH,
+          '/etc/secrets/prod-ca-2021.crt', // Render secret file default mount path
+          path.resolve(__dirname, 'prod-ca-2021.crt'),
+          path.resolve(__dirname, '../prod-ca-2021.crt'),
+          path.resolve(process.cwd(), 'prod-ca-2021.crt'),
+          'C:\\Users\\samma\\Desktop\\rea\\prod-ca-2021.crt'
+        ].filter(Boolean);
+
+        const foundCaPath = candidateCaPaths.find((p) => fs.existsSync(p));
+
+        if (caContent && caContent.includes('-----BEGIN CERTIFICATE-----')) {
+          sslOptions.ca = caContent;
+          console.log('[DB] Enforcing strict TLS certificate verification using DB_CA_CERT environment variable');
+        } else if (foundCaPath) {
+          sslOptions.ca = fs.readFileSync(foundCaPath, 'utf8');
+          console.log(`[DB] Enforcing strict TLS certificate verification using CA file at ${foundCaPath}`);
+        } else if (process.env.DB_SSL_REJECT_UNAUTHORIZED === 'false') {
+          sslOptions.rejectUnauthorized = false;
+          console.warn('[DB WARNING] Strict CA verification is disabled via DB_SSL_REJECT_UNAUTHORIZED=false.');
+        } else {
+          console.log('[DB] Connecting with system default TLS certificate verification (rejectUnauthorized: true)');
+        }
+      }
+
       this.pool = new Pool({
         connectionString: dbUrl,
         max: Number(process.env.DB_POOL_MAX || (dbUrl.includes('supabase.com') ? 10 : 20)),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
-        ssl: useSsl ? { rejectUnauthorized } : undefined
+        ssl: sslOptions
       });
+
       // Verify connection
       const client = await this.pool.connect();
       client.release();
       console.log(`[DB] Connected to external PostgreSQL database (${dbUrl.includes('supabase.com') ? 'Supabase' : 'Remote Postgres'}) via DATABASE_URL`);
     } else {
+      if (isCloudOrStaging) {
+        throw new Error(
+          '[DB FATAL] DATABASE_URL is required in cloud/staging/production mode. Silently falling back to local SQLite on cloud hosting is prohibited.'
+        );
+      }
       this.mode = 'embedded-postgres-compat';
       const dataDir = path.join(__dirname, 'data');
       if (!fs.existsSync(dataDir)) {
@@ -219,6 +257,11 @@ export async function runMigrationsAndSeed({
     }
   }
 
+  const isCloudOrPostgres = db.mode === 'postgres' ||
+                           Boolean(isProduction) ||
+                           (process.env.APP_ENV || '').toLowerCase() === 'staging' ||
+                           Boolean(process.env.RENDER);
+
   const invalidPhoneAccounts = [];
 
   await db.withTransaction(async (tx) => {
@@ -277,11 +320,12 @@ export async function runMigrationsAndSeed({
       return false;
     };
 
-    // 4. Users (seed only when users table is empty so subsequent edits/deletions survive restarts)
+    // 4. Users (seed only when users table is empty AND running in local SQLite dev mode)
     const existingUsersCountRes = await tx.query('SELECT COUNT(*) AS cnt FROM users');
     const isInitialUserSeed = Number(existingUsersCountRes.rows[0]?.cnt || 0) === 0;
+    const shouldSeedUsers = isInitialUserSeed && !isCloudOrPostgres;
 
-    if (isInitialUserSeed) {
+    if (shouldSeedUsers) {
       const mergedUsersMap = new Map();
       for (const sp of seedData.salesPersons || []) {
         mergedUsersMap.set(Number(sp.id), { ...sp });
@@ -437,9 +481,10 @@ export async function runMigrationsAndSeed({
       }
     }
 
-    // 5. Shops (seed only when shops table is empty)
+    // 5. Shops (seed only when shops table is empty AND in local SQLite dev mode)
     const existingShopsCountRes = await tx.query('SELECT COUNT(*) AS cnt FROM shops');
-    if (Number(existingShopsCountRes.rows[0]?.cnt || 0) === 0) {
+    const shouldSeedShops = Number(existingShopsCountRes.rows[0]?.cnt || 0) === 0 && !isCloudOrPostgres;
+    if (shouldSeedShops) {
       for (const s of seedData.shops || []) {
         await tx.query(
           `INSERT INTO shops (shop_id, cluster_id, shop_name, shop_category, owner_name, contact1, contact2, latitude, longitude, address, pincode, payment_mode, created_by, photo, active, created_on, survey_json)
@@ -468,9 +513,10 @@ export async function runMigrationsAndSeed({
       }
     }
 
-    // 6. Orders & Order Items (seed only when orders table is empty)
+    // 6. Orders & Order Items (seed only when orders table is empty AND in local SQLite dev mode)
     const existingOrdersCountRes = await tx.query('SELECT COUNT(*) AS cnt FROM orders');
-    if (Number(existingOrdersCountRes.rows[0]?.cnt || 0) === 0) {
+    const shouldSeedOrders = Number(existingOrdersCountRes.rows[0]?.cnt || 0) === 0 && !isCloudOrPostgres;
+    if (shouldSeedOrders) {
       const delivOverrides = legacyConfig.deliveryOrderOverrides || {};
       const defaultAgent50Map = {
         'S039-24018': 'In progress',
@@ -542,9 +588,10 @@ export async function runMigrationsAndSeed({
       }
     }
 
-    // 7. Manager Assignments (only seed if table is currently empty)
+    // 7. Manager Assignments (only seed if table is currently empty AND in local SQLite dev mode)
     const existingAssignCount = await tx.query('SELECT COUNT(*) AS cnt FROM manager_assignments');
-    if (Number(existingAssignCount.rows[0]?.cnt || 0) === 0) {
+    const shouldSeedAssignments = Number(existingAssignCount.rows[0]?.cnt || 0) === 0 && !isCloudOrPostgres;
+    if (shouldSeedAssignments) {
       const assignSource = (legacyConfig.managerAssignments && Object.keys(legacyConfig.managerAssignments).length > 0)
         ? legacyConfig.managerAssignments
         : (seedData.managerAssignments || {});
@@ -563,9 +610,10 @@ export async function runMigrationsAndSeed({
       }
     }
 
-    // 8. Sales Targets
+    // 8. Sales Targets (only seed if table is currently empty AND in local SQLite dev mode)
     const existingTargetCount = await tx.query('SELECT COUNT(*) AS cnt FROM sales_targets');
-    if (Number(existingTargetCount.rows[0]?.cnt || 0) === 0) {
+    const shouldSeedTargets = Number(existingTargetCount.rows[0]?.cnt || 0) === 0 && !isCloudOrPostgres;
+    if (shouldSeedTargets) {
       const targetSource = Array.isArray(legacyConfig.salesTargets) && legacyConfig.salesTargets.length > 0
         ? legacyConfig.salesTargets
         : (seedData.salesTargets || []);

@@ -46,8 +46,9 @@ const loadEnvFile = () => {
 };
 loadEnvFile();
 
-const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-console.log(`[Security] Server running in ${isProduction ? 'PRODUCTION (Strict Security)' : 'DEVELOPMENT / PILOT'} mode`);
+const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
+                     (process.env.APP_ENV || '').toLowerCase() === 'staging';
+console.log(`[Security] Server running in ${isProduction ? 'PRODUCTION / STAGING (Strict Security)' : 'DEVELOPMENT / LOCAL'} mode`);
 
 // Cryptographic Password Hashing (scrypt + 16-byte random salt + timingSafeEqual)
 export const hashPassword = (password) => {
@@ -659,6 +660,47 @@ app.use(express.static(clientDist));
 // PUBLIC SYSTEM & AUTHENTICATION ENDPOINTS
 // ============================================================================
 
+// Cloud & Service Health Check Endpoint (public, lightweight, verified against live database)
+app.get(['/health', '/api/health'], async (req, res) => {
+  try {
+    const shopsRes = await db.query('SELECT COUNT(*) AS cnt FROM shops');
+    const shopsCount = Number(shopsRes.rows[0]?.cnt || 0);
+    const ordersRes = await db.query('SELECT COUNT(*) AS cnt FROM orders');
+    const ordersCount = Number(ordersRes.rows[0]?.cnt || 0);
+    const usersRes = await db.query('SELECT COUNT(*) AS cnt FROM users');
+    const usersCount = Number(usersRes.rows[0]?.cnt || 0);
+
+    res.json({
+      status: 'healthy',
+      service: 'linecart-backend',
+      environment: isProduction ? (process.env.APP_ENV || 'production') : 'development',
+      database: {
+        mode: db.mode,
+        connected: true,
+        shopsCount,
+        usersCount,
+        ordersCount
+      },
+      storage: {
+        provider: useSupabaseStorage ? 'supabase-storage' : 'local-disk'
+      },
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'unhealthy',
+      service: 'linecart-backend',
+      database: {
+        mode: db.mode,
+        connected: false,
+        error: err.message
+      },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // System environment & setup status endpoint (minimal public info, no private data)
 app.get('/api/system/mode', async (req, res) => {
   await refreshStateFromDb();
@@ -792,7 +834,7 @@ const DEV_DEMO_ACCOUNTS = [
 ];
 
 async function ensureDevelopmentDemoAccounts() {
-  if (isProduction) return;
+  if (isProduction || db.mode === 'postgres') return;
 
   await db.withTransaction(async (tx) => {
     for (const acc of DEV_DEMO_ACCOUNTS) {
@@ -821,12 +863,12 @@ async function ensureDevelopmentDemoAccounts() {
   });
 }
 
-// Demo users helper endpoint (strictly disabled in production; only returns non-sensitive dev preview metadata)
+// Demo users helper endpoint (strictly disabled in cloud/staging/production mode)
 app.get('/api/demo-users', async (req, res) => {
-  if (isProduction) {
+  if (isProduction || db.mode === 'postgres') {
     return res.status(403).json({
       status: 403,
-      message: 'Demo accounts are disabled in production mode.',
+      message: 'Demo accounts are disabled in cloud/staging/production mode.',
       demoRoles: [],
       users: []
     });
