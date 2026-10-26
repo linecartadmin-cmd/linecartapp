@@ -1242,6 +1242,72 @@ function verifyFieldAgentScope(req, res, requestedSpersonId) {
   return { authorized: false };
 }
 
+/**
+ * Strict shop-level access authorization guard.
+ * Determines whether the authenticated caller has permission to view records / order history for a specific shop.
+ */
+function canCallerAccessShop(caller, shop) {
+  if (!caller || !shop) return false;
+  const role = (caller.role || '').toLowerCase();
+
+  // Administrator has unrestricted organization-wide access
+  if (role === 'admin') return true;
+
+  const shopClusterId = Number(shop.cluster_id || shop.clusterid || 0);
+  const shopCreatedBy = Number(shop.created_by || shop.createdby || 0);
+  const callerClusterId = Number(caller.cluster_id || caller.clusterid || 0);
+  const callerId = Number(caller.id || 0);
+
+  // Sales Manager: authorized for shops in their supervised cluster, or created by assigned agents
+  if (role === 'sales manager') {
+    if (
+      !checkActionPermission(caller.role, 'view_cluster_shops') &&
+      !checkActionPermission(caller.role, 'view_shops') &&
+      !checkActionPermission(caller.role, 'view_team_orders')
+    ) {
+      return false;
+    }
+    if (callerClusterId === 0 || callerClusterId === shopClusterId) {
+      return true;
+    }
+    const assignedAgentIds = getAssignedAgentIds(callerId);
+    if (assignedAgentIds.includes(shopCreatedBy)) {
+      return true;
+    }
+    const assignedAgents = salesPersons.filter((u) => assignedAgentIds.includes(Number(u.id)));
+    if (assignedAgents.some((u) => Number(u.clusterid || u.cluster_id) === shopClusterId)) {
+      return true;
+    }
+    return false;
+  }
+
+  // Field Sales Agent: authorized for shops in their assigned cluster, or registered by them
+  if (role === 'field sales agent') {
+    if (
+      !checkActionPermission(caller.role, 'view_assigned_shops') &&
+      !checkActionPermission(caller.role, 'view_cluster_shops') &&
+      !checkActionPermission(caller.role, 'view_shops') &&
+      !checkActionPermission(caller.role, 'create_order')
+    ) {
+      return false;
+    }
+    if (callerClusterId === 0 || callerClusterId === shopClusterId || shopCreatedBy === callerId) {
+      return true;
+    }
+    return false;
+  }
+
+  // Delivery Agent: authorized for shops in their assigned route cluster
+  if (role === 'delivery agent') {
+    if (callerClusterId === 0 || callerClusterId === shopClusterId) {
+      return true;
+    }
+    return false;
+  }
+
+  return false;
+}
+
 // Compute live cluster statistics from current database shops & orders
 function computeClusterStatsForScope(clusterId, scopedOrders = null) {
   const cId = Number(clusterId);
@@ -1777,6 +1843,163 @@ const handleCreateOrder = async (req, res) => {
 app.post('/createorder', handleCreateOrder);
 app.post('/api/linecart/createorder', handleCreateOrder);
 app.post('/admin_panel/public/api/linecart/createorder', handleCreateOrder);
+
+// 6a. GET /api/shops/:shopId/order-history (7-day past orders for a selected shop with historical unit prices)
+const handleGetShopOrderHistory = async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    if (!caller) {
+      return res.status(401).json({
+        status: 401,
+        message: 'Authentication required: valid Bearer session token must be provided.'
+      });
+    }
+
+    const rawShopParam = String(req.params.shopId || '').trim();
+    if (!rawShopParam) {
+      return res.status(400).json({ status: 400, message: 'Shop ID is required.' });
+    }
+
+    const numericShopId = parseInt(rawShopParam.replace(/^S/i, ''), 10);
+    const shopShortId = !isNaN(numericShopId) ? `S${String(numericShopId).padStart(3, '0')}` : rawShopParam;
+
+    const shop = shops.find(
+      (s) => Number(s.shopid) === numericShopId || String(s.shopid) === rawShopParam
+    );
+
+    if (!shop) {
+      return res.status(404).json({
+        status: 404,
+        message: `Shop not found with ID ${rawShopParam}.`
+      });
+    }
+
+    if (!canCallerAccessShop(caller, shop)) {
+      return res.status(403).json({
+        status: 403,
+        message: `Access Denied: You do not have permission to view order history for shop #${shop.shopid} (${shop.shopName}).`
+      });
+    }
+
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 7));
+    const now = new Date();
+    const istDateString = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '02-digit',
+      day: '02-digit'
+    }).format(now);
+
+    const todayStr = (req.query.today && /^\d{4}-\d{2}-\d{2}$/.test(req.query.today))
+      ? req.query.today
+      : istDateString;
+    const todayDate = new Date(`${todayStr}T00:00:00Z`);
+    const cutoffMs = todayDate.getTime() - (days - 1) * 86400000;
+    const cutoffDateStr = new Date(cutoffMs).toISOString().slice(0, 10);
+
+    const ordersRes = await db.query(
+      `SELECT order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category,
+              sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total
+       FROM orders
+       WHERE (customer_id = $1 OR shop_short_id = $2)
+         AND order_date >= $3
+       ORDER BY order_date DESC, serial_no DESC`,
+      [shop.shopid, shopShortId, cutoffDateStr]
+    );
+
+    const orderRows = ordersRes.rows || [];
+    const itemsByOrderId = new Map();
+
+    if (orderRows.length > 0) {
+      const orderIds = orderRows.map((r) => String(r.order_id));
+      const placeholders = orderIds.map((_, i) => `$${i + 1}`).join(', ');
+      const itemsRes = await db.query(
+        `SELECT id, order_id, item_id, item_name, qty, price, cust_price, act_price, item_json
+         FROM order_items
+         WHERE order_id IN (${placeholders})
+         ORDER BY id ASC`,
+        orderIds
+      );
+
+      for (const itemRow of (itemsRes.rows || [])) {
+        const oid = String(itemRow.order_id);
+        if (!itemsByOrderId.has(oid)) itemsByOrderId.set(oid, []);
+
+        let parsedJson = {};
+        try {
+          parsedJson = JSON.parse(itemRow.item_json || '{}');
+        } catch {}
+
+        const qty = Number(itemRow.qty || 0);
+        const custPrice = Number(itemRow.cust_price);
+        const listPrice = Number(itemRow.price);
+        const unitPrice = (custPrice > 0) ? custPrice : (listPrice > 0 ? listPrice : 0);
+        const lineTotal = Number((qty * unitPrice).toFixed(2));
+        const unit = parsedJson.unitType || parsedJson.unit || 'Kgs';
+
+        itemsByOrderId.get(oid).push({
+          id: itemRow.id,
+          itemId: Number(itemRow.item_id),
+          name: itemRow.item_name,
+          qty,
+          unit,
+          unitPrice,
+          lineTotal
+        });
+      }
+    }
+
+    const formattedOrders = orderRows.map((o) => {
+      const oid = String(o.order_id);
+      const items = itemsByOrderId.get(oid) || [];
+      const computedTotal = items.reduce((sum, it) => sum + it.lineTotal, 0);
+      const orderTotal = Number(o.total || computedTotal);
+
+      return {
+        orderId: o.order_id,
+        serialNo: Number(o.serial_no || 0),
+        orderNumber: String(o.serial_no || o.order_id),
+        date: o.order_date,
+        createdAt: o.created_at,
+        status: o.status || 'In progress',
+        agentName: o.agent_name,
+        total: orderTotal,
+        itemsCount: items.length,
+        items
+      };
+    });
+
+    res.json({
+      status: 200,
+      shop: {
+        shopId: shop.shopid,
+        shopShortId,
+        shopName: shop.shopName,
+        shopCategory: shop.shopCategory || 'Retail',
+        clusterId: shop.clusterid
+      },
+      period: {
+        days,
+        startDate: cutoffDateStr,
+        endDate: todayStr,
+        cutoffDate: cutoffDateStr,
+        today: todayStr
+      },
+      ordersCount: formattedOrders.length,
+      orders: formattedOrders
+    });
+  } catch (err) {
+    console.error('[API Error] handleGetShopOrderHistory:', err.message);
+    res.status(500).json({
+      status: 500,
+      message: 'Failed to retrieve shop order history.'
+    });
+  }
+};
+
+app.get('/api/shops/:shopId/order-history', requireAuth, handleGetShopOrderHistory);
+app.get('/api/linecart/shops/:shopId/order-history', requireAuth, handleGetShopOrderHistory);
 
 // ============================================================================
 // ADMIN API ENDPOINTS (Full System Control & Governance, Persisted in SQL DB)

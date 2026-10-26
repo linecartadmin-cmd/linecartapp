@@ -28,6 +28,11 @@ export default function OrderEntryScreen({
   const [orderRows, setOrderRows] = useState([]);
   const [orderNotes, setOrderNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [historyOrders, setHistoryOrders] = useState([]);
+  const [historyPeriod, setHistoryPeriod] = useState(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
 
   const money = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
   const initials = (name) =>
@@ -75,6 +80,67 @@ export default function OrderEntryScreen({
       );
     }
   }, [catalogItems]);
+
+  const fetchOrderHistory = (shopId) => {
+    if (!shopId) {
+      setHistoryOrders([]);
+      setHistoryPeriod(null);
+      setHistoryError(null);
+      setLoadingHistory(false);
+      return;
+    }
+
+    setLoadingHistory(true);
+    setHistoryError(null);
+
+    api.getShopOrderHistory(shopId, 7)
+      .then((res) => {
+        if (res && res.status === 200) {
+          setHistoryOrders(Array.isArray(res.orders) ? res.orders : []);
+          setHistoryPeriod(res.period || null);
+          setHistoryError(null);
+        } else {
+          setHistoryOrders([]);
+          setHistoryPeriod(null);
+          setHistoryError(res?.message || 'Failed to load order history');
+        }
+      })
+      .catch((err) => {
+        setHistoryOrders([]);
+        setHistoryPeriod(null);
+        setHistoryError(err?.message || 'Network error fetching order history');
+      })
+      .finally(() => {
+        setLoadingHistory(false);
+      });
+  };
+
+  useEffect(() => {
+    fetchOrderHistory(selectedShopId);
+  }, [selectedShopId]);
+
+  const formatOrderDate = (dateStr) => {
+    if (!dateStr) return '—';
+    try {
+      const d = new Date(dateStr + (dateStr.length === 10 ? 'T00:00:00' : ''));
+      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const formatPeriodDates = (period) => {
+    if (!period || !period.cutoffDate || !period.today) return 'Previous 7 days (including today)';
+    try {
+      const d1 = new Date(period.cutoffDate + 'T00:00:00');
+      const d2 = new Date(period.today + 'T00:00:00');
+      const s1 = d1.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+      const s2 = d2.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      return `${s1} – ${s2} (including today)`;
+    } catch {
+      return `${period.cutoffDate} to ${period.today}`;
+    }
+  };
 
   const currentShop = shops.find((s) => String(s.shopid) === String(selectedShopId));
 
@@ -166,6 +232,7 @@ export default function OrderEntryScreen({
       const res = await api.createOrder(orderList);
       if (res && (res.status === 200 || res.status === 1)) {
         showToast(`Order for ${currentShop.shopName} placed successfully!`);
+        fetchOrderHistory(selectedShopId);
         if (onOrderPlaced) {
           const shortId = formatShopId(currentShop.shopid);
           const serial = res.id || Math.floor(Math.random() * 90000 + 10000);
@@ -333,6 +400,148 @@ export default function OrderEntryScreen({
               </div>
             );
           })()}
+
+          {/* 7-Day Order History Section */}
+          {currentShop && (
+            <div className="shop-history-container mt-3 mb-4" aria-labelledby="history-heading">
+              <div className="shop-history-header">
+                <div className="shop-history-header-title">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="history-icon" aria-hidden="true">📋</span>
+                    <strong id="history-heading" className="text-sm">7-Day Order History</strong>
+                    <span className="shop-code-pill">{formatShopId(currentShop.shopid)}</span>
+                    {!loadingHistory && !historyError && (
+                      <span className="history-count-badge">
+                        {historyOrders.length} {historyOrders.length === 1 ? 'order' : 'orders'}
+                      </span>
+                    )}
+                  </div>
+                  <small className="text-xs text-muted block mt-1">
+                    {formatPeriodDates(historyPeriod)}
+                  </small>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-history-toggle"
+                    onClick={() => setHistoryCollapsed(!historyCollapsed)}
+                    aria-expanded={!historyCollapsed}
+                  >
+                    {historyCollapsed ? 'Show past orders ▼' : 'Hide past orders ▲'}
+                  </button>
+                </div>
+              </div>
+
+              {!historyCollapsed && (
+                <div className="shop-history-body mt-2">
+                  {/* Loading State */}
+                  {loadingHistory && (
+                    <div className="history-status-state loading" role="status">
+                      <div className="history-spinner" aria-hidden="true" />
+                      <span>Loading recent orders from database...</span>
+                    </div>
+                  )}
+
+                  {/* Error State */}
+                  {!loadingHistory && historyError && (
+                    <div className="history-status-state error" role="alert">
+                      <div className="flex items-center gap-2">
+                        <span aria-hidden="true">⚠️</span>
+                        <span>{historyError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-history-retry"
+                        onClick={() => fetchOrderHistory(selectedShopId)}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Empty State */}
+                  {!loadingHistory && !historyError && historyOrders.length === 0 && (
+                    <div className="history-status-state empty">
+                      <span className="empty-state-icon" aria-hidden="true">📦</span>
+                      <div>
+                        <b>No orders placed in the past 7 days</b>
+                        <p className="empty-subtext">
+                          No previous orders found for {currentShop.shopName} in the period {formatPeriodDates(historyPeriod)}. Newly created orders will be displayed here immediately.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Orders List */}
+                  {!loadingHistory && !historyError && historyOrders.length > 0 && (
+                    <div className="history-orders-list">
+                      {historyOrders.map((order) => {
+                        const statusLower = (order.status || 'in progress').toLowerCase();
+                        const statusClass = statusLower === 'delivered' ? 'delivered' : statusLower === 'cancelled' ? 'cancelled' : 'in-progress';
+
+                        return (
+                          <div key={order.orderId || order.serialNo} className="history-order-card">
+                            <div className="history-order-top">
+                              <div className="history-order-meta">
+                                <span className="history-order-badge">
+                                  #{order.serialNo || order.orderId}
+                                </span>
+                                <span className="history-order-date">
+                                  📅 {formatOrderDate(order.date)}
+                                </span>
+                                <span className={`status ${statusClass}`}>
+                                  {order.status || 'In progress'}
+                                </span>
+                              </div>
+                              <div className="history-order-total-block">
+                                <span className="history-total-label">Order total:</span>
+                                <strong className="history-total-value">{money(order.total)}</strong>
+                              </div>
+                            </div>
+
+                            <div className="history-items-table-wrapper">
+                              <table className="history-items-table">
+                                <thead>
+                                  <tr>
+                                    <th style={{ width: '38%' }}>Item</th>
+                                    <th style={{ width: '20%' }}>Quantity</th>
+                                    <th style={{ width: '22%' }}>Historical Unit Price</th>
+                                    <th style={{ width: '20%', textAlign: 'right' }}>Line Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(order.items || []).map((it, idx) => (
+                                    <tr key={it.id || idx}>
+                                      <td>
+                                        <b>{it.name}</b>
+                                      </td>
+                                      <td>
+                                        <span className="qty-highlight">
+                                          {it.qty} {it.unit || 'Kgs'}
+                                        </span>
+                                      </td>
+                                      <td>
+                                        <span className="unit-price-pill">
+                                          {money(it.unitPrice)} <small className="unit-type">/{it.unit || 'unit'}</small>
+                                        </span>
+                                      </td>
+                                      <td className="row-total" style={{ textAlign: 'right' }}>
+                                        <b>{money(it.lineTotal)}</b>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Items Section */}
           <div className="items-head">

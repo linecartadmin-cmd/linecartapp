@@ -119,6 +119,18 @@ export const api = {
     return res.json();
   },
 
+  // 4a. GET /api/shops/:shopId/order-history (Previous 7-day past orders for selected shop)
+  async getShopOrderHistory(shopId, days = 7) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/order-history?days=${encodeURIComponent(days)}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      return await res.json();
+    } catch (err) {
+      return { status: 500, message: err.message, orders: [] };
+    }
+  },
+
   // 5. GET /gethomereport?spersonId=...
   async getHomeReport(spersonId) {
     const res = await fetch(`${BASE_URL}/gethomereport?spersonId=${encodeURIComponent(spersonId || '')}`, {
