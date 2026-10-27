@@ -14,8 +14,10 @@
  * Physical access to a rooted or compromised device can expose this cache.
  */
 
+import { PILOT_CLUSTERS, PILOT_CATALOG, PILOT_SHOPS } from './pilotSeedData';
+
 const DB_NAME = 'LineCartOfflineDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbInstance = null;
 
@@ -87,6 +89,14 @@ export function openOfflineDB() {
         const phStore = db.createObjectStore('price_history', { keyPath: 'id' });
         phStore.createIndex('userId', 'userId', { unique: false });
         phStore.createIndex('itemId', 'itemId', { unique: false });
+      }
+
+      // 9. Price Requests Cache
+      if (!db.objectStoreNames.contains('price_requests')) {
+        const prStore = db.createObjectStore('price_requests', { keyPath: 'id' });
+        prStore.createIndex('userId', 'userId', { unique: false });
+        prStore.createIndex('status', 'status', { unique: false });
+        prStore.createIndex('orderId', 'orderId', { unique: false });
       }
     };
 
@@ -497,3 +507,67 @@ export async function getCachedPriceHistory(userId, itemId) {
     return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// 9. Customer Price Requests Offline Cache
+// ---------------------------------------------------------------------------
+
+export async function savePriceRequests(userId, requests = []) {
+  if (!userId || !Array.isArray(requests)) return;
+  const db = await openOfflineDB();
+  const tx = db.transaction('price_requests', 'readwrite');
+  const store = tx.objectStore('price_requests');
+  for (const pr of requests) {
+    if (!pr.id) continue;
+    store.put({
+      ...pr,
+      userId: Number(userId),
+      cachedAt: new Date().toISOString()
+    });
+  }
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getPriceRequests(userId, status = null) {
+  if (!userId) return [];
+  try {
+    const store = await getStore('price_requests', 'readonly');
+    const index = store.index('userId');
+    const list = await promisifyRequest(index.getAll(Number(userId)));
+    if (!status || status === 'all') return list;
+    return list.filter((pr) => pr.status === status);
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Offline Pilot Seeding
+// ---------------------------------------------------------------------------
+
+export async function seedPilotDataIfEmpty(userId = 1) {
+  const effectiveUid = Number(userId || 1);
+  const existingClusters = await getClusters(effectiveUid);
+  const existingCatalog = await getCatalog(effectiveUid);
+  const existingShops = await getShops(effectiveUid);
+
+  if (existingClusters.length === 0) {
+    await saveClusters(effectiveUid, PILOT_CLUSTERS);
+  }
+  if (existingCatalog.length === 0) {
+    await saveCatalog(effectiveUid, PILOT_CATALOG);
+  }
+  if (existingShops.length === 0) {
+    await saveShops(effectiveUid, PILOT_SHOPS);
+  }
+
+  const clusters = existingClusters.length ? existingClusters : PILOT_CLUSTERS;
+  const catalog = existingCatalog.length ? existingCatalog : PILOT_CATALOG;
+  const shops = existingShops.length ? existingShops : PILOT_SHOPS;
+
+  return { clusters, catalog, shops };
+}
+

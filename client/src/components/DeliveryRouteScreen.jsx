@@ -6,7 +6,7 @@ import { planRoadDeliveryRoute } from '../routing';
 import { getGoogleMapsUrl } from '../utils';
 import { createMapTileLayer, getMapTileConfig } from '../mapConfig';
 import { queueDeliveryStatusUpdate } from '../offline/syncEngine';
-import { updateLocalDeliveryOrderStatus } from '../offline/offlineDb';
+import { updateLocalDeliveryOrderStatus, getDeliveryOrders, saveDeliveryOrders } from '../offline/offlineDb';
 import SyncStatusBar from './SyncStatusBar';
 
 const I18N = {
@@ -183,13 +183,27 @@ export default function DeliveryRouteScreen({
     }
   };
 
-  // Load orders assigned to this delivery agent
+  // Load orders assigned to this delivery agent (offline cache first, then cloud)
   const loadAssignedOrders = async () => {
-    setLoading(true);
+    // 1. Immediately display cached delivery orders from IndexedDB
+    if (user?.id) {
+      try {
+        const cached = await getDeliveryOrders(user.id, selectedClusterId === 'all' ? null : selectedClusterId);
+        if (cached && cached.length > 0) {
+          setOrders(cached);
+          setLoading(false);
+        }
+      } catch {}
+    }
+
+    // 2. Fetch authoritative remote delivery orders
     try {
       const res = await api.getDeliveryOrders(selectedClusterId === 'all' ? undefined : selectedClusterId, user?.id);
       if (res && res.status === 200) {
         setOrders(res.orders || []);
+        if (user?.id && Array.isArray(res.orders)) {
+          saveDeliveryOrders(user.id, res.orders).catch(() => {});
+        }
         if (res.clusters && res.clusters.length > 0) {
           setClusters(res.clusters);
           if (res.clusters.length === 1 && selectedClusterId === 'all') {
@@ -200,8 +214,8 @@ export default function DeliveryRouteScreen({
         if (showToast) showToast(res?.message || 'Error loading deliveries');
       }
     } catch (err) {
-      console.error('Failed to load delivery orders:', err);
-      if (showToast) showToast('Network error loading deliveries');
+      console.warn('[DeliveryRoute] Backend offline, using cached stops:', err.message);
+      if (showToast) showToast('Working offline: loaded cached delivery stops');
     } finally {
       setLoading(false);
     }
@@ -563,6 +577,14 @@ export default function DeliveryRouteScreen({
 
   // Execute authenticated delivery status update
   const executeStatusUpdate = async (orderId, newStatus, reason = null, note = null) => {
+    const targetOrder = orders.find(o => String(o.id) === String(orderId));
+    if (targetOrder && targetOrder.status === 'Price approval pending') {
+      if (showToast) showToast('Cannot update delivery: Order has price approval pending.');
+      setConfirmModal(null);
+      setFailModal(null);
+      return;
+    }
+
     setUpdating(true);
 
     // If offline, update locally and enqueue for sync
@@ -833,7 +855,23 @@ export default function DeliveryRouteScreen({
         </div>
 
         {/* Single Obvious Action Button Bar */}
-        {!isDelivered && !isFailed && (
+        {stop.status === 'Price approval pending' ? (
+          <div style={{
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            borderRadius: '12px',
+            padding: '12px 14px',
+            color: '#92400e',
+            fontSize: '12px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{ fontSize: '18px' }}>⏳</span>
+            <span>Price approval pending — cannot dispatch or deliver until authorized by Admin or Sales Manager.</span>
+          </div>
+        ) : !isDelivered && !isFailed && (
           <div className="pt-2 flex flex-col sm:flex-row items-stretch gap-2.5">
             {isReadyForPickup ? (
               <button

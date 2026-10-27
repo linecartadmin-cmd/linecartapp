@@ -76,6 +76,8 @@ export default function OrderEntryScreen({
           price: Number(item.price) || 50,
           qty: 0,
           custprice: Number(item.cprice) > 0 ? Number(item.cprice) : Number(item.price) || 50,
+          requestedPrice: '',
+          requestReason: '',
           remarks: 'Not Connected'
         }))
       );
@@ -163,7 +165,19 @@ export default function OrderEntryScreen({
   const handleCustPriceChange = (idx, val) => {
     const numeric = parseFloat(val) || 0;
     setOrderRows((prev) =>
-      prev.map((r, i) => (i === idx ? { ...r, custprice: numeric } : r))
+      prev.map((r, i) => (i === idx ? { ...r, custprice: numeric, requestedPrice: val } : r))
+    );
+  };
+
+  const handleRequestedPriceChange = (idx, val) => {
+    setOrderRows((prev) =>
+      prev.map((r, i) => (i === idx ? { ...r, requestedPrice: val } : r))
+    );
+  };
+
+  const handleRequestReasonChange = (idx, val) => {
+    setOrderRows((prev) =>
+      prev.map((r, i) => (i === idx ? { ...r, requestReason: val } : r))
     );
   };
 
@@ -191,6 +205,8 @@ export default function OrderEntryScreen({
           price: Number(nextItem.price) || 50,
           qty: 1,
           custprice: Number(nextItem.price) || 50,
+          requestedPrice: '',
+          requestReason: '',
           remarks: 'Order Placed'
         }
       ]);
@@ -201,7 +217,21 @@ export default function OrderEntryScreen({
 
   // Subtotal calculated from valid items
   const activeItems = orderRows.filter((r) => Number(r.qty) > 0);
-  const subtotal = orderRows.reduce((sum, r) => sum + (Number(r.qty) || 0) * (Number(r.custprice) || Number(r.price) || 0), 0);
+  const hasPriceReq = orderRows.some(
+    (r) => Number(r.qty) > 0 &&
+           r.requestedPrice !== undefined &&
+           r.requestedPrice !== null &&
+           r.requestedPrice !== '' &&
+           Math.abs(Number(r.requestedPrice) - Number(r.price)) > 0.001
+  );
+
+  const subtotal = orderRows.reduce((sum, r) => {
+    const qty = Number(r.qty) || 0;
+    const hasReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '';
+    const reqVal = hasReq ? parseFloat(r.requestedPrice) : null;
+    const effPrice = (hasReq && reqVal !== null && !isNaN(reqVal)) ? reqVal : (Number(r.custprice) || Number(r.price) || 0);
+    return sum + qty * effPrice;
+  }, 0);
 
   const handleSubmitOrder = async (e) => {
     if (e) e.preventDefault();
@@ -214,22 +244,42 @@ export default function OrderEntryScreen({
       return;
     }
 
+    // Validate requested prices
+    for (const r of activeItems) {
+      if (r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '') {
+        const p = parseFloat(r.requestedPrice);
+        if (isNaN(p) || p < 0) {
+          showToast(`Invalid requested price for '${r.itemName}'. Must be a non-negative amount.`);
+          return;
+        }
+      }
+    }
+
     setSubmitting(true);
     const spersonid = Number(user?.id || localStorage.getItem('LineCartPref_userid') || 1);
     const finalClusterId = currentShop?.clusterid || (selectedClusterId !== 'all' ? Number(selectedClusterId) : 1);
-    const orderList = orderRows.map((r) => ({
-      customerid: currentShop.shopid,
-      itemid: r.itemid,
-      qty: r.qty,
-      actprice: r.price,
-      custprice: r.custprice,
-      spersonid,
-      clusterid: finalClusterId,
-      remarks: REMARKS_OPTIONS.indexOf(r.remarks) >= 0 ? REMARKS_OPTIONS.indexOf(r.remarks) : 0,
-      notes: orderNotes
-    }));
+    const orderList = orderRows.map((r) => {
+      const hasReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '';
+      const reqVal = hasReq ? parseFloat(r.requestedPrice) : null;
+      const isCustom = hasReq && reqVal !== null && !isNaN(reqVal) && Math.abs(reqVal - Number(r.price)) > 0.001;
+      return {
+        customerid: currentShop.shopid,
+        itemid: r.itemid,
+        itemName: r.itemName,
+        qty: r.qty,
+        actprice: r.price,
+        custprice: isCustom ? reqVal : r.price,
+        requestedPrice: isCustom ? reqVal : undefined,
+        requestReason: r.requestReason || '',
+        spersonid,
+        clusterid: finalClusterId,
+        remarks: REMARKS_OPTIONS.indexOf(r.remarks) >= 0 ? REMARKS_OPTIONS.indexOf(r.remarks) : 0,
+        notes: orderNotes
+      };
+    });
 
     const shortId = formatShopId(currentShop.shopid);
+    const finalStatus = hasPriceReq ? 'Price approval pending' : 'In progress';
 
     // If offline, queue locally immediately without attempting remote fetch
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -240,7 +290,7 @@ export default function OrderEntryScreen({
           currentShop,
           activeItems
         );
-        showToast(`Order saved locally (Offline). Waiting to sync.`);
+        showToast(hasPriceReq ? 'Price request queued locally (Offline). Waiting to sync.' : 'Order saved locally (Offline). Waiting to sync.');
         if (onOrderPlaced) {
           onOrderPlaced({
             id: tempRef,
@@ -254,7 +304,8 @@ export default function OrderEntryScreen({
             items: activeItems.length,
             itemsCount: activeItems.length,
             total: subtotal,
-            status: 'In progress',
+            status: finalStatus,
+            priceApprovalPending: hasPriceReq,
             syncState: 'waiting',
             itemsList: activeItems
           });
@@ -271,7 +322,7 @@ export default function OrderEntryScreen({
     try {
       const res = await api.createOrder(orderList);
       if (res && (res.status === 200 || res.status === 1)) {
-        showToast(`Order for ${currentShop.shopName} placed successfully!`);
+        showToast(hasPriceReq ? `Order placed! Custom price request submitted for approval.` : `Order for ${currentShop.shopName} placed successfully!`);
         fetchOrderHistory(selectedShopId);
         if (onOrderPlaced) {
           const serial = res.id || Math.floor(Math.random() * 90000 + 10000);
@@ -287,7 +338,8 @@ export default function OrderEntryScreen({
             items: activeItems.length,
             itemsCount: activeItems.length,
             total: subtotal,
-            status: 'In progress',
+            status: res.statusName || finalStatus,
+            priceApprovalPending: res.priceApprovalPending ?? hasPriceReq,
             syncState: 'synced',
             itemsList: activeItems
           });
@@ -319,7 +371,8 @@ export default function OrderEntryScreen({
             items: activeItems.length,
             itemsCount: activeItems.length,
             total: subtotal,
-            status: 'In progress',
+            status: finalStatus,
+            priceApprovalPending: hasPriceReq,
             syncState: 'waiting',
             itemsList: activeItems
           });
@@ -620,21 +673,24 @@ export default function OrderEntryScreen({
           </div>
 
           <div className="table-scroll-container">
-            <table className="order-table" style={{ minWidth: '560px' }}>
+            <table className="order-table" style={{ minWidth: '640px' }}>
               <thead>
                 <tr>
-                  <th style={{ width: '30%' }}>Item</th>
-                  <th style={{ width: '12%' }}>Unit</th>
-                  <th style={{ width: '14%' }}>Unit price</th>
-                  <th style={{ width: '14%' }}>Units #</th>
-                  <th style={{ width: '14%' }}>Cust price</th>
-                  <th style={{ width: '16%', textAlign: 'right' }}>Total</th>
+                  <th style={{ width: '28%' }}>Item</th>
+                  <th style={{ width: '10%' }}>Unit</th>
+                  <th style={{ width: '13%' }}>Catalog price</th>
+                  <th style={{ width: '12%' }}>Quantity</th>
+                  <th style={{ width: '21%' }}>Requested price</th>
+                  <th style={{ width: '12%', textAlign: 'right' }}>Total</th>
                   <th style={{ width: '4%' }}></th>
                 </tr>
               </thead>
               <tbody>
                 {orderRows.map((r, i) => {
-                  const rowTotal = (Number(r.qty) || 0) * (Number(r.custprice) || Number(r.price) || 0);
+                  const hasCustomReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '' && Math.abs(Number(r.requestedPrice) - Number(r.price)) > 0.001;
+                  const reqNum = parseFloat(r.requestedPrice);
+                  const effectivePrice = (r.requestedPrice !== '' && !isNaN(reqNum)) ? reqNum : (Number(r.custprice) || Number(r.price) || 0);
+                  const rowTotal = (Number(r.qty) || 0) * effectivePrice;
                   return (
                     <tr key={r.itemid || i}>
                       <td>
@@ -652,7 +708,9 @@ export default function OrderEntryScreen({
                         </div>
                       </td>
                       <td><span className="status pending">{r.unitType}</span></td>
-                      <td>{money(r.price)}</td>
+                      <td>
+                        <span style={{ fontWeight: 600, color: '#334155' }}>{money(r.price)}</span>
+                      </td>
                       <td>
                         <input
                           type="number"
@@ -665,14 +723,42 @@ export default function OrderEntryScreen({
                         />
                       </td>
                       <td>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          value={r.custprice}
-                          onChange={(e) => handleCustPriceChange(i, e.target.value)}
-                          aria-label={`${r.itemName} customer price`}
-                        />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={r.requestedPrice !== undefined ? r.requestedPrice : ''}
+                            onChange={(e) => handleRequestedPriceChange(i, e.target.value)}
+                            placeholder={`Catalog: ${r.price}`}
+                            aria-label={`${r.itemName} requested price`}
+                          />
+                          {hasCustomReq && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                background: '#fef3c7',
+                                color: '#92400e',
+                                border: '1px solid #fde68a',
+                                borderRadius: '4px',
+                                padding: '1px 5px',
+                                display: 'inline-block',
+                                width: 'fit-content'
+                              }}>
+                                ⏳ Pending approval
+                              </span>
+                              <input
+                                type="text"
+                                placeholder="Reason for request..."
+                                value={r.requestReason || ''}
+                                onChange={(e) => handleRequestReasonChange(i, e.target.value)}
+                                style={{ fontSize: '11px', padding: '2px 6px', height: '24px' }}
+                                aria-label="Price request reason"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="row-total">{money(rowTotal)}</td>
                       <td>
@@ -743,6 +829,21 @@ export default function OrderEntryScreen({
               <strong>{money(subtotal)}</strong>
             </div>
           </div>
+
+          {hasPriceReq && (
+            <div style={{
+              background: '#fffbeb',
+              border: '1px solid #fde68a',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              margin: '12px 0',
+              color: '#92400e',
+              fontSize: '11px',
+              lineHeight: 1.45
+            }}>
+              ⏳ <b>Price Approval Pending:</b> This order contains custom requested rates. It will require approval by an Admin or Sales Manager before dispatch.
+            </div>
+          )}
 
           <button
             type="button"

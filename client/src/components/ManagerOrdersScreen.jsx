@@ -25,32 +25,133 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
 
-  // Load manager's assigned agents
+  // Price Requests Tab & Decision State
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'price-requests'
+  const [priceRequests, setPriceRequests] = useState([]);
+  const [priceRequestsLoading, setPriceRequestsLoading] = useState(false);
+  const [priceStatusFilter, setPriceStatusFilter] = useState('pending');
+  const [decisionModal, setDecisionModal] = useState(null);
+  const [deciding, setDeciding] = useState(false);
+
+  const fetchPriceRequests = () => {
+    if (!user) return;
+    setPriceRequestsLoading(true);
+    api.getPriceRequests(priceStatusFilter, user.id)
+      .then((res) => {
+        if (res && res.priceRequests) {
+          setPriceRequests(res.priceRequests);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load price requests', err);
+      })
+      .finally(() => setPriceRequestsLoading(false));
+  };
+
+  useEffect(() => {
+    fetchPriceRequests();
+  }, [user, priceStatusFilter]);
+
+  const handleDecisionSubmit = async () => {
+    if (!decisionModal || !decisionModal.request) return;
+    const { request, action, comment, applyToCatalog } = decisionModal;
+    if (action === 'reject' && (!comment || !comment.trim())) {
+      showToast('A reason is required when rejecting a price request.');
+      return;
+    }
+    setDeciding(true);
+    try {
+      const res = await api.decidePriceRequest(request.id, {
+        action,
+        comment,
+        applyToCatalog
+      });
+      if (res && res.status === 200) {
+        showToast(action === 'approve' ? 'Price request approved!' : 'Price request rejected.');
+        setDecisionModal(null);
+        fetchPriceRequests();
+        fetchOrders();
+      } else {
+        showToast(res?.message || 'Failed to record decision.');
+      }
+    } catch (err) {
+      showToast('Error recording decision: ' + err.message);
+    } finally {
+      setDeciding(false);
+    }
+  };
+
+  const isAdmin = (user?.role || '').toLowerCase() === 'admin';
+  const [deliveryAgents, setDeliveryAgents] = useState([]);
+  const [catalogProducts, setCatalogProducts] = useState([]);
+
+  // Admin CRUD Modal states
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createFormData, setCreateFormData] = useState({
+    shopId: '',
+    spersonId: '',
+    clusterId: 1,
+    orderDate: new Date().toISOString().slice(0, 10),
+    orderList: [],
+    notes: ''
+  });
+
+  const [editModalOrder, setEditModalOrder] = useState(null);
+  const [editFormData, setEditFormData] = useState({
+    status: 'In progress',
+    deliveryAgentId: '',
+    orderList: [],
+    notes: ''
+  });
+
+  const [cancelModalOrder, setCancelModalOrder] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [deleteModalOrder, setDeleteModalOrder] = useState(null);
+  const [savingAction, setSavingAction] = useState(false);
+
+  // Load manager's assigned agents OR all agents for Admin
   useEffect(() => {
     if (!user) return;
-    api.getManagerAssignments(user.id).then((res) => {
-      if (res && res.assignedAgents) {
-        setAssignedAgents(res.assignedAgents);
-      }
-    });
-  }, [user]);
+    if (isAdmin) {
+      api.getAdminUsers().then((res) => {
+        if (res && res.users) {
+          const agents = res.users.filter((u) => (u.role || '').toLowerCase() === 'field sales agent');
+          setAssignedAgents(agents);
+          const deliv = res.users.filter((u) => (u.role || '').toLowerCase() === 'delivery agent');
+          setDeliveryAgents(deliv);
+        }
+      });
+      api.getItems('all').then((res) => {
+        if (res && res.items) {
+          setCatalogProducts(res.items);
+        }
+      });
+    } else {
+      api.getManagerAssignments(user.id).then((res) => {
+        if (res && res.assignedAgents) {
+          setAssignedAgents(res.assignedAgents);
+        }
+      });
+    }
+  }, [user, isAdmin]);
 
   // Load orders based on filters
   const fetchOrders = () => {
     if (!user) return;
     setLoading(true);
     const params = {
-      managerId: user.id,
-      agentId: selectedAgentId,
-      clusterId: selectedCluster,
-      category: selectedCategory,
-      shopId: selectedShopId,
-      status: selectedStatus,
+      managerId: isAdmin ? undefined : user.id,
+      agentId: selectedAgentId !== 'all' ? selectedAgentId : undefined,
+      clusterId: selectedCluster !== 'all' ? selectedCluster : undefined,
+      category: selectedCategory !== 'all' ? selectedCategory : undefined,
+      shopId: selectedShopId !== 'all' ? selectedShopId : undefined,
+      status: selectedStatus !== 'all' ? selectedStatus : undefined,
       fromDate: fromDate || undefined,
       toDate: toDate || undefined
     };
 
-    api.getManagerOrders(params)
+    const fetcher = isAdmin ? api.getAdminOrders(params) : api.getManagerOrders(params);
+    fetcher
       .then((res) => {
         if (res && res.orders) {
           setOrders(res.orders);
@@ -69,7 +170,164 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
 
   useEffect(() => {
     fetchOrders();
-  }, [user, selectedAgentId, selectedCluster, selectedCategory, selectedShopId, selectedStatus, fromDate, toDate]);
+  }, [user, isAdmin, selectedAgentId, selectedCluster, selectedCategory, selectedShopId, selectedStatus, fromDate, toDate]);
+
+  const handleOpenCreateOrder = () => {
+    const defaultShop = shops[0] || {};
+    const defaultAgent = assignedAgents[0] || user;
+    const defaultItem = catalogProducts[0] || {};
+    setCreateFormData({
+      shopId: defaultShop.shopid || '',
+      spersonId: defaultAgent.id || user.id,
+      clusterId: defaultShop.clusterid || 1,
+      orderDate: new Date().toISOString().slice(0, 10),
+      orderList: defaultItem.itemId ? [{
+        itemid: defaultItem.itemId,
+        itemName: defaultItem.itemName,
+        qty: 1,
+        price: defaultItem.price || 0,
+        custprice: defaultItem.price || 0
+      }] : [{
+        itemid: 1,
+        itemName: 'Item 1',
+        qty: 1,
+        price: 50,
+        custprice: 50
+      }],
+      notes: ''
+    });
+    setCreateModalOpen(true);
+  };
+
+  const handleOpenEditOrder = (order) => {
+    setEditModalOrder(order);
+    const existingList = (order.orderList || []).map((it) => ({
+      itemid: it.itemid || it.itemId || it.id,
+      itemName: it.itemName || it.item_name || 'Item',
+      qty: it.qty ?? 1,
+      price: it.custprice ?? it.cust_price ?? it.price ?? 0,
+      custprice: it.custprice ?? it.cust_price ?? it.price ?? 0
+    }));
+    setEditFormData({
+      status: order.status || 'In progress',
+      deliveryAgentId: order.deliveryAgentId !== null && order.deliveryAgentId !== undefined ? order.deliveryAgentId : '',
+      orderList: existingList.length > 0 ? existingList : [{
+        itemid: 1,
+        itemName: 'Item 1',
+        qty: 1,
+        price: 50,
+        custprice: 50
+      }],
+      notes: ''
+    });
+  };
+
+  const handleSubmitCreateOrder = async (e) => {
+    e.preventDefault();
+    if (!createFormData.shopId) {
+      showToast('Please select a shop.');
+      return;
+    }
+    const validLines = createFormData.orderList.filter((l) => (parseFloat(l.qty) || 0) > 0);
+    if (validLines.length === 0) {
+      showToast('Order must contain at least one item with quantity > 0.');
+      return;
+    }
+    setSavingAction(true);
+    try {
+      const res = await api.adminCreateOrder({
+        shopId: createFormData.shopId,
+        spersonId: createFormData.spersonId,
+        clusterId: createFormData.clusterId,
+        orderDate: createFormData.orderDate,
+        orderList: validLines,
+        notes: createFormData.notes
+      });
+      if (res && (res.status === 200 || res.status === 201)) {
+        showToast('Order created successfully!');
+        setCreateModalOpen(false);
+        fetchOrders();
+        window.dispatchEvent(new CustomEvent('linecart:orders_updated'));
+      } else {
+        showToast(res?.message || 'Failed to create order.');
+      }
+    } catch (err) {
+      showToast('Error creating order: ' + err.message);
+    } finally {
+      setSavingAction(false);
+    }
+  };
+
+  const handleSubmitEditOrder = async (e) => {
+    e.preventDefault();
+    if (!editModalOrder) return;
+    const validLines = editFormData.orderList.filter((l) => (parseFloat(l.qty) || 0) > 0);
+    if (validLines.length === 0) {
+      showToast('Order must have at least one line item with quantity > 0.');
+      return;
+    }
+    setSavingAction(true);
+    try {
+      const res = await api.adminUpdateOrder(editModalOrder.id || editModalOrder.orderId, {
+        status: editFormData.status,
+        deliveryAgentId: editFormData.deliveryAgentId || null,
+        orderList: validLines,
+        notes: editFormData.notes
+      });
+      if (res && res.status === 200) {
+        showToast('Order updated successfully!');
+        setEditModalOrder(null);
+        fetchOrders();
+        window.dispatchEvent(new CustomEvent('linecart:orders_updated'));
+      } else {
+        showToast(res?.message || 'Failed to update order.');
+      }
+    } catch (err) {
+      showToast('Error updating order: ' + err.message);
+    } finally {
+      setSavingAction(false);
+    }
+  };
+
+  const handleConfirmCancel = async () => {
+    if (!cancelModalOrder) return;
+    setSavingAction(true);
+    try {
+      const res = await api.adminCancelOrder(cancelModalOrder.id || cancelModalOrder.orderId, cancelReason);
+      if (res && res.status === 200) {
+        showToast('Order cancelled successfully.');
+        setCancelModalOrder(null);
+        fetchOrders();
+        window.dispatchEvent(new CustomEvent('linecart:orders_updated'));
+      } else {
+        showToast(res?.message || 'Failed to cancel order.');
+      }
+    } catch (err) {
+      showToast('Error cancelling order: ' + err.message);
+    } finally {
+      setSavingAction(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteModalOrder) return;
+    setSavingAction(true);
+    try {
+      const res = await api.adminDeleteOrder(deleteModalOrder.id || deleteModalOrder.orderId);
+      if (res && res.status === 200) {
+        showToast('Order deleted permanently.');
+        setDeleteModalOrder(null);
+        fetchOrders();
+        window.dispatchEvent(new CustomEvent('linecart:orders_updated'));
+      } else {
+        showToast(res?.message || 'Failed to delete order.');
+      }
+    } catch (err) {
+      showToast('Error deleting order: ' + err.message);
+    } finally {
+      setSavingAction(false);
+    }
+  };
 
   // Unique categories for filter dropdown
   const categories = useMemo(() => {
@@ -310,6 +568,249 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
   return (
     <div className="manager-orders-page">
       {/* Page Header */}
+      <div className="page-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h1 className="page-title">{isAdmin ? 'Order Management' : activeTab === 'orders' ? 'Team Orders' : 'Customer Price Requests'}</h1>
+          <p className="page-subtitle">
+            {isAdmin
+              ? 'Audited order administration: create, inspect, edit, cancel, and manage order deliveries'
+              : activeTab === 'orders'
+              ? 'Filter, inspect, and export orders placed by your assigned sales team'
+              : 'Review, approve, or reject customer-specific custom price requests submitted by sales agents'}
+          </p>
+        </div>
+        {isAdmin && (
+          <button
+            type="button"
+            className="btn-primary"
+            style={{
+              padding: '10px 18px',
+              borderRadius: '8px',
+              fontWeight: 700,
+              fontSize: '13px',
+              background: '#0284c7',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            onClick={handleOpenCreateOrder}
+          >
+            <span>+ Create Order</span>
+          </button>
+        )}
+      </div>
+
+      {/* Tab Controls */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab('orders')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            fontWeight: 700,
+            border: 'none',
+            cursor: 'pointer',
+            background: activeTab === 'orders' ? '#0284c7' : '#f1f5f9',
+            color: activeTab === 'orders' ? '#fff' : '#475569'
+          }}
+        >
+          📦 Team Orders ({orders.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('price-requests')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            fontWeight: 700,
+            border: 'none',
+            cursor: 'pointer',
+            background: activeTab === 'price-requests' ? '#d97706' : '#f1f5f9',
+            color: activeTab === 'price-requests' ? '#fff' : '#475569',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+        >
+          <span>⏳ Customer Price Requests</span>
+          {priceRequests.filter((p) => p.status === 'pending').length > 0 && (
+            <span style={{
+              background: activeTab === 'price-requests' ? '#b45309' : '#d97706',
+              color: '#fff',
+              fontSize: '11px',
+              padding: '1px 6px',
+              borderRadius: '9999px',
+              fontWeight: 800
+            }}>
+              {priceRequests.filter((p) => p.status === 'pending').length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'price-requests' ? (
+        <div className="price-requests-view">
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            {['pending', 'approved', 'rejected', 'all'].map((st) => (
+              <button
+                key={st}
+                type="button"
+                onClick={() => setPriceStatusFilter(st)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: '1px solid #cbd5e1',
+                  background: priceStatusFilter === st ? '#1e293b' : '#fff',
+                  color: priceStatusFilter === st ? '#fff' : '#475569',
+                  cursor: 'pointer',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {st === 'all' ? 'All Requests' : st}
+              </button>
+            ))}
+          </div>
+
+          {priceRequestsLoading ? (
+            <div className="loading-state">Loading price requests...</div>
+          ) : priceRequests.length === 0 ? (
+            <div className="empty-state card" style={{ padding: '3rem', textAlign: 'center' }}>
+              <span className="empty-icon" style={{ fontSize: '2.5rem' }}>✅</span>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '0.5rem 0' }}>No Price Requests Found</h3>
+              <p style={{ color: '#64748b', fontSize: '0.85rem' }}>There are no price requests matching the current filter.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {priceRequests.map((pr) => {
+                const diff = pr.requestedPrice - pr.catalogPrice;
+                const isSelf = Number(user?.id) === Number(pr.agentId);
+                return (
+                  <div key={pr.id} className="card" style={{ padding: '16px 20px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 800, fontSize: '15px', color: '#0f172a' }}>{pr.itemName}</span>
+                          <span style={{ fontSize: '11px', background: '#f1f5f9', padding: '2px 8px', borderRadius: '6px', color: '#475569' }}>
+                            Order: <b>{pr.orderId}</b>
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px' }}>
+                          Store: <b>{pr.shopName}</b> · Cluster: {pr.clusterName || ('#' + pr.clusterId)} · Agent: <b>{pr.agentName}</b>
+                        </div>
+                      </div>
+
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '20px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        background: pr.status === 'approved' ? '#dcfce7' : pr.status === 'rejected' ? '#fee2e2' : '#fef3c7',
+                        color: pr.status === 'approved' ? '#15803d' : pr.status === 'rejected' ? '#b91c1c' : '#b45309'
+                      }}>
+                        {pr.status === 'approved' ? '✓ Approved' : pr.status === 'rejected' ? '✕ Rejected' : '⏳ Pending Approval'}
+                      </span>
+                    </div>
+
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                      gap: '12px',
+                      background: '#f8fafc',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      margin: '12px 0'
+                    }}>
+                      <div>
+                        <span style={{ fontSize: '10px', color: '#64748b', textTransform: 'uppercase', fontWeight: 700 }}>Catalog Rate</span>
+                        <div style={{ fontSize: '14px', fontWeight: 700, color: '#334155' }}>₹{pr.catalogPrice.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '10px', color: '#64748b', textTransform: 'uppercase', fontWeight: 700 }}>Requested Rate</span>
+                        <div style={{ fontSize: '15px', fontWeight: 800, color: '#0284c7' }}>₹{pr.requestedPrice.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '10px', color: '#64748b', textTransform: 'uppercase', fontWeight: 700 }}>Variance</span>
+                        <div style={{ fontSize: '14px', fontWeight: 700, color: diff < 0 ? '#16a34a' : '#d97706' }}>
+                          {diff < 0 ? ('-₹' + Math.abs(diff).toFixed(2)) : ('+₹' + diff.toFixed(2))}
+                        </div>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '10px', color: '#64748b', textTransform: 'uppercase', fontWeight: 700 }}>Requested At</span>
+                        <div style={{ fontSize: '12px', color: '#64748b' }}>{new Date(pr.createdAt).toLocaleString('en-IN')}</div>
+                      </div>
+                    </div>
+
+                    {pr.reason && (
+                      <div style={{ fontSize: '12px', color: '#475569', marginBottom: '10px' }}>
+                        <b>Agent Reason:</b> <i>"{pr.reason}"</i>
+                      </div>
+                    )}
+
+                    {pr.status === 'pending' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                        {isSelf ? (
+                          <span style={{ fontSize: '11px', color: '#b91c1c', fontWeight: 600 }}>
+                            ⚠️ Self-approval forbidden (created by your account)
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setDecisionModal({ request: pr, action: 'reject', comment: '', applyToCatalog: false })}
+                              style={{
+                                padding: '6px 14px',
+                                borderRadius: '6px',
+                                border: '1px solid #fca5a5',
+                                background: '#fef2f2',
+                                color: '#b91c1c',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Reject
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDecisionModal({ request: pr, action: 'approve', comment: '', applyToCatalog: false })}
+                              style={{
+                                padding: '6px 16px',
+                                borderRadius: '6px',
+                                border: 'none',
+                                background: '#16a34a',
+                                color: '#fff',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Approve
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '11px', color: '#64748b', borderTop: '1px solid #f1f5f9', paddingTop: '8px' }}>
+                        Decided by <b>{pr.decisionByName || ('User #' + pr.decisionBy)}</b> on {pr.decisionAt ? new Date(pr.decisionAt).toLocaleString('en-IN') : '—'}
+                        {pr.decisionComment && <span> · Note: <i>"{pr.decisionComment}"</i></span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
       <div className="page-header-row">
         <div>
           <h1 className="page-title">Team Orders</h1>
@@ -520,17 +1021,83 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
                         {order.status || 'Active'}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        className="btn-action-view"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedOrder(order);
-                        }}
-                      >
-                        View &amp; Export
-                      </button>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                        <button
+                          type="button"
+                          className="btn-action-view"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedOrder(order);
+                          }}
+                        >
+                          View
+                        </button>
+                        {isAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEditOrder(order);
+                              }}
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                borderRadius: '6px',
+                                border: '1px solid #cbd5e1',
+                                background: '#f8fafc',
+                                color: '#0f172a',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Edit
+                            </button>
+                            {order.status !== 'Cancelled' && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCancelModalOrder(order);
+                                  setCancelReason('');
+                                }}
+                                style={{
+                                  padding: '4px 10px',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  borderRadius: '6px',
+                                  border: '1px solid #fecaca',
+                                  background: '#fff1f2',
+                                  color: '#e11d48',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteModalOrder(order);
+                              }}
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                borderRadius: '6px',
+                                border: '1px solid #fca5a5',
+                                background: '#fee2e2',
+                                color: '#b91c1c',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -539,6 +1106,101 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
           </div>
         )}
       </div>
+      </>
+      )}
+
+      {/* Price Request Decision Modal */}
+      {decisionModal && (
+        <div className="modal-overlay" onClick={() => setDecisionModal(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <div>
+                <span className="modal-kicker">
+                  {decisionModal.action === 'approve' ? 'Approve Custom Rate' : 'Reject Price Request'}
+                </span>
+                <h2 className="modal-title">{decisionModal.request.itemName}</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setDecisionModal(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ padding: '16px' }}>
+              <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px' }}>
+                <div>Store: <b>{decisionModal.request.shopName}</b></div>
+                <div>Sales Agent: <b>{decisionModal.request.agentName}</b></div>
+                <div>Order Reference: <b>{decisionModal.request.orderId}</b></div>
+                <div style={{ marginTop: '6px', display: 'flex', gap: '16px' }}>
+                  <span>Catalog Rate: <b>₹{decisionModal.request.catalogPrice.toFixed(2)}</b></span>
+                  <span>Requested Rate: <b style={{ color: '#0284c7' }}>₹{decisionModal.request.requestedPrice.toFixed(2)}</b></span>
+                </div>
+              </div>
+
+              {decisionModal.request.reason && (
+                <div style={{ fontSize: '12px', color: '#475569', marginBottom: '14px' }}>
+                  <b>Agent Reason:</b> <i>"{decisionModal.request.reason}"</i>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
+                  {decisionModal.action === 'approve' ? 'Approval Note (Optional):' : 'Rejection Reason (Required):'}
+                </label>
+                <textarea
+                  rows="3"
+                  value={decisionModal.comment}
+                  onChange={(e) => setDecisionModal({ ...decisionModal, comment: e.target.value })}
+                  placeholder={decisionModal.action === 'approve' ? 'Add any delivery or volume conditions...' : 'Explain reason for rejection...'}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                />
+              </div>
+
+              {decisionModal.action === 'approve' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer', color: '#334155' }}>
+                  <input
+                    type="checkbox"
+                    checked={decisionModal.applyToCatalog}
+                    onChange={(e) => setDecisionModal({ ...decisionModal, applyToCatalog: e.target.checked })}
+                  />
+                  <span>Also update regional cluster rate for this commodity</span>
+                </label>
+              )}
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 16px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={deciding}
+                onClick={() => setDecisionModal(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deciding}
+                onClick={handleDecisionSubmit}
+                style={{
+                  padding: '8px 18px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontWeight: 700,
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  background: decisionModal.action === 'approve' ? '#16a34a' : '#dc2626',
+                  color: '#fff'
+                }}
+              >
+                {deciding ? 'Recording...' : decisionModal.action === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Selected Order Modal with PNG Export */}
       {selectedOrder && (
@@ -646,6 +1308,460 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
                 onClick={() => exportOrderAsPNG(selectedOrder)}
               >
                 {isExporting ? 'Generating PNG...' : '📸 Export Order as PNG Image'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Create Order Modal */}
+      {createModalOpen && (
+        <div className="modal-overlay" onClick={() => setCreateModalOpen(false)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
+            <div className="modal-header">
+              <div>
+                <span className="modal-kicker">ADMIN ORDER CREATION</span>
+                <h2 className="modal-title">Create New Order</h2>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setCreateModalOpen(false)}>✕</button>
+            </div>
+
+            <form onSubmit={handleSubmitCreateOrder}>
+              <div className="modal-body" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Shop / Customer *</label>
+                    <select
+                      className="select"
+                      value={createFormData.shopId}
+                      onChange={(e) => {
+                        const sId = e.target.value;
+                        const matchedShop = shops.find((s) => String(s.shopid) === String(sId));
+                        setCreateFormData({
+                          ...createFormData,
+                          shopId: sId,
+                          clusterId: matchedShop?.clusterid || createFormData.clusterId
+                        });
+                      }}
+                      required
+                    >
+                      <option value="">Select Shop...</option>
+                      {shops.map((s) => (
+                        <option key={s.shopid} value={s.shopid}>{s.shopName} ({s.ownerName || s.shopid})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Sales Agent *</label>
+                    <select
+                      className="select"
+                      value={createFormData.spersonId}
+                      onChange={(e) => setCreateFormData({ ...createFormData, spersonId: e.target.value })}
+                      required
+                    >
+                      <option value="">Select Agent...</option>
+                      {assignedAgents.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name} (ID: {a.id})</option>
+                      ))}
+                      {!assignedAgents.some((a) => a.id === user?.id) && (
+                        <option value={user?.id}>{user?.name} (Admin)</option>
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Order Date</label>
+                    <input
+                      type="date"
+                      className="field"
+                      value={createFormData.orderDate}
+                      onChange={(e) => setCreateFormData({ ...createFormData, orderDate: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Cluster Route</label>
+                    <select
+                      className="select"
+                      value={createFormData.clusterId}
+                      onChange={(e) => setCreateFormData({ ...createFormData, clusterId: Number(e.target.value) })}
+                    >
+                      {clusters.map((c) => (
+                        <option key={c.clusterId} value={c.clusterId}>{c.clusterName || `Cluster ${c.clusterId}`}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Line Items */}
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700 }}>Order Line Items</span>
+                    <button
+                      type="button"
+                      style={{ padding: '4px 8px', fontSize: '11px', fontWeight: 700, background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer' }}
+                      onClick={() => {
+                        const defItem = catalogProducts[0] || {};
+                        setCreateFormData({
+                          ...createFormData,
+                          orderList: [
+                            ...createFormData.orderList,
+                            { itemid: defItem.itemId || 1, itemName: defItem.itemName || 'Item', qty: 1, price: defItem.price || 50, custprice: defItem.price || 50 }
+                          ]
+                        });
+                      }}
+                    >
+                      + Add Commodity
+                    </button>
+                  </div>
+
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {createFormData.orderList.map((line, idx) => (
+                      <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+                        <select
+                          className="select"
+                          style={{ padding: '4px 6px', fontSize: '12px' }}
+                          value={line.itemid}
+                          onChange={(e) => {
+                            const selectedId = Number(e.target.value);
+                            const matched = catalogProducts.find((p) => Number(p.itemId) === selectedId);
+                            const updated = [...createFormData.orderList];
+                            updated[idx] = {
+                              ...updated[idx],
+                              itemid: selectedId,
+                              itemName: matched?.itemName || `Item ${selectedId}`,
+                              price: matched?.price || updated[idx].price,
+                              custprice: matched?.price || updated[idx].custprice
+                            };
+                            setCreateFormData({ ...createFormData, orderList: updated });
+                          }}
+                        >
+                          {catalogProducts.map((p) => (
+                            <option key={p.itemId} value={p.itemId}>{p.itemName} (₹{p.price})</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          className="field"
+                          placeholder="Qty"
+                          style={{ padding: '4px 6px', fontSize: '12px' }}
+                          value={line.qty}
+                          onChange={(e) => {
+                            const updated = [...createFormData.orderList];
+                            updated[idx].qty = parseFloat(e.target.value) || 0;
+                            setCreateFormData({ ...createFormData, orderList: updated });
+                          }}
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          className="field"
+                          placeholder="Rate (₹)"
+                          style={{ padding: '4px 6px', fontSize: '12px' }}
+                          value={line.custprice}
+                          onChange={(e) => {
+                            const updated = [...createFormData.orderList];
+                            const p = parseFloat(e.target.value) || 0;
+                            updated[idx].custprice = p;
+                            updated[idx].price = p;
+                            setCreateFormData({ ...createFormData, orderList: updated });
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = createFormData.orderList.filter((_, i) => i !== idx);
+                            setCreateFormData({ ...createFormData, orderList: updated });
+                          }}
+                          style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: 700, marginTop: '8px', color: '#0284c7' }}>
+                    Order Total: ₹{createFormData.orderList.reduce((sum, l) => sum + ((parseFloat(l.qty) || 0) * (parseFloat(l.custprice) || 0)), 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 16px' }}>
+                <button type="button" className="btn-secondary" onClick={() => setCreateModalOpen(false)}>Cancel</button>
+                <button
+                  type="submit"
+                  disabled={savingAction}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    background: '#0284c7',
+                    color: '#fff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {savingAction ? 'Creating...' : 'Create Order'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Edit Order Modal */}
+      {editModalOrder && (
+        <div className="modal-overlay" onClick={() => setEditModalOrder(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
+            <div className="modal-header">
+              <div>
+                <span className="modal-kicker">ADMIN ORDER EDIT</span>
+                <h2 className="modal-title">Edit Order: {editModalOrder.id || editModalOrder.orderId}</h2>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setEditModalOrder(null)}>✕</button>
+            </div>
+
+            <form onSubmit={handleSubmitEditOrder}>
+              <div className="modal-body" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', fontSize: '12px', color: '#334155' }}>
+                  <div>Store: <b>{editModalOrder.customer}</b></div>
+                  <div>Agent: <b>{editModalOrder.agentName || `ID: ${editModalOrder.spersonid}`}</b></div>
+                  <div>Order Date: <b>{editModalOrder.date}</b></div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Status</label>
+                    <select
+                      className="select"
+                      value={editFormData.status}
+                      onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
+                      required
+                    >
+                      <option value="In progress">In progress</option>
+                      <option value="Picked up">Picked up</option>
+                      <option value="Delivered">Delivered</option>
+                      <option value="Could not deliver">Could not deliver</option>
+                      <option value="Cancelled">Cancelled</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Delivery Agent</label>
+                    <select
+                      className="select"
+                      value={editFormData.deliveryAgentId}
+                      onChange={(e) => setEditFormData({ ...editFormData, deliveryAgentId: e.target.value })}
+                    >
+                      <option value="">Unassigned</option>
+                      {deliveryAgents.map((da) => (
+                        <option key={da.id} value={da.id}>{da.name} (ID: {da.id})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Line Items Edit */}
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700 }}>Line Items & Pricing</span>
+                    <button
+                      type="button"
+                      style={{ padding: '4px 8px', fontSize: '11px', fontWeight: 700, background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer' }}
+                      onClick={() => {
+                        const defItem = catalogProducts[0] || {};
+                        setEditFormData({
+                          ...editFormData,
+                          orderList: [
+                            ...editFormData.orderList,
+                            { itemid: defItem.itemId || 1, itemName: defItem.itemName || 'Item', qty: 1, price: defItem.price || 50, custprice: defItem.price || 50 }
+                          ]
+                        });
+                      }}
+                    >
+                      + Add Item
+                    </button>
+                  </div>
+
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {editFormData.orderList.map((line, idx) => (
+                      <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600 }}>{line.itemName}</div>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          className="field"
+                          placeholder="Qty"
+                          style={{ padding: '4px 6px', fontSize: '12px' }}
+                          value={line.qty}
+                          onChange={(e) => {
+                            const updated = [...editFormData.orderList];
+                            updated[idx].qty = parseFloat(e.target.value) || 0;
+                            setEditFormData({ ...editFormData, orderList: updated });
+                          }}
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          className="field"
+                          placeholder="Rate (₹)"
+                          style={{ padding: '4px 6px', fontSize: '12px' }}
+                          value={line.custprice}
+                          onChange={(e) => {
+                            const updated = [...editFormData.orderList];
+                            const p = parseFloat(e.target.value) || 0;
+                            updated[idx].custprice = p;
+                            updated[idx].price = p;
+                            setEditFormData({ ...editFormData, orderList: updated });
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = editFormData.orderList.filter((_, i) => i !== idx);
+                            setEditFormData({ ...editFormData, orderList: updated });
+                          }}
+                          style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: 700, marginTop: '8px', color: '#0284c7' }}>
+                    Updated Total: ₹{editFormData.orderList.reduce((sum, l) => sum + ((parseFloat(l.qty) || 0) * (parseFloat(l.custprice) || 0)), 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 16px' }}>
+                <button type="button" className="btn-secondary" onClick={() => setEditModalOrder(null)}>Cancel</button>
+                <button
+                  type="submit"
+                  disabled={savingAction}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    background: '#0284c7',
+                    color: '#fff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {savingAction ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Cancel Order Modal */}
+      {cancelModalOrder && (
+        <div className="modal-overlay" onClick={() => setCancelModalOrder(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <div>
+                <span className="modal-kicker">CONFIRM CANCELLATION</span>
+                <h2 className="modal-title">Cancel Order {cancelModalOrder.id || cancelModalOrder.orderId}?</h2>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setCancelModalOrder(null)}>✕</button>
+            </div>
+
+            <div className="modal-body" style={{ padding: '16px' }}>
+              <p style={{ fontSize: '13px', color: '#475569', marginBottom: '12px' }}>
+                Are you sure you want to cancel this order placed by <b>{cancelModalOrder.customer}</b>?
+              </p>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Cancellation Reason:</label>
+                <textarea
+                  rows="3"
+                  className="field"
+                  style={{ width: '100%', padding: '8px', fontSize: '12px' }}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="e.g. Customer requested cancellation / out of stock..."
+                />
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 16px' }}>
+              <button type="button" className="btn-secondary" onClick={() => setCancelModalOrder(null)}>Keep Order</button>
+              <button
+                type="button"
+                disabled={savingAction}
+                onClick={handleConfirmCancel}
+                style={{
+                  padding: '8px 18px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontWeight: 700,
+                  fontSize: '12px',
+                  background: '#e11d48',
+                  color: '#fff',
+                  cursor: 'pointer'
+                }}
+              >
+                {savingAction ? 'Cancelling...' : 'Confirm Cancellation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Delete Order Modal */}
+      {deleteModalOrder && (
+        <div className="modal-overlay" onClick={() => setDeleteModalOrder(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <div>
+                <span className="modal-kicker" style={{ color: '#dc2626' }}>PERMANENT DESTRUCTION</span>
+                <h2 className="modal-title">Delete Order Permanently?</h2>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setDeleteModalOrder(null)}>✕</button>
+            </div>
+
+            <div className="modal-body" style={{ padding: '16px' }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', padding: '12px', borderRadius: '8px', marginBottom: '12px', color: '#991b1b', fontSize: '13px' }}>
+                ⚠️ <b>Warning:</b> This will permanently remove order <b>{deleteModalOrder.id || deleteModalOrder.orderId}</b>, its line items, and audit records. This cannot be undone.
+              </div>
+              <p style={{ fontSize: '13px', color: '#475569' }}>
+                Store: <b>{deleteModalOrder.customer}</b><br />
+                Total: <b>{formatInr(deleteModalOrder.total)}</b>
+              </p>
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 16px' }}>
+              <button type="button" className="btn-secondary" onClick={() => setDeleteModalOrder(null)}>Cancel</button>
+              <button
+                type="button"
+                disabled={savingAction}
+                onClick={handleConfirmDelete}
+                style={{
+                  padding: '8px 18px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontWeight: 700,
+                  fontSize: '12px',
+                  background: '#dc2626',
+                  color: '#fff',
+                  cursor: 'pointer'
+                }}
+              >
+                {savingAction ? 'Deleting...' : 'Permanently Delete'}
               </button>
             </div>
           </div>

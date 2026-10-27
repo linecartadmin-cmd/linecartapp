@@ -212,30 +212,18 @@ export const shops = [
 
 export const clusterStats = {
   1: {
-    totalshops: 4,
-    totalorderedshops: 2,
-    totalnotorderedshops: 2,
-    deliverystatus: [
-      { id: 1, name: "Onio Medium", totalcount: 120 },
-      { id: 2, name: "Onion Big", totalcount: 60 }
-    ],
-    order_item_status: [
-      { id: 1, name: "Onio Medium", totalcount: 120 },
-      { id: 2, name: "Onion Big", totalcount: 60 }
-    ]
+    totalshops: 0,
+    totalorderedshops: 0,
+    totalnotorderedshops: 0,
+    deliverystatus: [],
+    order_item_status: []
   },
   2: {
-    totalshops: 2,
-    totalorderedshops: 1,
-    totalnotorderedshops: 1,
-    deliverystatus: [
-      { id: 1, name: "Onio Medium", totalcount: 80 },
-      { id: 2, name: "Onion Big", totalcount: 40 }
-    ],
-    order_item_status: [
-      { id: 1, name: "Onio Medium", totalcount: 80 },
-      { id: 2, name: "Onion Big", totalcount: 40 }
-    ]
+    totalshops: 0,
+    totalorderedshops: 0,
+    totalnotorderedshops: 0,
+    deliverystatus: [],
+    order_item_status: []
   }
 };
 
@@ -276,45 +264,4 @@ export const salesTargets = [
   }
 ];
 
-export const submittedOrders = [
-  {
-    id: "S101-24018",
-    orderId: "S101-24018",
-    shopId: "S101",
-    customerId: 101,
-    customer: "Sunrise Fresh Produce",
-    shopCategory: "Retail",
-    spersonid: 1,
-    agentName: "Field Sales Agent 1",
-    clusterId: 1,
-    date: "2026-10-24",
-    createdAt: "2026-10-24T09:30:00.000Z",
-    status: "In progress",
-    itemsCount: 2,
-    total: 4280,
-    orderList: [
-      { itemid: 1, itemName: "Onio Medium", qty: 40, actprice: 53.0, custprice: 53.0 },
-      { itemid: 2, itemName: "Onion Big", qty: 30, actprice: 55.5, custprice: 55.5 }
-    ]
-  },
-  {
-    id: "S103-24017",
-    orderId: "S103-24017",
-    shopId: "S103",
-    customerId: 103,
-    customer: "Sri Krishna Bakery & Cafe",
-    shopCategory: "HoReCa",
-    spersonid: 2,
-    agentName: "Field Sales Agent 2",
-    clusterId: 1,
-    date: "2026-10-23",
-    createdAt: "2026-10-23T11:15:00.000Z",
-    status: "Delivered",
-    itemsCount: 2,
-    total: 3150,
-    orderList: [
-      { itemid: 1, itemName: "Onio Medium", qty: 30, actprice: 53.0, custprice: 53.0 },
-      { itemid: 2, itemName: "Onion Big", qty: 20, actprice: 55.5, custprice: 55.5 }
-    ]
-  }
-];
+export const submittedOrders = [];

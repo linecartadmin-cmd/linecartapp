@@ -2,28 +2,78 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 
 export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
-  const [loading, setLoading] = useState(true);
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => {
+    try {
+      const raw = localStorage.getItem('LineCart_admin_dashboard_cache');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return parsed.data || null;
+      }
+    } catch {}
+    return null;
+  });
+  const [loading, setLoading] = useState(!data);
   const [error, setError] = useState(null);
+  const [isOfflineView, setIsOfflineView] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(() => {
+    try {
+      const raw = localStorage.getItem('LineCart_admin_dashboard_cache');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return parsed.cachedAt ? new Date(parsed.cachedAt).toLocaleTimeString() : null;
+      }
+    } catch {}
+    return null;
+  });
 
   const loadDashboard = () => {
-    setLoading(true);
     setError(null);
     api.getAdminDashboard()
       .then((res) => {
         if (res && res.status === 200) {
           setData(res);
+          setIsOfflineView(false);
+          const now = new Date();
+          setLastSyncedAt(now.toLocaleTimeString());
+          try {
+            localStorage.setItem('LineCart_admin_dashboard_cache', JSON.stringify({
+              data: res,
+              cachedAt: now.toISOString()
+            }));
+          } catch {}
         } else if (res && res.status === 403) {
           setError('Access Denied: Administrator role required.');
           if (showToast) showToast('Access Denied: Administrator role required.');
         } else {
-          setError(res?.message || 'Failed to load organization metrics.');
+          // If we have cached data, fall back gracefully
+          if (data) {
+            setIsOfflineView(true);
+          } else {
+            setError(res?.message || 'Failed to load organization metrics.');
+          }
         }
       })
       .catch((err) => {
-        console.error('Failed to load admin dashboard', err);
-        setError('Error connecting to LineCart server.');
-        if (showToast) showToast('Error loading admin dashboard');
+        console.warn('[AdminDashboard] Backend unreachable, falling back to local cache:', err.message);
+        if (data) {
+          setIsOfflineView(true);
+          if (showToast) showToast('Backend unavailable: showing cached dashboard metrics');
+        } else {
+          // Check if cached data can be read from localStorage
+          try {
+            const raw = localStorage.getItem('LineCart_admin_dashboard_cache');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed.data) {
+                setData(parsed.data);
+                setIsOfflineView(true);
+                return;
+              }
+            }
+          } catch {}
+          setError('Backend server is currently offline. No cached metrics available.');
+          if (showToast) showToast('Backend offline');
+        }
       })
       .finally(() => setLoading(false));
   };
@@ -34,7 +84,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
 
   const formatInr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="admin-page-container">
         <div className="card" style={{ padding: '3.5rem', textAlign: 'center', color: '#64748b' }}>
@@ -46,7 +96,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
     );
   }
 
-  if (error || !data) {
+  if (error && !data) {
     return (
       <div className="admin-page-container">
         <div className="card" style={{ padding: '2.5rem', textAlign: 'center', maxWidth: '520px', margin: '2rem auto' }}>
@@ -55,7 +105,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
             {error || 'Unable to Load Executive Dashboard'}
           </h2>
           <p style={{ fontSize: '0.8125rem', color: '#64748b', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-            Could not retrieve organization metrics from the backend. Ensure your account has Administrator privileges.
+            Could not retrieve organization metrics from the backend. Ensure your device is connected or try again.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
             <button
@@ -64,7 +114,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
               onClick={loadDashboard}
               style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem' }}
             >
-              Retry Loading
+              Check Connection
             </button>
             <button
               type="button"
@@ -105,6 +155,42 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
 
   return (
     <div className="admin-page-container">
+      {/* Offline Mode Banner */}
+      {isOfflineView && (
+        <div style={{
+          background: 'rgba(237, 108, 2, 0.12)',
+          border: '1px solid rgba(237, 108, 2, 0.35)',
+          borderRadius: '8px',
+          padding: '10px 14px',
+          marginBottom: '16px',
+          color: '#b25e00',
+          fontSize: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px'
+        }}>
+          <div>
+            <b>📡 Offline View:</b> Showing cached organization metrics {lastSyncedAt ? `(Synced at ${lastSyncedAt})` : ''}. Background sync will refresh automatically when internet returns.
+          </div>
+          <button
+            onClick={loadDashboard}
+            style={{
+              padding: '4px 10px',
+              fontSize: '11px',
+              fontWeight: 700,
+              background: '#fff',
+              border: '1px solid rgba(237, 108, 2, 0.4)',
+              borderRadius: '6px',
+              color: '#b25e00',
+              cursor: 'pointer'
+            }}
+          >
+            Check Sync
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="page-header-row">
         <div>

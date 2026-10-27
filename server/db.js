@@ -350,6 +350,44 @@ export async function runMigrationsAndSeed({
     }
   }
 
+  // Ensure order_items columns for customer price requests
+  if (db.mode === 'postgres') {
+    await db.execRaw(`
+      ALTER TABLE order_items ADD COLUMN IF NOT EXISTS requested_price REAL;
+      ALTER TABLE order_items ADD COLUMN IF NOT EXISTS price_request_status TEXT;
+    `);
+  } else {
+    try {
+      const oiTableInfo = await db.query("PRAGMA table_info('order_items')");
+      const oiCols = new Set(oiTableInfo.rows.map((r) => r.name));
+      if (!oiCols.has('requested_price')) {
+        await db.execRaw('ALTER TABLE order_items ADD COLUMN requested_price REAL;');
+      }
+      if (!oiCols.has('price_request_status')) {
+        await db.execRaw('ALTER TABLE order_items ADD COLUMN price_request_status TEXT;');
+      }
+    } catch (oiErr) {
+      console.warn('[DB Migration] Could not verify/add order_items columns in SQLite:', oiErr.message);
+    }
+  }
+
+  const mig3File = path.join(__dirname, 'migrations', '003_price_requests.sql');
+  if (fs.existsSync(mig3File)) {
+    const mig3Sql = fs.readFileSync(mig3File, 'utf8');
+    await db.execRaw(mig3Sql);
+    const mig3Check = await db.query(
+      'SELECT version FROM schema_migrations WHERE version = $1',
+      ['003_price_requests']
+    );
+    if (mig3Check.rowCount === 0) {
+      await db.query(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)',
+        ['003_price_requests', new Date().toISOString()]
+      );
+      console.log('[DB Migration] Applied 003_price_requests.sql');
+    }
+  }
+
   // Load legacy admin_config.json if present for one-time repeatable migration
   let legacyConfig = {};
   if (legacyAdminConfigPath && fs.existsSync(legacyAdminConfigPath)) {
@@ -616,80 +654,8 @@ export async function runMigrationsAndSeed({
       }
     }
 
-    // 6. Orders & Order Items (seed only when orders table is empty AND in local SQLite dev mode)
-    const existingOrdersCountRes = await tx.query('SELECT COUNT(*) AS cnt FROM orders');
-    const shouldSeedOrders = Number(existingOrdersCountRes.rows[0]?.cnt || 0) === 0 && !isCloudOrPostgres;
-    if (shouldSeedOrders) {
-      const delivOverrides = legacyConfig.deliveryOrderOverrides || {};
-      const defaultAgent50Map = {
-        'S039-24018': 'In progress',
-        'S042-24017': 'Picked up',
-        'S046-24015': 'Pending',
-        'S047-24014': 'Delivered'
-      };
-
-      let nextItemRowId = 0;
-
-      for (let i = 0; i < (seedData.submittedOrders || []).length; i++) {
-        const ord = seedData.submittedOrders[i];
-        const orderId = String(ord.id || ord.orderId);
-        const serialMatch = orderId.match(/-(\d+)$/);
-        const serialNo = serialMatch ? parseInt(serialMatch[1], 10) : 24000 + i + 1;
-        const ovr = delivOverrides[orderId] || {};
-
-        let status = ovr.status || defaultAgent50Map[orderId] || ord.status || 'In progress';
-        let deliveryAgentId = ovr.deliveryAgentId !== undefined
-          ? Number(ovr.deliveryAgentId)
-          : (ord.deliveryAgentId !== undefined ? Number(ord.deliveryAgentId) : (defaultAgent50Map[orderId] ? 50 : null));
-
-        await tx.query(
-          `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, delivery_agent_id, delivery_reason, delivery_note, delivery_updated_at, delivery_updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-           ON CONFLICT (order_id) DO NOTHING`,
-          [
-            orderId,
-            serialNo,
-            String(ord.shopId || `S${String(ord.customerId || 0).padStart(3, '0')}`),
-            Number(ord.customerId || 0),
-            String(ord.customer || 'Customer Store'),
-            String(ord.shopCategory || 'Retail'),
-            Number(ord.spersonid || 6),
-            String(ord.agentName || `Agent ${ord.spersonid || 6}`),
-            Number(ord.clusterId || 1),
-            String(ord.date || '2026-10-20'),
-            String(ord.createdAt || `${ord.date || '2026-10-20'}T10:00:00.000Z`),
-            String(status),
-            Number(ord.itemsCount || (ord.orderList ? ord.orderList.length : 0)),
-            Number(ord.total || 0),
-            deliveryAgentId,
-            ovr.deliveryReason || ovr.reason || ord.deliveryReason || null,
-            ovr.deliveryNote || ovr.note || ord.deliveryNote || null,
-            ovr.updatedAt || ord.deliveryUpdatedAt || null,
-            ovr.updatedBy ? Number(ovr.updatedBy) : null
-          ]
-        );
-
-        for (const line of ord.orderList || []) {
-          nextItemRowId += 1;
-          await tx.query(
-            `INSERT INTO order_items (id, order_id, item_id, item_name, qty, price, cust_price, act_price, item_json)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (id) DO NOTHING`,
-            [
-              nextItemRowId,
-              orderId,
-              Number(line.itemid || 0),
-              String(line.itemName || `Item ${line.itemid || 0}`),
-              Number(line.qty || 0),
-              Number(line.price || line.custprice || line.actprice || 0),
-              Number(line.custprice || line.price || 0),
-              Number(line.actprice || line.price || 0),
-              JSON.stringify(line)
-            ]
-          );
-        }
-      }
-    }
+    // 6. Orders & Order Items: Never seed fake demo order records.
+    // Real orders must strictly originate from authenticated user placement or Admin order entry.
 
     // 7. Manager Assignments (only seed if table is currently empty AND in local SQLite dev mode)
     const existingAssignCount = await tx.query('SELECT COUNT(*) AS cnt FROM manager_assignments');
@@ -845,11 +811,15 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
     const itemsRes = await runner.query('SELECT * FROM items ORDER BY item_id ASC');
     let clusterPricesRes = { rows: [] };
     let priceHistoryRes = { rows: [] };
+    let priceRequestsRes = { rows: [] };
     try {
       clusterPricesRes = await runner.query('SELECT * FROM cluster_item_prices ORDER BY cluster_id ASC, item_id ASC');
     } catch {}
     try {
       priceHistoryRes = await runner.query('SELECT * FROM price_history ORDER BY created_at DESC LIMIT 500');
+    } catch {}
+    try {
+      priceRequestsRes = await runner.query('SELECT * FROM price_requests ORDER BY created_at DESC LIMIT 1000');
     } catch {}
 
   const users = usersRes.rows.map((r) => ({
@@ -906,7 +876,9 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       qty: Number(row.qty),
       price: Number(row.price),
       custprice: Number(row.cust_price),
-      actprice: Number(row.act_price)
+      actprice: Number(row.act_price),
+      requestedPrice: row.requested_price !== null && row.requested_price !== undefined ? Number(row.requested_price) : undefined,
+      priceRequestStatus: row.price_request_status || undefined
     });
   }
 
@@ -1044,6 +1016,26 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
     idempotencyKey: r.idempotency_key || null
   }));
 
+  const priceRequests = (priceRequestsRes.rows || []).map((r) => ({
+    id: r.id,
+    orderId: r.order_id,
+    itemId: Number(r.item_id),
+    shopId: Number(r.shop_id),
+    clusterId: Number(r.cluster_id),
+    agentId: Number(r.agent_id),
+    requestedPrice: Number(r.requested_price),
+    catalogPrice: Number(r.catalog_price),
+    reason: r.reason || '',
+    status: r.status || 'pending',
+    createdAt: r.created_at,
+    decisionBy: r.decision_by ? Number(r.decision_by) : null,
+    decisionByName: r.decision_by_name || null,
+    decisionAt: r.decision_at || null,
+    decisionComment: r.decision_comment || null,
+    applyToCatalog: Number(r.apply_to_catalog || 0) === 1,
+    idempotencyKey: r.idempotency_key || null
+  }));
+
     return {
       users,
       shops,
@@ -1051,6 +1043,7 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       items,
       clusterItemPrices,
       priceHistory,
+      priceRequests,
       managerAssignments,
       salesTargets,
       rolePermissions,

@@ -6,6 +6,15 @@ import ErrorBoundary from './components/ErrorBoundary';
 import SyncStatusBar from './components/SyncStatusBar';
 import { initSyncEngine } from './offline/syncEngine';
 import { signOutAppSession } from './offline/biometricAuth';
+import {
+  seedPilotDataIfEmpty,
+  saveClusters,
+  saveShops,
+  saveCatalog,
+  getClusters,
+  getShops,
+  getCatalog
+} from './offline/offlineDb';
 
 // Lazy-loaded secondary screens for reduced initial bundle and fast APK startup
 const OrderEntryScreen = lazy(() => import('./components/OrderEntryScreen'));
@@ -176,7 +185,8 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((o) => o.id !== 'S101-24018' && o.id !== 'S103-24017');
+          const demoIds = new Set(['S101-24018', 'S103-24017', 'S039-24018', 'S042-24017', 'S043-24016', 'S046-24015', 'S047-24014', 'S048-24013', 'S049-24012']);
+          return parsed.filter((o) => !demoIds.has(o.id) && !demoIds.has(o.orderId));
         }
       }
       return [];
@@ -307,11 +317,23 @@ export default function App() {
   // Load cluster and shops data from backend (skipped for Delivery Agents who use /api/delivery/orders)
   useEffect(() => {
     if (!user || isDelivery) return;
+
+    // 1. Immediately initialize with cached or pilot seed data from local storage
+    seedPilotDataIfEmpty(user.id)
+      .then(({ clusters: seedClusters, catalog: seedCatalog, shops: seedShops }) => {
+        setClusters((prev) => (prev && prev.length ? prev : seedClusters));
+        setShops((prev) => (prev && prev.length ? prev : seedShops));
+        setCatalogItems((prev) => (prev && prev.length ? prev : seedCatalog));
+      })
+      .catch(() => {});
+
+    // 2. Fetch authoritative backend data when online
     api.getClusterInfo(user.id).then((res) => {
       if ((res.status === 200 || res.status === 1) && res.result?.clusterList) {
         setClusters(res.result.clusterList);
+        saveClusters(user.id, res.result.clusterList).catch(() => {});
       }
-    });
+    }).catch(() => {});
 
     api.getItemsOrder(user.id).then((res) => {
       if ((res.status === 200 || res.status === 1) && res.result?.clusterList) {
@@ -322,13 +344,16 @@ export default function App() {
           }
         });
         setShops(allShops);
+        saveShops(user.id, allShops).catch(() => {});
 
         // Catalog items from first shop
         if (res.result.clusterList[0]?.shopsList?.[0]?.itemsList) {
-          setCatalogItems(res.result.clusterList[0].shopsList[0].itemsList);
+          const items = res.result.clusterList[0].shopsList[0].itemsList;
+          setCatalogItems(items);
+          saveCatalog(user.id, items).catch(() => {});
         }
       }
-    });
+    }).catch(() => {});
   }, [user]);
 
   // Load authoritative orders from backend

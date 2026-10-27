@@ -129,18 +129,23 @@ export default function APKHomeReport({ user }) {
 
         {/* deliverystatusRecyclerView -> hr_deliverystatus.xml (#f0f7f7, padding 16dp, marginBottom 5dp) */}
         <div className="space-y-[5px]">
-          {deliveryStatusList.map((dstatus, idx) => (
-            <div
-              key={`${dstatus.id || idx}-${dstatus.name}`}
-              className="bg-[#f0f7f7] p-4 flex items-center text-[16px] text-[#1c1b1f]"
-            >
-              <div className="flex-1 min-w-[100px] font-bold pr-2">{dstatus.name}</div>
-              <div className="w-[70px] font-normal">{dstatus.totalcount}</div>
-              {/* Hardcoded "11" and "22" in HR_DeliveryStatus_LinearAdapter.java lines 56-57 */}
-              <div className="w-[90px] font-normal">11</div>
-              <div className="w-[90px] font-normal">22</div>
+          {deliveryStatusList.length > 0 ? (
+            deliveryStatusList.map((dstatus, idx) => (
+              <div
+                key={`${dstatus.id || idx}-${dstatus.name}`}
+                className="bg-[#f0f7f7] p-4 flex items-center text-[16px] text-[#1c1b1f]"
+              >
+                <div className="flex-1 min-w-[100px] font-bold pr-2">{dstatus.name}</div>
+                <div className="w-[70px] font-normal">{dstatus.totalcount ?? 0}</div>
+                <div className="w-[90px] font-normal">{dstatus.delivered ?? 0}</div>
+                <div className="w-[90px] font-normal">{dstatus.inprogress ?? 0}</div>
+              </div>
+            ))
+          ) : (
+            <div className="bg-[#f0f7f7] p-4 text-center text-[14px] text-slate-700 font-medium">
+              No delivery status records for this selection.
             </div>
-          ))}
+          )}
         </div>
 
         {/* Section 2: Shop Status Summary */}
@@ -168,15 +173,21 @@ export default function APKHomeReport({ user }) {
 
         {/* itemordersstatusRecyclerView -> hr_orderstatus.xml (#f7ef02, padding 16dp, marginBottom 10dp) */}
         <div className="space-y-[10px]">
-          {orderItemStatusList.map((item, idx) => (
-            <div
-              key={`${item.id || idx}-${item.name}`}
-              className="bg-[#f7ef02] p-4 flex items-center text-[16px] font-bold text-[#1c1b1f]"
-            >
-              <div className="w-[240px] sm:w-[280px] pr-2">{item.name}</div>
-              <div className="flex-1">{item.totalcount}</div>
+          {orderItemStatusList.length > 0 ? (
+            orderItemStatusList.map((item, idx) => (
+              <div
+                key={`${item.id || idx}-${item.name}`}
+                className="bg-[#f7ef02] p-4 flex items-center text-[16px] font-bold text-[#1c1b1f]"
+              >
+                <div className="w-[240px] sm:w-[280px] pr-2">{item.name}</div>
+                <div className="flex-1">{item.totalcount ?? 0}</div>
+              </div>
+            ))
+          ) : (
+            <div className="bg-[#f7ef02] p-4 text-center text-[14px] text-[#1c1b1f] font-semibold">
+              No item order records for this selection.
             </div>
-          ))}
+          )}
         </div>
       </div>
 

@@ -202,6 +202,7 @@ let salesTargets = [];
 let orderItemsCatalog = [];
 let clusterItemPrices = [];
 let priceHistoryList = [];
+let priceRequestsList = [];
 let rolePermissions = JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS));
 let appSettings = {
   organizationName: 'LineCart Wholesale Logistics',
@@ -222,6 +223,7 @@ async function refreshStateFromDb() {
   orderItemsCatalog = state.items || [];
   clusterItemPrices = state.clusterItemPrices || [];
   priceHistoryList = state.priceHistory || [];
+  priceRequestsList = state.priceRequests || [];
   rolePermissions = state.rolePermissions;
   appSettings = state.appSettings;
   auditLogs = state.auditLogs;
@@ -1337,28 +1339,101 @@ function canCallerAccessShop(caller, shop) {
   return false;
 }
 
-// Compute live cluster statistics from current database shops & orders
+// Compute live cluster statistics from real persisted database shops & orders
 function computeClusterStatsForScope(clusterId, scopedOrders = null) {
   const cId = Number(clusterId);
-  const clusterShops = shops.filter((s) => Number(s.clusterid) === cId);
-  const clusterOrders = (scopedOrders || submittedOrders).filter((o) => Number(o.clusterId) === cId);
+  const clusterShops = shops.filter((s) => Number(s.clusterid || s.cluster_id) === cId);
+  const allOrders = scopedOrders !== null ? scopedOrders : submittedOrders;
 
-  const orderedShopIds = new Set(clusterOrders.map((o) => Number(o.customerId)));
+  // Non-cancelled orders for this cluster
+  const clusterOrders = allOrders.filter((o) => {
+    if (Number(o.clusterId || o.cluster_id) !== cId) return false;
+    const st = String(o.status || '').toLowerCase();
+    return st !== 'cancelled';
+  });
+
+  // Unique shops with at least one active order in this cluster
+  const orderedShopIds = new Set();
+  clusterOrders.forEach((o) => {
+    const sId = Number(o.customerId || o.shopid || o.shopId || 0);
+    if (sId > 0) orderedShopIds.add(sId);
+  });
+
   const totalshops = clusterShops.length;
-  const totalorderedshops = Math.min(totalshops, orderedShopIds.size || (seedData.clusterStats[cId]?.totalorderedshops || 0));
+  const totalorderedshops = Math.min(totalshops, orderedShopIds.size);
   const totalnotorderedshops = Math.max(0, totalshops - totalorderedshops);
 
-  const baseStats = seedData.clusterStats[cId] || {
-    deliverystatus: [],
-    order_item_status: []
-  };
+  // Group items by itemid from real persisted orderList lines
+  const itemMap = new Map();
+
+  for (const o of clusterOrders) {
+    const orderStatus = String(o.status || '').toLowerCase();
+    const isDelivered = orderStatus === 'delivered';
+    const isPendingApproval = orderStatus === 'price approval pending';
+
+    const lines = Array.isArray(o.orderList) ? o.orderList : [];
+    for (const item of lines) {
+      const itemId = Number(item.itemid || item.itemId || 0);
+      if (itemId <= 0) continue;
+      const itemName = String(item.itemName || item.name || `Item ${itemId}`);
+      const qty = parseFloat(item.qty || 0) || 0;
+      if (qty <= 0) continue;
+
+      if (!itemMap.has(itemId)) {
+        itemMap.set(itemId, {
+          id: itemId,
+          name: itemName,
+          totalcount: 0,
+          delivered: 0,
+          inprogress: 0,
+          pendingApproval: 0
+        });
+      }
+
+      const entry = itemMap.get(itemId);
+      entry.totalcount += qty;
+      if (isDelivered) {
+        entry.delivered += qty;
+      } else if (isPendingApproval) {
+        entry.pendingApproval += qty;
+      } else {
+        entry.inprogress += qty;
+      }
+    }
+  }
+
+  // deliverystatus: only commodities actually ordered
+  const deliverystatus = Array.from(itemMap.values()).map((rec) => ({
+    id: rec.id,
+    name: rec.name,
+    totalcount: rec.totalcount,
+    delivered: rec.delivered,
+    inprogress: rec.inprogress,
+    pendingApproval: rec.pendingApproval,
+    fulfillment: rec.totalcount > 0 ? Math.min(100, Math.round((rec.delivered / rec.totalcount) * 100)) : 0
+  }));
+
+  // order_item_status: only commodities actually ordered
+  const order_item_status = Array.from(itemMap.values()).map((rec) => ({
+    id: rec.id,
+    name: rec.name,
+    totalcount: rec.totalcount,
+    delivered: rec.delivered,
+    inprogress: rec.inprogress,
+    pendingApproval: rec.pendingApproval,
+    status: rec.pendingApproval > 0 && rec.delivered === 0 && rec.inprogress === 0
+      ? 'Pending approval'
+      : rec.delivered === rec.totalcount
+      ? 'Delivered'
+      : 'Active'
+  }));
 
   return {
     totalshops,
     totalorderedshops,
     totalnotorderedshops,
-    deliverystatus: baseStats.deliverystatus,
-    order_item_status: baseStats.order_item_status
+    deliverystatus,
+    order_item_status
   };
 }
 
@@ -1370,11 +1445,11 @@ const handleGetHomeReport = async (req, res) => {
   if (!scope.authorized) return;
 
   const { caller, effectiveSpersonId } = scope;
-  const callerRole = caller.role || 'Field Sales Agent';
+  const callerRole = (caller.role || 'Field Sales Agent').toLowerCase();
   if (
-    !checkActionPermission(callerRole, 'view_all_reports') &&
-    !checkActionPermission(callerRole, 'view_team_reports') &&
-    !checkActionPermission(callerRole, 'view_agent_reports')
+    !checkActionPermission(caller.role, 'view_all_reports') &&
+    !checkActionPermission(caller.role, 'view_team_reports') &&
+    !checkActionPermission(caller.role, 'view_agent_reports')
   ) {
     return res.status(403).json({
       status: 403,
@@ -1382,8 +1457,49 @@ const handleGetHomeReport = async (req, res) => {
     });
   }
 
-  const clusterList = clusters.map((cluster) => {
-    const stats = computeClusterStatsForScope(cluster.clusterId);
+  // Scoped orders
+  let baseOrders = submittedOrders;
+  if (callerRole === 'admin') {
+    if (reqSpersonId && reqSpersonId !== 'all') {
+      baseOrders = baseOrders.filter((o) => Number(o.spersonid) === Number(reqSpersonId));
+    }
+  } else if (callerRole === 'sales manager') {
+    const assigned = getAssignedAgentIds(caller.id);
+    if (reqSpersonId && reqSpersonId !== 'all') {
+      if (!assigned.includes(Number(reqSpersonId))) {
+        return res.status(403).json({ status: 403, message: 'Access Denied: Agent is not in your team.' });
+      }
+      baseOrders = baseOrders.filter((o) => Number(o.spersonid) === Number(reqSpersonId));
+    } else {
+      baseOrders = baseOrders.filter((o) => assigned.includes(Number(o.spersonid)));
+    }
+  } else {
+    // Field Sales Agent: only their own orders
+    baseOrders = baseOrders.filter((o) => Number(o.spersonid) === Number(effectiveSpersonId));
+  }
+
+  // Filter by date range if provided
+  const fromDate = req.query.fromDate || req.query.startDate;
+  const toDate = req.query.toDate || req.query.endDate;
+  if (fromDate) {
+    baseOrders = baseOrders.filter((o) => (o.date || '').slice(0, 10) >= fromDate);
+  }
+  if (toDate) {
+    baseOrders = baseOrders.filter((o) => (o.date || '').slice(0, 10) <= toDate);
+  }
+
+  // Filter clusters if clusterId query parameter is provided
+  const filterClusterId = req.query.clusterId || req.query.clusterid;
+  let relevantClusters = clusters;
+  if (filterClusterId && filterClusterId !== 'all') {
+    const matched = clusters.filter((c) => Number(c.clusterId) === Number(filterClusterId));
+    if (matched.length > 0) {
+      relevantClusters = matched;
+    }
+  }
+
+  const clusterList = relevantClusters.map((cluster) => {
+    const stats = computeClusterStatsForScope(cluster.clusterId, baseOrders);
     return {
       clusterId: cluster.clusterId,
       clusterName: cluster.clusterName,
@@ -1755,6 +1871,28 @@ const handleCreateOrder = async (req, res) => {
     const spersonid = requestedSpersonId;
     const agent = salesPersons.find((s) => Number(s.id) === Number(spersonid));
 
+    // Validate requested prices and identify if price approval is pending
+    let hasPriceRequest = false;
+    for (const item of activeItems) {
+      const hasReq = item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '';
+      if (hasReq) {
+        const reqPrice = parseFloat(item.requestedPrice);
+        if (isNaN(reqPrice) || reqPrice < 0) {
+          return res.status(400).json({
+            status: 400,
+            message: `Invalid requested price for item '${item.itemName || item.itemid}'. Price must be a non-negative number.`,
+            id: '0'
+          });
+        }
+        const catPrice = parseFloat(item.price || item.custprice || item.actprice || 0);
+        if (Math.abs(reqPrice - catPrice) > 0.001) {
+          hasPriceRequest = true;
+        }
+      }
+    }
+
+    const initialOrderStatus = hasPriceRequest ? 'Price approval pending' : 'In progress';
+
     const orderTotal = activeItems.reduce(
       (sum, item) => sum + ((parseFloat(item.qty) || 0) * (parseFloat(item.custprice || item.price || item.actprice) || 0)),
       0
@@ -1771,7 +1909,7 @@ const handleCreateOrder = async (req, res) => {
       // 1. Check explicit idempotency key
       if (idempotencyKey) {
         const existingIdemp = await tx.query(
-          'SELECT order_id, serial_no, shop_short_id FROM orders WHERE idempotency_key = $1',
+          'SELECT order_id, serial_no, shop_short_id, status FROM orders WHERE idempotency_key = $1',
           [idempotencyKey]
         );
         if (existingIdemp.rowCount > 0) {
@@ -1782,6 +1920,8 @@ const handleCreateOrder = async (req, res) => {
             id: String(row.serial_no),
             orderId: row.order_id,
             shopId: row.shop_short_id,
+            statusName: row.status,
+            priceApprovalPending: row.status === 'Price approval pending',
             idempotentReplay: true,
             deviceEventTime
           };
@@ -1792,7 +1932,7 @@ const handleCreateOrder = async (req, res) => {
       // 2. Check rapid duplicate submission within 5 seconds (same customer, agent, total, items_count)
       const fiveSecAgoIso = new Date(Date.now() - 5000).toISOString();
       const recentDup = await tx.query(
-        `SELECT order_id, serial_no, shop_short_id
+        `SELECT order_id, serial_no, shop_short_id, status
          FROM orders
          WHERE customer_id = $1 AND sperson_id = $2 AND total = $3 AND items_count = $4 AND created_at >= $5
          ORDER BY serial_no DESC LIMIT 1`,
@@ -1806,6 +1946,8 @@ const handleCreateOrder = async (req, res) => {
           id: String(row.serial_no),
           orderId: row.order_id,
           shopId: row.shop_short_id,
+          statusName: row.status,
+          priceApprovalPending: row.status === 'Price approval pending',
           idempotentReplay: true
         };
         return;
@@ -1826,7 +1968,7 @@ const handleCreateOrder = async (req, res) => {
 
       await tx.query(
         `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, delivery_agent_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'In progress', $12, $13, $14, $15)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           newOrderId,
           nextSerial,
@@ -1839,6 +1981,7 @@ const handleCreateOrder = async (req, res) => {
           clusterid,
           todayDate,
           nowIso,
+          initialOrderStatus,
           activeItems.length,
           orderTotal,
           deliveryAgentId,
@@ -1851,35 +1994,73 @@ const handleCreateOrder = async (req, res) => {
 
       for (const item of orderList) {
         nextItemRowId += 1;
+        const hasReq = item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '';
+        const reqPrice = hasReq ? parseFloat(item.requestedPrice) : null;
+        const catPrice = parseFloat(item.price || item.custprice || item.actprice || 0);
+        const isReq = hasReq && reqPrice !== null && Math.abs(reqPrice - catPrice) > 0.001;
+        const itemPriceStatus = isReq ? 'pending' : null;
+
         const itemName =
           item.itemName ||
           orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === Number(item.itemid))?.itemName ||
           defaultOrderItems.find((d) => Number(d.itemid) === Number(item.itemid))?.itemName ||
           `Item ${item.itemid}`;
-        const enrichedLine = { ...item, itemName };
+        const enrichedLine = {
+          ...item,
+          itemName,
+          requestedPrice: isReq ? reqPrice : undefined,
+          priceRequestStatus: itemPriceStatus
+        };
+
         await tx.query(
-          `INSERT INTO order_items (id, order_id, item_id, item_name, qty, price, cust_price, act_price, item_json)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          `INSERT INTO order_items (id, order_id, item_id, item_name, qty, price, cust_price, act_price, requested_price, price_request_status, item_json)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             nextItemRowId,
             newOrderId,
             Number(item.itemid || 0),
             String(itemName),
             Number(item.qty || 0),
-            Number(item.price || item.custprice || item.actprice || 0),
-            Number(item.custprice || item.price || 0),
-            Number(item.actprice || item.price || 0),
+            catPrice,
+            catPrice,
+            catPrice,
+            isReq ? reqPrice : null,
+            itemPriceStatus,
             JSON.stringify(enrichedLine)
           ]
         );
+
+        if (isReq) {
+          const reqId = `pr-${nextSerial}-${item.itemid}`;
+          const reqIdempotency = idempotencyKey ? `${idempotencyKey}_item_${item.itemid}` : null;
+          await tx.query(
+            `INSERT INTO price_requests (id, order_id, item_id, shop_id, cluster_id, agent_id, requested_price, catalog_price, reason, status, created_at, idempotency_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)`,
+            [
+              reqId,
+              newOrderId,
+              Number(item.itemid || 0),
+              shop ? shop.shopid : customerId,
+              clusterid,
+              spersonid,
+              reqPrice,
+              catPrice,
+              String(item.reason || item.priceRequestReason || item.requestReason || ''),
+              nowIso,
+              reqIdempotency
+            ]
+          );
+        }
       }
 
       resultPayload = {
         status: 200,
-        message: 'Order Created Successfully',
+        message: hasPriceRequest ? 'Order Created (Price approval pending)' : 'Order Created Successfully',
         id: String(nextSerial),
         orderId: newOrderId,
-        shopId: shopShortId
+        shopId: shopShortId,
+        statusName: initialOrderStatus,
+        priceApprovalPending: hasPriceRequest
       };
     });
 
@@ -2094,7 +2275,7 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res) => {
   const totalRevenue = submittedOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
   const totalUnits = submittedOrders.reduce((sum, o) => {
     const u = (o.orderList || []).reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
-    return sum + (u || o.itemsCount || 0);
+    return sum + u;
   }, 0);
   const averageOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
 
@@ -2702,6 +2883,13 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
         deliveryNote: order.deliveryNote || null,
         deliveryUpdatedAt: order.deliveryUpdatedAt || null
       }
+    });
+  }
+
+  if (currentStatus === 'Price approval pending') {
+    return res.status(400).json({
+      status: 400,
+      message: `Invalid status transition: Order '${orderId}' is currently 'Price approval pending' and cannot be dispatched or updated until approved.`
     });
   }
 
@@ -3565,6 +3753,232 @@ app.get('/api/items/:id/history', async (req, res) => {
 });
 
 // ============================================================================
+// CUSTOMER-SPECIFIC PRICE REQUESTS & APPROVAL CONTROLS
+// ============================================================================
+
+// 1. GET /api/price-requests (List price requests scoped by role & assignments)
+app.get('/api/price-requests', async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    if (!caller) {
+      return res.status(401).json({ status: 401, message: 'Authentication required' });
+    }
+
+    const callerRole = (caller.role || '').toLowerCase();
+    const isAdmin = callerRole === 'admin';
+    const isManager = callerRole === 'sales manager';
+    const isAgent = callerRole === 'field sales agent';
+
+    if (!isAdmin && !isManager && !isAgent) {
+      return res.status(403).json({ status: 403, message: 'Access Denied: Role cannot view price requests.' });
+    }
+
+    let list = [...priceRequestsList];
+
+    if (isManager) {
+      const assignedAgentIds = getAssignedAgentIds(caller.id);
+      list = list.filter((pr) => assignedAgentIds.includes(Number(pr.agentId)) || Number(pr.clusterId) === Number(caller.clusterid));
+    } else if (isAgent) {
+      list = list.filter((pr) => Number(pr.agentId) === Number(caller.id));
+    }
+
+    const statusFilter = req.query.status;
+    if (statusFilter && statusFilter !== 'all') {
+      list = list.filter((pr) => pr.status === statusFilter);
+    }
+
+    const enriched = list.map((pr) => {
+      const sh = shops.find((s) => Number(s.shopid) === Number(pr.shopId));
+      const it = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === Number(pr.itemId));
+      const ag = salesPersons.find((u) => Number(u.id) === Number(pr.agentId));
+      const cl = clusters.find((c) => Number(c.clusterId || c.clusterid) === Number(pr.clusterId));
+      return {
+        ...pr,
+        shopName: sh?.shopName || `Shop #${pr.shopId}`,
+        itemName: it?.itemName || `Item #${pr.itemId}`,
+        agentName: ag?.name || `Agent #${pr.agentId}`,
+        clusterName: cl?.clusterName || `Cluster #${pr.clusterId}`
+      };
+    });
+
+    res.json({
+      status: 200,
+      priceRequests: enriched,
+      pendingCount: enriched.filter((pr) => pr.status === 'pending').length
+    });
+  } catch (err) {
+    console.error('[Get Price Requests Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to load price requests: ${err.message}` });
+  }
+});
+
+// 2. POST /api/price-requests/:id/decision (Admin & Sales Manager decision workflow)
+const handlePriceRequestDecision = async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    if (!caller) {
+      return res.status(401).json({ status: 401, message: 'Authentication required' });
+    }
+
+    const callerRole = (caller.role || '').toLowerCase();
+    const isAdmin = callerRole === 'admin';
+    const isManager = callerRole === 'sales manager';
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({
+        status: 403,
+        message: 'Access Denied: Only Administrators and Sales Managers can approve or reject price requests.'
+      });
+    }
+
+    const requestId = String(req.params.id);
+    const pr = priceRequestsList.find((r) => String(r.id) === requestId);
+    if (!pr) {
+      return res.status(404).json({ status: 404, message: `Price request '${requestId}' not found.` });
+    }
+
+    // Enforce self-approval prevention
+    if (Number(caller.id) === Number(pr.agentId)) {
+      return res.status(403).json({
+        status: 403,
+        message: 'Self-approval is strictly forbidden. Agents cannot approve their own price requests.'
+      });
+    }
+
+    // Enforce manager assignment scope
+    if (isManager) {
+      const assignedAgentIds = getAssignedAgentIds(caller.id);
+      const isAssignedAgent = assignedAgentIds.includes(Number(pr.agentId));
+      const isAssignedCluster = Number(pr.clusterId) === Number(caller.clusterid);
+      if (!isAssignedAgent && !isAssignedCluster) {
+        return res.status(403).json({
+          status: 403,
+          message: `Access Denied: Price request #${requestId} is outside your assigned team and cluster scope.`
+        });
+      }
+    }
+
+    const { action, status, comment, applyToCatalog } = req.body || {};
+    let decisionAction = String(action || status || '').toLowerCase();
+    if (req.path.endsWith('/approve')) decisionAction = 'approve';
+    if (req.path.endsWith('/reject')) decisionAction = 'reject';
+
+    if (!['approve', 'approved', 'reject', 'rejected'].includes(decisionAction)) {
+      return res.status(400).json({
+        status: 400,
+        message: "Decision action must be 'approve' or 'reject'."
+      });
+    }
+
+    const isApprove = decisionAction === 'approve' || decisionAction === 'approved';
+    const finalStatus = isApprove ? 'approved' : 'rejected';
+    const nowIso = new Date().toISOString();
+    const decComment = comment ? String(comment).trim() : '';
+
+    await db.withTransaction(async (tx) => {
+      // 1. Update price_requests table
+      await tx.query(
+        `UPDATE price_requests
+         SET status = $1, decision_by = $2, decision_by_name = $3, decision_at = $4, decision_comment = $5, apply_to_catalog = $6
+         WHERE id = $7`,
+        [finalStatus, Number(caller.id), caller.name || `User ${caller.id}`, nowIso, decComment, applyToCatalog ? 1 : 0, requestId]
+      );
+
+      // 2. Update order_items table for this order and item
+      if (isApprove) {
+        await tx.query(
+          `UPDATE order_items
+           SET price = $1, cust_price = $1, act_price = $1, price_request_status = 'approved'
+           WHERE order_id = $2 AND item_id = $3`,
+          [pr.requestedPrice, pr.orderId, pr.itemId]
+        );
+      } else {
+        await tx.query(
+          `UPDATE order_items
+           SET price_request_status = 'rejected'
+           WHERE order_id = $1 AND item_id = $2`,
+          [pr.orderId, pr.itemId]
+        );
+      }
+
+      // 3. Recalculate total of order_items for this order
+      const orderItemsRows = await tx.query(
+        'SELECT qty, price FROM order_items WHERE order_id = $1',
+        [pr.orderId]
+      );
+      const recalculatedTotal = orderItemsRows.rows.reduce(
+        (sum, row) => sum + (Number(row.qty) || 0) * (Number(row.price) || 0),
+        0
+      );
+
+      // 4. Check if there are any remaining pending price requests for this order
+      const pendingCheck = await tx.query(
+        "SELECT COUNT(*) AS cnt FROM price_requests WHERE order_id = $1 AND status = 'pending' AND id != $2",
+        [pr.orderId, requestId]
+      );
+      const remainingPending = Number(pendingCheck.rows[0]?.cnt || 0);
+
+      // If no more pending requests for this order, transition order status to 'In progress'
+      if (remainingPending === 0) {
+        await tx.query(
+          `UPDATE orders
+           SET total = $1, status = 'In progress'
+           WHERE order_id = $2 AND status = 'Price approval pending'`,
+          [recalculatedTotal, pr.orderId]
+        );
+      } else {
+        await tx.query(
+          'UPDATE orders SET total = $1 WHERE order_id = $2',
+          [recalculatedTotal, pr.orderId]
+        );
+      }
+
+      // 5. If applyToCatalog requested and authorized, update cluster item price or catalog price
+      if (applyToCatalog && isApprove) {
+        if (isAdmin || (isManager && Number(pr.clusterId) === Number(caller.clusterid))) {
+          const clusterPriceId = `cp-${pr.clusterId}-${pr.itemId}`;
+          const effDate = nowIso.slice(0, 10);
+          await tx.query(
+            `INSERT INTO cluster_item_prices (id, cluster_id, item_id, price, effective_date, updated_at, updated_by, updated_by_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (cluster_id, item_id) DO UPDATE
+             SET price = EXCLUDED.price, effective_date = EXCLUDED.effective_date, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by, updated_by_name = EXCLUDED.updated_by_name`,
+            [clusterPriceId, pr.clusterId, pr.itemId, pr.requestedPrice, effDate, nowIso, Number(caller.id), caller.name]
+          );
+        }
+      }
+    });
+
+    await refreshStateFromDb();
+    await addAuditLog(
+      req,
+      'PRICE_REQUEST_DECISION',
+      'PriceRequest',
+      requestId,
+      `${isApprove ? 'Approved' : 'Rejected'} price request ${requestId} for order ${pr.orderId} (Item: ${pr.itemId}, Req: ₹${pr.requestedPrice}, Cat: ₹${pr.catalogPrice}) by ${caller.name}${decComment ? ` [Note: ${decComment}]` : ''}`
+    );
+
+    res.json({
+      status: 200,
+      message: `Price request ${finalStatus} successfully.`,
+      requestId,
+      decision: finalStatus,
+      decidedBy: caller.name,
+      decidedAt: nowIso
+    });
+  } catch (err) {
+    console.error('[Price Request Decision Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to record price decision: ${err.message}` });
+  }
+};
+
+app.post('/api/price-requests/:id/decision', handlePriceRequestDecision);
+app.post('/api/price-requests/:id/approve', handlePriceRequestDecision);
+app.post('/api/price-requests/:id/reject', handlePriceRequestDecision);
+
+// ============================================================================
 // SALES MANAGER & REGIONAL ENDPOINTS (Role-Scoped & Governed)
 // ============================================================================
 
@@ -3673,13 +4087,299 @@ app.get('/api/orders', requireAuth, async (req, res) => {
     total: Number(o.total || 0),
     status: o.status || 'In progress',
     clusterId: o.clusterId,
-    spersonid: o.spersonid
+    spersonid: o.spersonid,
+    deliveryAgentId: o.deliveryAgentId,
+    orderList: o.orderList || []
   }));
 
   res.json({
     status: 200,
     orders: formatted
   });
+});
+
+// ============================================================================
+// ADMIN AUDITED ORDER MANAGEMENT CRUD ENDPOINTS
+// ============================================================================
+
+// 1. POST /api/admin/orders (Admin create order)
+app.post('/api/admin/orders', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    const { shopId, spersonId, clusterId, orderDate, orderList, notes } = req.body || {};
+
+    const shop = shops.find((s) => Number(s.shopid) === Number(shopId) || String(s.shopid) === String(shopId));
+    if (!shop) {
+      return res.status(400).json({ status: 400, message: `Invalid shopId: Shop '${shopId}' not found.` });
+    }
+
+    const lines = Array.isArray(orderList) ? orderList.filter((i) => (parseFloat(i.qty) || 0) > 0) : [];
+    if (lines.length === 0) {
+      return res.status(400).json({ status: 400, message: 'Order must contain at least one line item with quantity > 0.' });
+    }
+
+    const agent = salesPersons.find((u) => Number(u.id) === Number(spersonId)) || caller;
+    const finalClusterId = Number(clusterId || shop.clusterid || 1);
+    const dateStr = orderDate && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) ? orderDate : new Date().toISOString().slice(0, 10);
+    const nowIso = new Date().toISOString();
+
+    let newOrderId = '';
+    let newSerial = 0;
+    let orderTotal = 0;
+
+    await db.withTransaction(async (tx) => {
+      const serialRes = await tx.query('SELECT COALESCE(MAX(serial_no), 24000) + 1 AS next_serial FROM orders');
+      newSerial = Number(serialRes.rows[0].next_serial);
+      newOrderId = `S${String(shop.shopid).padStart(3, '0')}-${newSerial}`;
+
+      // 1. Calculate order total and prepare line items
+      const preparedLines = [];
+      for (const line of lines) {
+        const itemRecord = (orderItemsCatalog || []).find((it) => Number(it.itemId) === Number(line.itemid || line.itemId));
+        const itemName = itemRecord ? itemRecord.itemName : (line.itemName || `Item ${line.itemid}`);
+        const price = parseFloat(line.custprice ?? line.price ?? itemRecord?.price ?? 0);
+        const qty = parseFloat(line.qty) || 0;
+        const lineTotal = qty * price;
+        orderTotal += lineTotal;
+        preparedLines.push({
+          itemId: Number(line.itemid || line.itemId),
+          itemName,
+          price,
+          qty,
+          line
+        });
+      }
+
+      // 2. Insert parent order first (to satisfy foreign key constraints)
+      await tx.query(
+        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'In progress', $12, $13)`,
+        [
+          newOrderId,
+          newSerial,
+          `S${String(shop.shopid).padStart(3, '0')}`,
+          Number(shop.shopid),
+          shop.shopName,
+          shop.shopCategory || 'Retail',
+          Number(agent.id),
+          agent.name || `User ${agent.id}`,
+          finalClusterId,
+          dateStr,
+          nowIso,
+          preparedLines.length,
+          orderTotal
+        ]
+      );
+
+      // 3. Insert order line items
+      let nextItemIdRes = await tx.query('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM order_items');
+      let nextItemId = Number(nextItemIdRes.rows[0].next_id);
+
+      for (const p of preparedLines) {
+        await tx.query(
+          `INSERT INTO order_items (id, order_id, item_id, item_name, qty, price, cust_price, act_price, item_json)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            nextItemId++,
+            newOrderId,
+            p.itemId,
+            p.itemName,
+            p.qty,
+            p.price,
+            p.price,
+            p.price,
+            JSON.stringify({ ...p.line, itemName: p.itemName, price: p.price, qty: p.qty })
+          ]
+        );
+      }
+    });
+
+    await refreshStateFromDb();
+    await addAuditLog(
+      req,
+      'ORDER_CREATED',
+      'Order',
+      newOrderId,
+      `Admin created order ${newOrderId} for shop '${shop.shopName}' (Total: ₹${orderTotal}, Lines: ${lines.length})${notes ? ` [Note: ${notes}]` : ''}`
+    );
+
+    const createdOrder = submittedOrders.find((o) => o.orderId === newOrderId || o.id === newOrderId);
+    res.json({
+      status: 200,
+      message: 'Order created successfully',
+      orderId: newOrderId,
+      order: createdOrder
+    });
+  } catch (err) {
+    console.error('[Admin Order Create Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to create order: ${err.message}` });
+  }
+});
+
+// 2. PUT /api/admin/orders/:id (Admin edit order, quantities, prices, status, delivery agent)
+app.put('/api/admin/orders/:id', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    const targetOrderId = String(req.params.id);
+    const order = submittedOrders.find((o) => String(o.id) === targetOrderId || String(o.orderId) === targetOrderId);
+    if (!order) {
+      return res.status(404).json({ status: 404, message: `Order '${targetOrderId}' not found.` });
+    }
+
+    const { status, deliveryAgentId, orderList, notes } = req.body || {};
+    const beforeStatus = order.status;
+    const beforeTotal = order.total;
+    const beforeLinesCount = (order.orderList || []).length;
+
+    let newStatus = status ? String(status).trim() : order.status;
+    let newDeliveryAgentId = deliveryAgentId !== undefined
+      ? (deliveryAgentId === null || deliveryAgentId === '' ? null : Number(deliveryAgentId))
+      : order.deliveryAgentId;
+
+    let newTotal = order.total;
+    let newLinesCount = (order.orderList || []).length;
+    const hasNewLines = Array.isArray(orderList) && orderList.length > 0;
+
+    await db.withTransaction(async (tx) => {
+      if (hasNewLines) {
+        // Delete old line items
+        await tx.query('DELETE FROM order_items WHERE order_id = $1', [order.orderId]);
+
+        let nextItemIdRes = await tx.query('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM order_items');
+        let nextItemId = Number(nextItemIdRes.rows[0].next_id);
+        newTotal = 0;
+
+        for (const line of orderList) {
+          const qty = parseFloat(line.qty) || 0;
+          if (qty <= 0) continue;
+          const itemRecord = (orderItemsCatalog || []).find((it) => Number(it.itemId) === Number(line.itemid || line.itemId));
+          const itemName = line.itemName || itemRecord?.itemName || `Item ${line.itemid}`;
+          const price = parseFloat(line.custprice ?? line.price ?? line.actprice ?? itemRecord?.price ?? 0);
+          newTotal += qty * price;
+
+          await tx.query(
+            `INSERT INTO order_items (id, order_id, item_id, item_name, qty, price, cust_price, act_price, item_json)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [
+              nextItemId++,
+              order.orderId,
+              Number(line.itemid || line.itemId),
+              itemName,
+              qty,
+              price,
+              price,
+              price,
+              JSON.stringify({ ...line, itemName, price, qty })
+            ]
+          );
+        }
+        newLinesCount = orderList.filter((l) => (parseFloat(l.qty) || 0) > 0).length;
+      }
+
+      await tx.query(
+        `UPDATE orders
+         SET status = $1, delivery_agent_id = $2, total = $3, items_count = $4
+         WHERE order_id = $5`,
+        [newStatus, newDeliveryAgentId, newTotal, newLinesCount, order.orderId]
+      );
+    });
+
+    await refreshStateFromDb();
+    await addAuditLog(
+      req,
+      'ORDER_UPDATED',
+      'Order',
+      order.orderId,
+      `Admin updated order ${order.orderId}: status '${beforeStatus}' -> '${newStatus}', total ₹${beforeTotal} -> ₹${newTotal}, lines ${beforeLinesCount} -> ${newLinesCount}${notes ? ` [Note: ${notes}]` : ''}`
+    );
+
+    const updatedOrder = submittedOrders.find((o) => o.orderId === order.orderId || o.id === order.orderId);
+    res.json({
+      status: 200,
+      message: 'Order updated successfully',
+      order: updatedOrder
+    });
+  } catch (err) {
+    console.error('[Admin Order Update Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to update order: ${err.message}` });
+  }
+});
+
+// 3. POST /api/admin/orders/:id/cancel (Admin cancel order)
+app.post('/api/admin/orders/:id/cancel', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const targetOrderId = String(req.params.id);
+    const order = submittedOrders.find((o) => String(o.id) === targetOrderId || String(o.orderId) === targetOrderId);
+    if (!order) {
+      return res.status(404).json({ status: 404, message: `Order '${targetOrderId}' not found.` });
+    }
+
+    const reason = req.body?.reason ? String(req.body.reason).trim() : 'Cancelled by Administrator';
+    const beforeStatus = order.status;
+
+    await db.query(
+      `UPDATE orders SET status = 'Cancelled' WHERE order_id = $1`,
+      [order.orderId]
+    );
+
+    await refreshStateFromDb();
+    await addAuditLog(
+      req,
+      'ORDER_CANCELLED',
+      'Order',
+      order.orderId,
+      `Admin cancelled order ${order.orderId} (previous status: '${beforeStatus}'). Reason: ${reason}`
+    );
+
+    res.json({
+      status: 200,
+      message: `Order '${order.orderId}' cancelled successfully.`,
+      orderId: order.orderId,
+      status: 'Cancelled'
+    });
+  } catch (err) {
+    console.error('[Admin Order Cancel Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to cancel order: ${err.message}` });
+  }
+});
+
+// 4. DELETE /api/admin/orders/:id (Admin delete order permanently)
+app.delete('/api/admin/orders/:id', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const targetOrderId = String(req.params.id);
+    const order = submittedOrders.find((o) => String(o.id) === targetOrderId || String(o.orderId) === targetOrderId);
+    if (!order) {
+      return res.status(404).json({ status: 404, message: `Order '${targetOrderId}' not found.` });
+    }
+
+    await db.withTransaction(async (tx) => {
+      await tx.query('DELETE FROM price_requests WHERE order_id = $1', [order.orderId]);
+      await tx.query('DELETE FROM order_items WHERE order_id = $1', [order.orderId]);
+      await tx.query('DELETE FROM orders WHERE order_id = $1', [order.orderId]);
+    });
+
+    await refreshStateFromDb();
+    await addAuditLog(
+      req,
+      'ORDER_DELETED',
+      'Order',
+      order.orderId,
+      `Admin permanently deleted order ${order.orderId} (Shop: ${order.customer}, Total: ₹${order.total})`
+    );
+
+    res.json({
+      status: 200,
+      message: `Order '${order.orderId}' permanently deleted.`,
+      orderId: order.orderId
+    });
+  } catch (err) {
+    console.error('[Admin Order Delete Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to delete order: ${err.message}` });
+  }
 });
 
 app.get('/api/manager/orders', async (req, res) => {

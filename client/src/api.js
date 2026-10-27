@@ -11,7 +11,9 @@ import {
   saveDeliveryOrders,
   getDeliveryOrders as getCachedDeliveryOrders,
   saveCachedPriceHistory,
-  getCachedPriceHistory
+  getCachedPriceHistory,
+  savePriceRequests,
+  getPriceRequests as getCachedPriceRequests
 } from './offline/offlineDb';
 
 const ENV_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
@@ -233,7 +235,27 @@ export const api = {
 
   // 5. GET /gethomereport?spersonId=...
   async getHomeReport(spersonId) {
-    const res = await fetch(`${BASE_URL}/gethomereport?spersonId=${encodeURIComponent(spersonId || '')}`, {
+    let url = `${BASE_URL}/gethomereport`;
+    if (typeof spersonId === 'object' && spersonId !== null) {
+      const params = new URLSearchParams();
+      if (spersonId.spersonId !== undefined && spersonId.spersonId !== null && spersonId.spersonId !== '') {
+        params.set('spersonId', spersonId.spersonId);
+      }
+      if (spersonId.clusterId !== undefined && spersonId.clusterId !== null && spersonId.clusterId !== '') {
+        params.set('clusterId', spersonId.clusterId);
+      }
+      if (spersonId.fromDate) {
+        params.set('fromDate', spersonId.fromDate);
+      }
+      if (spersonId.toDate) {
+        params.set('toDate', spersonId.toDate);
+      }
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
+    } else {
+      url += `?spersonId=${encodeURIComponent(spersonId || '')}`;
+    }
+    const res = await fetch(url, {
       headers: { ...getAuthHeaders() }
     });
     return res.json();
@@ -406,6 +428,41 @@ export const api = {
       if (v !== undefined && v !== null && v !== '') query.append(k, v);
     });
     const res = await fetch(`${BASE_URL}/api/admin/orders?${query.toString()}`, {
+      headers: { ...getAuthHeaders() }
+    });
+    return res.json();
+  },
+
+  async adminCreateOrder(orderData) {
+    const res = await fetch(`${BASE_URL}/api/admin/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify(orderData)
+    });
+    return res.json();
+  },
+
+  async adminUpdateOrder(orderId, orderData) {
+    const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify(orderData)
+    });
+    return res.json();
+  },
+
+  async adminCancelOrder(orderId, reason = '') {
+    const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ reason })
+    });
+    return res.json();
+  },
+
+  async adminDeleteOrder(orderId) {
+    const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}`, {
+      method: 'DELETE',
       headers: { ...getAuthHeaders() }
     });
     return res.json();
@@ -625,6 +682,41 @@ export const api = {
         ...getAuthHeaders()
       },
       body: JSON.stringify({ status, reason, note, idempotencyKey: key, deviceEventTime: eventTime })
+    });
+    return res.json();
+  },
+
+  // 18. Customer Price Requests APIs
+  async getPriceRequests(status = null, userId = null) {
+    try {
+      const q = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+      const res = await fetch(`${BASE_URL}/api/price-requests${q}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if (data && data.status === 200 && Array.isArray(data.priceRequests) && userId) {
+        savePriceRequests(userId, data.priceRequests).catch(() => {});
+      }
+      return data;
+    } catch (err) {
+      if (userId) {
+        const cached = await getCachedPriceRequests(userId, status);
+        if (cached && cached.length > 0) {
+          return { status: 200, priceRequests: cached, pendingCount: cached.filter(p => p.status === 'pending').length, cached: true };
+        }
+      }
+      return { status: 500, message: err.message, priceRequests: [], pendingCount: 0 };
+    }
+  },
+
+  async decidePriceRequest(requestId, { action, comment = '', applyToCatalog = false }) {
+    const res = await fetch(`${BASE_URL}/api/price-requests/${encodeURIComponent(requestId)}/decision`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ action, comment, applyToCatalog })
     });
     return res.json();
   }

@@ -6,8 +6,12 @@ export default function SummaryReportScreen({
   showToast
 }) {
   const [clustersList, setClustersList] = useState([]);
-  const [selectedClusterId, setSelectedClusterId] = useState(1);
-  const [selectedClusterLabel, setSelectedClusterLabel] = useState('');
+  const [selectedClusterId, setSelectedClusterId] = useState('all');
+  const [selectedClusterLabel, setSelectedClusterLabel] = useState('All clusters');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [agentsList, setAgentsList] = useState([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('all');
   const [loading, setLoading] = useState(false);
 
   const todayStr = new Date().toLocaleDateString('en-GB', {
@@ -16,18 +20,48 @@ export default function SummaryReportScreen({
     year: 'numeric'
   }).replace(/\//g, '-');
 
+  const role = (user?.role || '').toLowerCase();
+  const isAdminOrManager = role === 'admin' || role === 'sales manager';
+
+  useEffect(() => {
+    if (!isAdminOrManager) return;
+    if (role === 'admin') {
+      api.getAdminUsers()
+        .then((res) => {
+          if (res && res.users) {
+            const fieldAgents = res.users.filter(
+              (u) => (u.role || '').toLowerCase() === 'field sales agent'
+            );
+            setAgentsList(fieldAgents);
+          }
+        })
+        .catch(() => {});
+    } else if (role === 'sales manager' && user?.id) {
+      api.getManagerAssignedAgents(user.id)
+        .then((res) => {
+          if (res && res.agents) {
+            setAgentsList(res.agents);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [user?.id, role, isAdminOrManager]);
+
   const loadReport = () => {
     setLoading(true);
+    const params = {
+      spersonId: selectedAgentId !== 'all' ? selectedAgentId : (role === 'field sales agent' ? user?.id : undefined),
+      clusterId: selectedClusterId !== 'all' ? selectedClusterId : undefined,
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined
+    };
+
     api
-      .getHomeReport(user?.id || 1)
+      .getHomeReport(params)
       .then((res) => {
         if ((res?.status === 200 || res?.status === 1) && res?.result?.clusterList) {
           const list = res.result.clusterList;
           setClustersList(list);
-          if (list.length > 0 && !selectedClusterLabel) {
-            setSelectedClusterId(list[0].clusterId);
-            setSelectedClusterLabel(list[0].clusterName);
-          }
         } else {
           showToast('Failed to load cluster reports');
         }
@@ -40,7 +74,7 @@ export default function SummaryReportScreen({
 
   useEffect(() => {
     loadReport();
-  }, [user?.id]);
+  }, [user?.id, selectedClusterId, selectedAgentId, fromDate, toDate]);
 
   const isAllClusters = selectedClusterId === 'all';
 
@@ -68,12 +102,17 @@ export default function SummaryReportScreen({
       const list = c.deliverystatus || c.delivery_status || [];
       list.forEach((item) => {
         if (!delivMap.has(item.name)) {
-          delivMap.set(item.name, { ...item, totalcount: 0 });
+          delivMap.set(item.name, { ...item, totalcount: 0, delivered: 0, inprogress: 0 });
         }
         delivMap.get(item.name).totalcount += Number(item.totalcount || 0);
+        delivMap.get(item.name).delivered += Number(item.delivered || 0);
+        delivMap.get(item.name).inprogress += Number(item.inprogress || 0);
       });
     });
-    deliveryStatusList = Array.from(delivMap.values());
+    deliveryStatusList = Array.from(delivMap.values()).map((it) => ({
+      ...it,
+      fulfillment: it.totalcount > 0 ? Math.min(100, Math.round((it.delivered / it.totalcount) * 100)) : 0
+    }));
 
     const orderItemMap = new Map();
     clustersList.forEach((c) => {
@@ -112,8 +151,8 @@ export default function SummaryReportScreen({
         </button>
       </div>
 
-      {/* Cluster & Date Toolbar */}
-      <div className="summary-toolbar">
+      {/* Cluster, Agent & Date Toolbar */}
+      <div className="summary-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
         <div className="summary-cluster-group">
           <label htmlFor="summary-cluster-select" className="summary-cluster-label">
             CLUSTER ROUTE
@@ -138,7 +177,56 @@ export default function SummaryReportScreen({
           </select>
         </div>
 
-        <div className="summary-date-group">
+        {isAdminOrManager && (
+          <div className="summary-cluster-group">
+            <label htmlFor="summary-agent-select" className="summary-cluster-label">
+              FIELD SALES AGENT
+            </label>
+            <select
+              id="summary-agent-select"
+              className="select summary-cluster-select"
+              value={selectedAgentId}
+              onChange={(e) => setSelectedAgentId(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            >
+              <option value="all">All agents</option>
+              {agentsList.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name || a.username} ({a.employeeId || `ID: ${a.id}`})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="summary-date-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label htmlFor="summary-from-date" style={{ fontSize: '11px', fontWeight: 700, color: '#64748b' }}>
+            FROM:
+          </label>
+          <input
+            id="summary-from-date"
+            type="date"
+            className="field"
+            style={{ padding: '4px 8px', fontSize: '12px' }}
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+          />
+        </div>
+
+        <div className="summary-date-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label htmlFor="summary-to-date" style={{ fontSize: '11px', fontWeight: 700, color: '#64748b' }}>
+            TO:
+          </label>
+          <input
+            id="summary-to-date"
+            type="date"
+            className="field"
+            style={{ padding: '4px 8px', fontSize: '12px' }}
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+          />
+        </div>
+
+        <div className="summary-date-group" style={{ marginLeft: 'auto' }}>
           <span className="summary-date-label">Report Date:</span>
           <span className="summary-date-badge">
             📅 {todayStr}
@@ -212,10 +300,12 @@ export default function SummaryReportScreen({
               <tbody>
                 {deliveryStatusList.length > 0 ? (
                   deliveryStatusList.map((row, idx) => {
-                    const delivered = 11; // Bytecode adapter constant
-                    const inprogress = 22;
-                    const total = row.totalcount || 0;
-                    const pct = total > 0 ? Math.min(100, Math.round((delivered / total) * 100)) : 100;
+                    const delivered = Number(row.delivered || 0);
+                    const inprogress = Number(row.inprogress || 0);
+                    const total = Number(row.totalcount || 0);
+                    const pct = row.fulfillment !== undefined
+                      ? row.fulfillment
+                      : (total > 0 ? Math.min(100, Math.round((delivered / total) * 100)) : 0);
                     return (
                       <tr key={`${row.id || idx}-${row.name}`}>
                         <td>
@@ -245,7 +335,7 @@ export default function SummaryReportScreen({
                 ) : (
                   <tr>
                     <td colSpan="5">
-                      <div className="empty-state">No delivery status records for this cluster.</div>
+                      <div className="empty-state">No delivery status records for this selection.</div>
                     </td>
                   </tr>
                 )}
@@ -274,28 +364,34 @@ export default function SummaryReportScreen({
               </thead>
               <tbody>
                 {orderItemStatusList.length > 0 ? (
-                  orderItemStatusList.map((item, idx) => (
-                    <tr key={`${item.id || idx}-${item.name}`}>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <span className="stat-icon blue text-xs">▤</span>
-                          <strong>{item.name}</strong>
-                        </div>
-                      </td>
-                      <td>
-                        <span className="text-sm font-bold text-slate-800">
-                          {item.totalcount} units
-                        </span>
-                      </td>
-                      <td>
-                        <span className="status delivered">Active</span>
-                      </td>
-                    </tr>
-                  ))
+                  orderItemStatusList.map((item, idx) => {
+                    const statusStr = item.status || 'Active';
+                    const statusClass = statusStr.toLowerCase().replace(/\s+/g, '-');
+                    return (
+                      <tr key={`${item.id || idx}-${item.name}`}>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <span className="stat-icon blue text-xs">▤</span>
+                            <strong>{item.name}</strong>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="text-sm font-bold text-slate-800">
+                            {item.totalcount} units
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`status ${statusClass}`}>
+                            {statusStr}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan="3">
-                      <div className="empty-state">No item orders for this cluster route.</div>
+                      <div className="empty-state">No item orders for this selection.</div>
                     </td>
                   </tr>
                 )}
