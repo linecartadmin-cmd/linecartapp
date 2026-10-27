@@ -9,7 +9,9 @@ import {
   saveOrderHistory,
   getShopOrderHistory as getCachedOrderHistory,
   saveDeliveryOrders,
-  getDeliveryOrders as getCachedDeliveryOrders
+  getDeliveryOrders as getCachedDeliveryOrders,
+  saveCachedPriceHistory,
+  getCachedPriceHistory
 } from './offline/offlineDb';
 
 const ENV_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
@@ -453,6 +455,110 @@ export const api = {
       headers: { ...getAuthHeaders() }
     });
     return res.json();
+  },
+
+  // 16b. Items & Daily Pricing APIs
+  async getItems(clusterId = 'all', userId = null) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/items?clusterId=${encodeURIComponent(clusterId || 'all')}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if ((data.status === 200 || data.status === 1) && Array.isArray(data.items)) {
+        if (userId) {
+          saveCatalog(userId, data.items).catch(() => {});
+        }
+      }
+      return data;
+    } catch (err) {
+      if (userId) {
+        const cached = await getCatalog(userId);
+        if (cached && cached.length > 0) {
+          return {
+            status: 200,
+            items: cached,
+            clusters: [],
+            authorizedClusterIds: [],
+            canManageCatalog: false,
+            canUpdatePrices: true,
+            isOfflineCached: true
+          };
+        }
+      }
+      throw err;
+    }
+  },
+
+  async createItem(itemData) {
+    const res = await fetch(`${BASE_URL}/api/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify(itemData)
+    });
+    return res.json();
+  },
+
+  async updateItem(id, itemData) {
+    const res = await fetch(`${BASE_URL}/api/items/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify(itemData)
+    });
+    return res.json();
+  },
+
+  async archiveItem(id, active) {
+    const res = await fetch(`${BASE_URL}/api/items/${encodeURIComponent(id)}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ active })
+    });
+    return res.json();
+  },
+
+  async deleteItem(id) {
+    const res = await fetch(`${BASE_URL}/api/items/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() }
+    });
+    return res.json();
+  },
+
+  async updateDailyPrice(payload, idempotencyKey = null, deviceEventTime = null) {
+    const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() };
+    if (idempotencyKey) headers['X-Idempotency-Key'] = idempotencyKey;
+    if (deviceEventTime) headers['X-Device-Event-Time'] = deviceEventTime;
+
+    const res = await fetch(`${BASE_URL}/api/items/price`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        ...payload,
+        idempotencyKey: idempotencyKey || payload.idempotencyKey
+      })
+    });
+    return res.json();
+  },
+
+  async getItemPriceHistory(itemId, userId = null) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/items/${encodeURIComponent(itemId)}/history`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if ((data.status === 200 || data.status === 1) && Array.isArray(data.history) && userId) {
+        saveCachedPriceHistory(userId, itemId, data.history).catch(() => {});
+      }
+      return data;
+    } catch (err) {
+      if (userId) {
+        const cached = await getCachedPriceHistory(userId, itemId);
+        if (cached && cached.length > 0) {
+          return { status: 200, itemId, history: cached, isOfflineCached: true };
+        }
+      }
+      throw err;
+    }
   },
 
   async getAdminAudit(params = {}) {

@@ -300,6 +300,56 @@ export async function runMigrationsAndSeed({
     console.log('[DB Migration] Applied 001_initial_schema.sql');
   }
 
+  // Ensure items table columns and 002_items_daily_pricing migration
+  if (db.mode === 'postgres') {
+    await db.execRaw(`
+      ALTER TABLE items ADD COLUMN IF NOT EXISTS active INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_at TEXT;
+      ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_by INTEGER;
+      ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_by_name TEXT;
+      ALTER TABLE items ADD COLUMN IF NOT EXISTS created_at TEXT;
+    `);
+  } else {
+    try {
+      const tableInfo = await db.query("PRAGMA table_info('items')");
+      const existingCols = new Set(tableInfo.rows.map((r) => r.name));
+      if (!existingCols.has('active')) {
+        await db.execRaw('ALTER TABLE items ADD COLUMN active INTEGER NOT NULL DEFAULT 1;');
+      }
+      if (!existingCols.has('updated_at')) {
+        await db.execRaw('ALTER TABLE items ADD COLUMN updated_at TEXT;');
+      }
+      if (!existingCols.has('updated_by')) {
+        await db.execRaw('ALTER TABLE items ADD COLUMN updated_by INTEGER;');
+      }
+      if (!existingCols.has('updated_by_name')) {
+        await db.execRaw('ALTER TABLE items ADD COLUMN updated_by_name TEXT;');
+      }
+      if (!existingCols.has('created_at')) {
+        await db.execRaw('ALTER TABLE items ADD COLUMN created_at TEXT;');
+      }
+    } catch (colErr) {
+      console.warn('[DB Migration] Could not verify/add items columns in SQLite:', colErr.message);
+    }
+  }
+
+  const mig2File = path.join(__dirname, 'migrations', '002_items_daily_pricing.sql');
+  if (fs.existsSync(mig2File)) {
+    const mig2Sql = fs.readFileSync(mig2File, 'utf8');
+    await db.execRaw(mig2Sql);
+    const mig2Check = await db.query(
+      'SELECT version FROM schema_migrations WHERE version = $1',
+      ['002_items_daily_pricing']
+    );
+    if (mig2Check.rowCount === 0) {
+      await db.query(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)',
+        ['002_items_daily_pricing', new Date().toISOString()]
+      );
+      console.log('[DB Migration] Applied 002_items_daily_pricing.sql');
+    }
+  }
+
   // Load legacy admin_config.json if present for one-time repeatable migration
   let legacyConfig = {};
   if (legacyAdminConfigPath && fs.existsSync(legacyAdminConfigPath)) {
@@ -698,6 +748,7 @@ export async function runMigrationsAndSeed({
       'Delivery Agent': legacyConfig.rolePermissions?.['Delivery Agent'] || defaultRolePermissions['Delivery Agent']
     };
     for (const [roleName, permsObj] of Object.entries(rolePermsSource)) {
+      if (!permsObj) continue;
       await tx.query(
         `INSERT INTO role_permissions (role, pages_json, actions_json, updated_at)
          VALUES ($1, $2, $3, $4)
@@ -791,6 +842,15 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
     const permsRes = await runner.query('SELECT * FROM role_permissions');
     const settingsRes = await runner.query('SELECT * FROM app_settings WHERE setting_key = $1', ['global']);
     const auditRes = await runner.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 500');
+    const itemsRes = await runner.query('SELECT * FROM items ORDER BY item_id ASC');
+    let clusterPricesRes = { rows: [] };
+    let priceHistoryRes = { rows: [] };
+    try {
+      clusterPricesRes = await runner.query('SELECT * FROM cluster_item_prices ORDER BY cluster_id ASC, item_id ASC');
+    } catch {}
+    try {
+      priceHistoryRes = await runner.query('SELECT * FROM price_history ORDER BY created_at DESC LIMIT 500');
+    } catch {}
 
   const users = usersRes.rows.map((r) => ({
     id: Number(r.id),
@@ -940,10 +1000,57 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
     details: r.details || ''
   }));
 
+  const items = itemsRes.rows.map((r) => ({
+    itemId: Number(r.item_id),
+    itemid: Number(r.item_id),
+    itemName: r.item_name,
+    itemImage: r.item_image || '',
+    itemimage: r.item_image || '',
+    qty: Number(r.qty || 0),
+    price: Number(r.price || 0),
+    cprice: Number(r.cprice || 0),
+    kgsPerUnit: Number(r.kgs_per_unit || 50),
+    kgsperunit: Number(r.kgs_per_unit || 50),
+    remarks: Number(r.remarks || 0),
+    unitType: r.unit_type || 'Kgs',
+    active: Number(r.active ?? 1),
+    updatedAt: r.updated_at || null,
+    updatedBy: r.updated_by ? Number(r.updated_by) : null,
+    updatedByName: r.updated_by_name || null,
+    createdAt: r.created_at || null
+  }));
+
+  const clusterItemPrices = clusterPricesRes.rows.map((r) => ({
+    id: r.id,
+    clusterId: Number(r.cluster_id),
+    itemId: Number(r.item_id),
+    price: Number(r.price),
+    effectiveDate: r.effective_date,
+    updatedAt: r.updated_at,
+    updatedBy: Number(r.updated_by),
+    updatedByName: r.updated_by_name
+  }));
+
+  const priceHistory = priceHistoryRes.rows.map((r) => ({
+    id: r.id,
+    itemId: Number(r.item_id),
+    clusterId: Number(r.cluster_id || 0),
+    oldPrice: Number(r.old_price),
+    newPrice: Number(r.new_price),
+    effectiveDate: r.effective_date,
+    createdAt: r.created_at,
+    changedBy: Number(r.changed_by),
+    changedByName: r.changed_by_name,
+    idempotencyKey: r.idempotency_key || null
+  }));
+
     return {
       users,
       shops,
       orders,
+      items,
+      clusterItemPrices,
+      priceHistory,
       managerAssignments,
       salesTargets,
       rolePermissions,

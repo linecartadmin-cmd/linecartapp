@@ -142,6 +142,77 @@ export async function queueDeliveryStatusUpdate(userId, orderId, status, reason 
 }
 
 /**
+ * Enqueue a daily price change mutation for local-first storage and sync
+ */
+export async function queuePriceUpdate(userId, {
+  itemId,
+  clusterId = 0,
+  newPrice,
+  effectiveDate,
+  basePrice,
+  baseUpdatedAt,
+  forceOverwrite = false,
+  itemName = 'Commodity',
+  clusterName = 'Global'
+}) {
+  const deviceEventTime = new Date().toISOString();
+  const idempotencyKey = `price-${itemId}-${clusterId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const mutation = await enqueueMutation({
+    userId,
+    type: 'UPDATE_ITEM_PRICE',
+    idempotencyKey,
+    deviceEventTime,
+    payload: {
+      itemId: Number(itemId),
+      clusterId: Number(clusterId || 0),
+      newPrice: Number(newPrice),
+      effectiveDate: effectiveDate || deviceEventTime.slice(0, 10),
+      basePrice: Number(basePrice || 0),
+      baseUpdatedAt,
+      forceOverwrite,
+      itemName,
+      clusterName
+    }
+  });
+
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    triggerSync(userId).catch(() => {});
+  }
+
+  return { mutation, idempotencyKey };
+}
+
+/**
+ * Resolve price conflict by discarding offline change and accepting server value
+ */
+export async function resolvePriceConflictKeepServer(mutationId, serverPrice, userId) {
+  await updateMutation(mutationId, {
+    status: 'synced',
+    syncError: null,
+    isConflict: false,
+    resolvedWith: 'server',
+    syncedAt: new Date().toISOString()
+  });
+  window.dispatchEvent(new CustomEvent('linecart:prices_updated'));
+}
+
+/**
+ * Resolve price conflict by overwriting server price with local user price
+ */
+export async function resolvePriceConflictOverwrite(mutationId, userId) {
+  const store = await updateMutation(mutationId, {
+    status: 'waiting',
+    isConflict: false,
+    syncError: null,
+    payloadUpdates: { forceOverwrite: true }
+  });
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    triggerSync(userId).catch(() => {});
+  }
+}
+
+/**
  * Execute synchronization of pending mutations for the specified user
  */
 export async function triggerSync(userId) {
@@ -244,6 +315,48 @@ export async function triggerSync(userId) {
           } else {
             // Business rejection (illegal transition, not assigned, etc.)
             const errMsg = res?.message || 'Server rejected status update.';
+            await updateMutation(item.mutationId, {
+              status: 'failed',
+              syncError: errMsg
+            });
+          }
+        } else if (item.type === 'UPDATE_ITEM_PRICE') {
+          const payload = {
+            ...item.payload,
+            ...(item.payloadUpdates || {})
+          };
+          const res = await api.updateDailyPrice(payload, item.idempotencyKey, item.deviceEventTime);
+          if (res && (res.status === 200 || res.status === 1)) {
+            await updateMutation(item.mutationId, {
+              status: 'synced',
+              syncError: null,
+              isConflict: false,
+              syncedAt: new Date().toISOString(),
+              syncedResult: {
+                idempotentReplay: Boolean(res.idempotentReplay),
+                price: res.newPrice,
+                effectiveDate: res.effectiveDate
+              }
+            });
+            window.dispatchEvent(new CustomEvent('linecart:prices_updated', { detail: res }));
+          } else if (res && res.status === 409) {
+            // Concurrent Edit Conflict
+            await updateMutation(item.mutationId, {
+              status: 'failed',
+              isConflict: true,
+              conflictData: {
+                serverPrice: res.serverPrice,
+                serverUpdatedAt: res.serverUpdatedAt,
+                serverUpdatedByName: res.serverUpdatedByName,
+                clientPrice: res.clientPrice,
+                clientEffectiveDate: res.clientEffectiveDate,
+                message: res.message
+              },
+              syncError: res.message || 'Concurrent edit conflict detected.'
+            });
+            window.dispatchEvent(new CustomEvent('linecart:price_conflict', { detail: { mutation: item, res } }));
+          } else {
+            const errMsg = res?.message || 'Server rejected price update.';
             await updateMutation(item.mutationId, {
               status: 'failed',
               syncError: errMsg

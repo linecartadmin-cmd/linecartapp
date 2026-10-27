@@ -174,12 +174,12 @@ async function getShopPhoto(filename) {
 
 const DEFAULT_ROLE_PERMISSIONS = {
   Admin: {
-    pages: ['admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments', 'admin-targets', 'admin-orders', 'admin-reports', 'admin-shops', 'admin-audit', 'admin-settings'],
-    actions: ['view_all_reports', 'export_reports', 'export_png', 'manage_users', 'manage_roles', 'manage_assignments', 'manage_targets', 'manage_settings', 'create_order', 'view_orders', 'view_shops']
+    pages: ['admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments', 'admin-targets', 'admin-orders', 'admin-reports', 'admin-shops', 'admin-audit', 'admin-settings', 'items'],
+    actions: ['view_all_reports', 'export_reports', 'export_png', 'manage_users', 'manage_roles', 'manage_assignments', 'manage_targets', 'manage_settings', 'create_order', 'view_orders', 'view_shops', 'manage_items', 'manage_daily_prices', 'view_items']
   },
   'Sales Manager': {
-    pages: ['reports', 'orders', 'map', 'team', 'customers'],
-    actions: ['view_team_reports', 'export_reports', 'export_png', 'view_team_orders', 'view_cluster_shops', 'view_team']
+    pages: ['reports', 'orders', 'map', 'team', 'customers', 'items'],
+    actions: ['view_team_reports', 'export_reports', 'export_png', 'view_team_orders', 'view_cluster_shops', 'view_team', 'view_items', 'update_daily_prices']
   },
   'Field Sales Agent': {
     pages: ['overview', 'orders', 'reports', 'customers', 'summary'],
@@ -199,6 +199,9 @@ let shops = [];
 let submittedOrders = [];
 let managerAssignments = {};
 let salesTargets = [];
+let orderItemsCatalog = [];
+let clusterItemPrices = [];
+let priceHistoryList = [];
 let rolePermissions = JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS));
 let appSettings = {
   organizationName: 'LineCart Wholesale Logistics',
@@ -216,6 +219,9 @@ async function refreshStateFromDb() {
   submittedOrders = state.orders;
   managerAssignments = state.managerAssignments;
   salesTargets = state.salesTargets;
+  orderItemsCatalog = state.items || [];
+  clusterItemPrices = state.clusterItemPrices || [];
+  priceHistoryList = state.priceHistory || [];
   rolePermissions = state.rolePermissions;
   appSettings = state.appSettings;
   auditLogs = state.auditLogs;
@@ -485,6 +491,29 @@ const authorizeManagerAccess = (req, res, requestedManagerId) => {
   });
   return { authorized: false };
 };
+
+/**
+ * Determine authorized wholesale cluster IDs for a given caller.
+ * - Admin: all clusters.
+ * - Sales Manager: their cluster plus clusters of their assigned field agents.
+ * - Field Sales Agent / Delivery Agent: their assigned cluster.
+ */
+function getAuthorizedClusterIds(caller) {
+  if (!caller) return [];
+  const callerRole = (caller.role || '').toLowerCase();
+  if (callerRole === 'admin') {
+    return clusters.map((c) => Number(c.clusterId));
+  }
+  if (callerRole === 'sales manager') {
+    const assignedAgentIds = getAssignedAgentIds(caller.id);
+    const assignedClusters = salesPersons
+      .filter((s) => assignedAgentIds.includes(Number(s.id)))
+      .map((s) => Number(s.clusterid || 1));
+    const ownCluster = Number(caller.clusterid || 1);
+    return Array.from(new Set([ownCluster, ...assignedClusters]));
+  }
+  return [Number(caller.clusterid || 1)];
+}
 
 /**
  * Validate uploaded shop photo buffer (size <= 5MB + genuine magic bytes for JPEG, PNG, or WebP).
@@ -1605,12 +1634,39 @@ const handleGetItemsOrder = async (req, res) => {
     });
   }
 
+  const activeCatalog = orderItemsCatalog.length > 0
+    ? orderItemsCatalog.filter((item) => Number(item.active ?? 1) === 1)
+    : defaultOrderItems;
+
   const clusterList = clusters.map((cluster) => {
+    const clusterItems = activeCatalog.map((item) => {
+      const itemId = Number(item.itemId || item.itemid);
+      const clusterPriceRow = clusterItemPrices.find(
+        (cip) => Number(cip.clusterId) === Number(cluster.clusterId) && Number(cip.itemId) === itemId
+      );
+      const effectivePrice = clusterPriceRow ? Number(clusterPriceRow.price) : Number(item.price);
+      return {
+        itemid: itemId,
+        itemId: itemId,
+        itemName: item.itemName,
+        itemimage: item.itemImage || item.itemimage || '',
+        qty: Number(item.qty || 0),
+        price: effectivePrice,
+        cprice: Number(item.cprice || 0),
+        kgsperunit: Number(item.kgsPerUnit || item.kgsperunit || 50),
+        remarks: Number(item.remarks || 0),
+        unitType: item.unitType || 'Kgs',
+        clusterId: cluster.clusterId,
+        active: Number(item.active ?? 1),
+        updatedAt: clusterPriceRow ? clusterPriceRow.updatedAt : item.updatedAt
+      };
+    });
+
     const clusterShops = shops
       .filter((s) => Number(s.clusterid) === Number(cluster.clusterId))
       .map((shop) => ({
         ...shop,
-        itemsList: defaultOrderItems.map((item) => ({ ...item }))
+        itemsList: clusterItems
       }));
 
     return {
@@ -1797,6 +1853,7 @@ const handleCreateOrder = async (req, res) => {
         nextItemRowId += 1;
         const itemName =
           item.itemName ||
+          orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === Number(item.itemid))?.itemName ||
           defaultOrderItems.find((d) => Number(d.itemid) === Number(item.itemid))?.itemName ||
           `Item ${item.itemid}`;
         const enrichedLine = { ...item, itemName };
@@ -2943,9 +3000,568 @@ app.delete('/api/admin/targets/:id', requireAdmin, async (req, res) => {
   });
 });
 
-// Admin Wholesale Catalog Commodities
-app.get('/api/admin/items', requireAdmin, (req, res) => {
-  res.json({ status: 200, items: defaultOrderItems });
+// ============================================================================
+// ITEMS & DAILY PRICING ENDPOINTS (Admin & Sales Manager Scoped)
+// ============================================================================
+
+// 1. GET /api/items (Fetch product catalog and daily prices)
+app.get('/api/items', async (req, res) => {
+  await refreshStateFromDb();
+  const caller = getCaller(req);
+  if (!caller) {
+    return res.status(401).json({ status: 401, message: 'Authentication required: valid Bearer session token must be provided.' });
+  }
+
+  const callerRole = (caller.role || '').toLowerCase();
+  const isAdmin = callerRole === 'admin';
+  const isManager = callerRole === 'sales manager';
+
+  if (!isAdmin && !isManager && !checkActionPermission(caller.role, 'view_items') && !checkActionPermission(caller.role, 'manage_items')) {
+    return res.status(403).json({ status: 403, message: 'Permission Denied: Accessing product catalog is disabled for your role.' });
+  }
+
+  const authorizedClusterIds = getAuthorizedClusterIds(caller);
+  const clusterIdFilter = req.query.clusterId ? (req.query.clusterId === 'all' ? 'all' : Number(req.query.clusterId)) : 'all';
+
+  // Build cluster-specific prices map per item
+  const clusterPriceMap = {};
+  for (const row of clusterItemPrices) {
+    const iid = Number(row.itemId);
+    const cid = Number(row.clusterId);
+    // If manager, only include prices for authorized clusters
+    if (!isAdmin && !authorizedClusterIds.includes(cid)) continue;
+    if (!clusterPriceMap[iid]) clusterPriceMap[iid] = {};
+    clusterPriceMap[iid][cid] = {
+      price: Number(row.price),
+      effectiveDate: row.effectiveDate,
+      updatedAt: row.updatedAt,
+      updatedBy: row.updatedBy,
+      updatedByName: row.updatedByName
+    };
+  }
+
+  const catalog = (orderItemsCatalog.length > 0 ? orderItemsCatalog : defaultOrderItems).map((item) => {
+    const itemId = Number(item.itemId || item.itemid);
+    const itemClusterPrices = clusterPriceMap[itemId] || {};
+
+    // Determine representative price for the current filter/scope
+    let currentPrice = Number(item.price || 0);
+    let effectiveDate = item.updatedAt ? item.updatedAt.slice(0, 10) : new Date().toISOString().slice(0, 10);
+    let lastUpdatedAt = item.updatedAt || null;
+    let lastUpdatedByName = item.updatedByName || null;
+
+    if (clusterIdFilter !== 'all' && itemClusterPrices[clusterIdFilter]) {
+      const cp = itemClusterPrices[clusterIdFilter];
+      currentPrice = cp.price;
+      effectiveDate = cp.effectiveDate;
+      lastUpdatedAt = cp.updatedAt;
+      lastUpdatedByName = cp.updatedByName;
+    } else if (isManager && authorizedClusterIds.length > 0) {
+      const primaryCluster = authorizedClusterIds[0];
+      if (itemClusterPrices[primaryCluster]) {
+        const cp = itemClusterPrices[primaryCluster];
+        currentPrice = cp.price;
+        effectiveDate = cp.effectiveDate;
+        lastUpdatedAt = cp.updatedAt;
+        lastUpdatedByName = cp.updatedByName;
+      }
+    }
+
+    return {
+      itemId,
+      itemid: itemId,
+      itemName: item.itemName,
+      itemImage: item.itemImage || item.itemimage || '',
+      itemimage: item.itemImage || item.itemimage || '',
+      unitType: item.unitType || 'Kgs',
+      kgsPerUnit: Number(item.kgsPerUnit || item.kgsperunit || 50),
+      kgsperunit: Number(item.kgsPerUnit || item.kgsperunit || 50),
+      basePrice: Number(item.price || 0),
+      currentPrice,
+      effectiveDate,
+      lastUpdatedAt,
+      lastUpdatedByName,
+      active: Number(item.active ?? 1),
+      clusterPrices: itemClusterPrices
+    };
+  });
+
+  res.json({
+    status: 200,
+    items: catalog,
+    clusters: isAdmin ? clusters : clusters.filter((c) => authorizedClusterIds.includes(Number(c.clusterId))),
+    authorizedClusterIds,
+    canManageCatalog: isAdmin,
+    canUpdatePrices: true
+  });
+});
+
+// Backward-compatible Admin wholesale commodities endpoint
+app.get('/api/admin/items', (req, res) => {
+  const caller = getCaller(req);
+  if (!caller) {
+    return res.status(401).json({ status: 401, message: 'Authentication required' });
+  }
+  const callerRole = (caller.role || '').toLowerCase();
+  if (callerRole !== 'admin' && callerRole !== 'sales manager') {
+    return res.status(403).json({ status: 403, message: 'Access Denied: Administrator or Sales Manager role required.' });
+  }
+  const items = orderItemsCatalog.length > 0 ? orderItemsCatalog : defaultOrderItems;
+  res.json({ status: 200, items });
+});
+
+// 2. POST /api/items (Admin only: Create new catalog product)
+app.post('/api/items', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    const { itemName, unitType = 'Kgs', price = 0, kgsPerUnit = 50, itemImage = '' } = req.body || {};
+
+    const cleanName = String(itemName || '').trim();
+    if (!cleanName) {
+      return res.status(400).json({ status: 400, message: 'Product name is required and cannot be empty.' });
+    }
+
+    const numPrice = parseFloat(price);
+    if (isNaN(numPrice) || numPrice < 0) {
+      return res.status(400).json({ status: 400, message: 'Price must be a valid non-negative number.' });
+    }
+
+    const numKgs = parseInt(kgsPerUnit, 10) || 50;
+    const cleanUnit = String(unitType || 'Kgs').trim() || 'Kgs';
+    const nowIso = new Date().toISOString();
+    const todayDate = nowIso.slice(0, 10);
+
+    let createdItem = null;
+    await db.withTransaction(async (tx) => {
+      const maxRes = await tx.query('SELECT COALESCE(MAX(item_id), 0) + 1 AS next_id FROM items');
+      const nextItemId = Number(maxRes.rows[0]?.next_id || 1);
+
+      await tx.query(
+        `INSERT INTO items (item_id, item_name, item_image, qty, price, cprice, kgs_per_unit, remarks, unit_type, active, created_at, updated_at, updated_by, updated_by_name)
+         VALUES ($1, $2, $3, 0, $4, 0, $5, 0, $6, 1, $7, $8, $9, $10)`,
+        [nextItemId, cleanName, String(itemImage || ''), numPrice, numKgs, cleanUnit, nowIso, nowIso, Number(caller.id), caller.name]
+      );
+
+      // Record initial base price in price history
+      const priceHistoryId = `ph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await tx.query(
+        `INSERT INTO price_history (id, item_id, cluster_id, old_price, new_price, effective_date, created_at, changed_by, changed_by_name)
+         VALUES ($1, $2, 0, 0, $3, $4, $5, $6, $7)`,
+        [priceHistoryId, nextItemId, numPrice, todayDate, nowIso, Number(caller.id), caller.name]
+      );
+
+      const auditId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      await tx.query(
+        `INSERT INTO audit_logs (id, timestamp, admin_id, admin_name, action, target_type, target_id, details)
+         VALUES ($1, $2, $3, $4, 'CREATE_ITEM', 'Item', $5, $6)`,
+        [auditId, nowIso, Number(caller.id), caller.name, String(nextItemId), `Created wholesale product '${cleanName}' (#${nextItemId}) at base price ₹${numPrice}/${cleanUnit}`]
+      );
+
+      createdItem = {
+        itemId: nextItemId,
+        itemid: nextItemId,
+        itemName: cleanName,
+        itemImage: itemImage || '',
+        price: numPrice,
+        kgsPerUnit: numKgs,
+        unitType: cleanUnit,
+        active: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        updatedByName: caller.name
+      };
+    });
+
+    await refreshStateFromDb();
+    res.status(201).json({
+      status: 201,
+      message: `Product '${cleanName}' created successfully.`,
+      item: createdItem
+    });
+  } catch (err) {
+    console.error('[Create Item Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to create product: ${err.message}` });
+  }
+});
+
+// 3. PUT /api/items/:id (Admin only: Update product details)
+app.put('/api/items/:id', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    const itemId = Number(req.params.id);
+    const existing = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === itemId);
+    if (!existing) {
+      return res.status(404).json({ status: 404, message: `Product #${itemId} not found.` });
+    }
+
+    const { itemName, unitType, kgsPerUnit, itemImage } = req.body || {};
+    const cleanName = itemName !== undefined ? String(itemName).trim() : existing.itemName;
+    if (!cleanName) {
+      return res.status(400).json({ status: 400, message: 'Product name cannot be empty.' });
+    }
+
+    const cleanUnit = unitType !== undefined ? String(unitType).trim() : existing.unitType;
+    const numKgs = kgsPerUnit !== undefined ? (parseInt(kgsPerUnit, 10) || 50) : existing.kgsPerUnit;
+    const cleanImage = itemImage !== undefined ? String(itemImage) : existing.itemImage;
+    const nowIso = new Date().toISOString();
+
+    await db.query(
+      `UPDATE items
+       SET item_name = $1, unit_type = $2, kgs_per_unit = $3, item_image = $4, updated_at = $5, updated_by = $6, updated_by_name = $7
+       WHERE item_id = $8`,
+      [cleanName, cleanUnit, numKgs, cleanImage, nowIso, Number(caller.id), caller.name, itemId]
+    );
+
+    const auditId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await db.query(
+      `INSERT INTO audit_logs (id, timestamp, admin_id, admin_name, action, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, 'UPDATE_ITEM', 'Item', $5, $6)`,
+      [auditId, nowIso, Number(caller.id), caller.name, String(itemId), `Updated product '${cleanName}' (#${itemId}) details`]
+    );
+
+    await refreshStateFromDb();
+    res.json({
+      status: 200,
+      message: `Product '${cleanName}' updated successfully.`
+    });
+  } catch (err) {
+    console.error('[Update Item Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to update product: ${err.message}` });
+  }
+});
+
+// 4. POST /api/items/:id/archive (Admin only: Soft archive / restore product)
+app.post('/api/items/:id/archive', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    const itemId = Number(req.params.id);
+    const existing = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === itemId);
+    if (!existing) {
+      return res.status(404).json({ status: 404, message: `Product #${itemId} not found.` });
+    }
+
+    const newActiveState = req.body?.active !== undefined ? (Number(req.body.active) === 1 ? 1 : 0) : (Number(existing.active) === 1 ? 0 : 1);
+    const nowIso = new Date().toISOString();
+
+    await db.query(
+      `UPDATE items SET active = $1, updated_at = $2, updated_by = $3, updated_by_name = $4 WHERE item_id = $5`,
+      [newActiveState, nowIso, Number(caller.id), caller.name, itemId]
+    );
+
+    const actionText = newActiveState === 1 ? 'RESTORE_ITEM' : 'ARCHIVE_ITEM';
+    const auditId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await db.query(
+      `INSERT INTO audit_logs (id, timestamp, admin_id, admin_name, action, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, $5, 'Item', $6, $7)`,
+      [auditId, nowIso, Number(caller.id), caller.name, actionText, String(itemId), `${newActiveState === 1 ? 'Restored' : 'Archived'} product '${existing.itemName}' (#${itemId})`]
+    );
+
+    await refreshStateFromDb();
+    res.json({
+      status: 200,
+      message: `Product '${existing.itemName}' ${newActiveState === 1 ? 'restored to active catalog' : 'archived successfully'}.`,
+      active: newActiveState
+    });
+  } catch (err) {
+    console.error('[Archive Item Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to change archive status: ${err.message}` });
+  }
+});
+
+// 5. DELETE /api/items/:id (Admin only: Safe deletion check - rejects if referenced in orders)
+app.delete('/api/items/:id', requireAdmin, async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    const itemId = Number(req.params.id);
+    const existing = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === itemId);
+    if (!existing) {
+      return res.status(404).json({ status: 404, message: `Product #${itemId} not found.` });
+    }
+
+    // Check if referenced in historical orders
+    const refCheck = await db.query('SELECT COUNT(*) AS cnt FROM order_items WHERE item_id = $1', [itemId]);
+    const refCount = Number(refCheck.rows[0]?.cnt || 0);
+    if (refCount > 0) {
+      return res.status(400).json({
+        status: 400,
+        message: `Cannot delete product '${existing.itemName}' (#${itemId}) because it is referenced in ${refCount} past customer order line(s). Please archive it instead to preserve order records.`,
+        referencedInOrders: true
+      });
+    }
+
+    await db.withTransaction(async (tx) => {
+      await tx.query('DELETE FROM cluster_item_prices WHERE item_id = $1', [itemId]);
+      await tx.query('DELETE FROM price_history WHERE item_id = $1', [itemId]);
+      await tx.query('DELETE FROM items WHERE item_id = $1', [itemId]);
+    });
+
+    const auditId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await db.query(
+      `INSERT INTO audit_logs (id, timestamp, admin_id, admin_name, action, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, 'DELETE_ITEM', 'Item', $5, $6)`,
+      [auditId, new Date().toISOString(), Number(caller.id), caller.name, String(itemId), `Deleted unreferenced product '${existing.itemName}' (#${itemId})`]
+    );
+
+    await refreshStateFromDb();
+    res.json({
+      status: 200,
+      message: `Product '${existing.itemName}' deleted successfully.`
+    });
+  } catch (err) {
+    console.error('[Delete Item Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to delete product: ${err.message}` });
+  }
+});
+
+// 6. POST /api/items/price (Update daily wholesale price with scope validation & concurrent-edit conflict detection)
+app.post('/api/items/price', async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    if (!caller) {
+      return res.status(401).json({ status: 401, message: 'Authentication required: valid Bearer session token must be provided.' });
+    }
+
+    const callerRole = (caller.role || '').toLowerCase();
+    const isAdmin = callerRole === 'admin';
+    const isManager = callerRole === 'sales manager';
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({ status: 403, message: 'Permission Denied: Updating daily commodity prices requires Administrator or Sales Manager role.' });
+    }
+
+    const {
+      itemId,
+      clusterId = 0,
+      newPrice,
+      effectiveDate,
+      basePrice,
+      baseUpdatedAt,
+      forceOverwrite = false,
+      idempotencyKey = null
+    } = req.body || {};
+
+    const targetItemId = Number(itemId);
+    const effCluster = Number(clusterId || 0);
+
+    const targetItem = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === targetItemId);
+    if (!targetItem) {
+      return res.status(404).json({ status: 404, message: `Product #${targetItemId} not found.` });
+    }
+
+    const numPrice = parseFloat(newPrice);
+    if (isNaN(numPrice) || numPrice < 0) {
+      return res.status(400).json({ status: 400, message: 'Price must be a valid non-negative number (e.g. ₹55.50).' });
+    }
+
+    // Role-Scoped Authorization
+    const authorizedClusterIds = getAuthorizedClusterIds(caller);
+    if (effCluster === 0) {
+      // Global baseline price modification is strictly Administrator only
+      if (!isAdmin) {
+        return res.status(403).json({
+          status: 403,
+          message: 'Access Denied: Sales Managers cannot modify global catalog base prices. Only regional cluster prices can be updated.'
+        });
+      }
+    } else {
+      // Cluster-specific price: must be within the manager's authorized supervision scope
+      if (!isAdmin && !authorizedClusterIds.includes(effCluster)) {
+        return res.status(403).json({
+          status: 403,
+          message: `Access Denied: Cluster #${effCluster} is outside your regional supervision scope (Authorized clusters: ${authorizedClusterIds.join(', ') || 'none'}).`
+        });
+      }
+    }
+
+    // Idempotency check: if already processed, return idempotent replay
+    if (idempotencyKey) {
+      const existingIdemp = await db.query(
+        'SELECT id, new_price, effective_date, created_at FROM price_history WHERE idempotency_key = $1',
+        [String(idempotencyKey).trim()]
+      );
+      if (existingIdemp.rowCount > 0) {
+        return res.json({
+          status: 200,
+          message: 'Daily price already recorded (idempotent replay).',
+          idempotentReplay: true,
+          itemId: targetItemId,
+          clusterId: effCluster,
+          price: Number(existingIdemp.rows[0].new_price),
+          effectiveDate: existingIdemp.rows[0].effective_date
+        });
+      }
+    }
+
+    // Concurrent Edit Conflict Detection
+    if (!forceOverwrite && baseUpdatedAt) {
+      let currentPriceRow = null;
+      if (effCluster > 0) {
+        const q = await db.query(
+          'SELECT price, updated_at, updated_by_name FROM cluster_item_prices WHERE cluster_id = $1 AND item_id = $2',
+          [effCluster, targetItemId]
+        );
+        if (q.rowCount > 0) currentPriceRow = q.rows[0];
+      } else {
+        const q = await db.query(
+          'SELECT price, updated_at, updated_by_name FROM items WHERE item_id = $1',
+          [targetItemId]
+        );
+        if (q.rowCount > 0) currentPriceRow = q.rows[0];
+      }
+
+      if (currentPriceRow && currentPriceRow.updated_at) {
+        const serverTime = new Date(currentPriceRow.updated_at).getTime();
+        const baseTime = new Date(baseUpdatedAt).getTime();
+        const serverPriceNum = Number(currentPriceRow.price);
+        const basePriceNum = Number(basePrice);
+
+        if (serverTime > baseTime && Math.abs(serverPriceNum - basePriceNum) > 0.001) {
+          return res.status(409).json({
+            status: 409,
+            conflict: true,
+            message: `Concurrent edit conflict: The price for ${targetItem.itemName} was updated on the server to ₹${serverPriceNum} by ${currentPriceRow.updated_by_name || 'another user'} while you were working offline.`,
+            serverPrice: serverPriceNum,
+            serverUpdatedAt: currentPriceRow.updated_at,
+            serverUpdatedByName: currentPriceRow.updated_by_name || 'System',
+            clientPrice: numPrice,
+            clientEffectiveDate: effectiveDate || new Date().toISOString().slice(0, 10),
+            itemId: targetItemId,
+            clusterId: effCluster
+          });
+        }
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const effDate = (effectiveDate || nowIso.slice(0, 10)).trim();
+    const oldPrice = effCluster > 0
+      ? Number(clusterItemPrices.find((c) => Number(c.clusterId) === effCluster && Number(c.itemId) === targetItemId)?.price ?? targetItem.price ?? 0)
+      : Number(targetItem.price ?? 0);
+
+    const priceHistoryId = `ph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    await db.withTransaction(async (tx) => {
+      if (effCluster === 0) {
+        await tx.query(
+          `UPDATE items
+           SET price = $1, updated_at = $2, updated_by = $3, updated_by_name = $4
+           WHERE item_id = $5`,
+          [numPrice, nowIso, Number(caller.id), caller.name, targetItemId]
+        );
+      } else {
+        const cipId = `cip-${effCluster}-${targetItemId}`;
+        await tx.query(
+          `INSERT INTO cluster_item_prices (id, cluster_id, item_id, price, effective_date, updated_at, updated_by, updated_by_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (cluster_id, item_id) DO UPDATE SET
+             price = EXCLUDED.price,
+             effective_date = EXCLUDED.effective_date,
+             updated_at = EXCLUDED.updated_at,
+             updated_by = EXCLUDED.updated_by,
+             updated_by_name = EXCLUDED.updated_by_name`,
+          [cipId, effCluster, targetItemId, numPrice, effDate, nowIso, Number(caller.id), caller.name]
+        );
+        await tx.query(
+          `UPDATE items SET updated_at = $1 WHERE item_id = $2`,
+          [nowIso, targetItemId]
+        );
+      }
+
+      await tx.query(
+        `INSERT INTO price_history (id, item_id, cluster_id, old_price, new_price, effective_date, created_at, changed_by, changed_by_name, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [priceHistoryId, targetItemId, effCluster, oldPrice, numPrice, effDate, nowIso, Number(caller.id), caller.name, idempotencyKey || null]
+      );
+
+      const clusterObj = clusters.find((c) => Number(c.clusterId) === effCluster);
+      const clusterLabel = effCluster === 0 ? 'Global Base Catalog' : (clusterObj?.clusterName || `Cluster #${effCluster}`);
+      const auditId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      await tx.query(
+        `INSERT INTO audit_logs (id, timestamp, admin_id, admin_name, action, target_type, target_id, details)
+         VALUES ($1, $2, $3, $4, 'UPDATE_DAILY_PRICE', 'ItemPrice', $5, $6)`,
+        [auditId, nowIso, Number(caller.id), caller.name, String(targetItemId), `Changed daily price for '${targetItem.itemName}' in ${clusterLabel} from ₹${oldPrice} to ₹${numPrice} (effective: ${effDate})`]
+      );
+    });
+
+    await refreshStateFromDb();
+    res.json({
+      status: 200,
+      message: `Daily price for '${targetItem.itemName}' updated to ₹${numPrice}.`,
+      itemId: targetItemId,
+      clusterId: effCluster,
+      newPrice: numPrice,
+      oldPrice,
+      effectiveDate: effDate,
+      updatedAt: nowIso,
+      updatedByName: caller.name
+    });
+  } catch (err) {
+    console.error('[Update Item Price Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to update daily price: ${err.message}` });
+  }
+});
+
+// 7. GET /api/items/:id/history (Auditable price history timeline for an item)
+app.get('/api/items/:id/history', async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    if (!caller) {
+      return res.status(401).json({ status: 401, message: 'Authentication required' });
+    }
+
+    const callerRole = (caller.role || '').toLowerCase();
+    const isAdmin = callerRole === 'admin';
+    const isManager = callerRole === 'sales manager';
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({ status: 403, message: 'Access Denied: Administrator or Sales Manager role required.' });
+    }
+
+    const itemId = Number(req.params.id);
+    const authorizedClusterIds = getAuthorizedClusterIds(caller);
+
+    const historyRes = await db.query(
+      `SELECT * FROM price_history WHERE item_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [itemId]
+    );
+
+    const filtered = historyRes.rows.filter((r) => {
+      const cid = Number(r.cluster_id || 0);
+      if (isAdmin) return true;
+      if (cid === 0) return true;
+      return authorizedClusterIds.includes(cid);
+    }).map((r) => {
+      const cid = Number(r.cluster_id || 0);
+      const c = clusters.find((cl) => Number(cl.clusterId) === cid);
+      return {
+        id: r.id,
+        itemId: Number(r.item_id),
+        clusterId: cid,
+        clusterName: cid === 0 ? 'Global Base Catalog' : (c?.clusterName || `Cluster #${cid}`),
+        oldPrice: Number(r.old_price),
+        newPrice: Number(r.new_price),
+        effectiveDate: r.effective_date,
+        createdAt: r.created_at,
+        changedBy: Number(r.changed_by),
+        changedByName: r.changed_by_name || 'System'
+      };
+    });
+
+    res.json({
+      status: 200,
+      itemId,
+      history: filtered
+    });
+  } catch (err) {
+    console.error('[Price History Error]', err);
+    res.status(500).json({ status: 500, message: `Failed to load price history: ${err.message}` });
+  }
 });
 
 // ============================================================================

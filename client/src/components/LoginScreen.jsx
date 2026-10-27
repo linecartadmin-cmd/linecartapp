@@ -197,10 +197,18 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
         setFormError(errMsg);
         if (showToast) showToast(errMsg);
       }
-    } catch {
-      const errMsg = 'Invalid mobile number or password.';
-      setFormError(errMsg);
-      if (showToast) showToast(errMsg);
+    } catch (err) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const offlineMsg = 'You are currently offline. First sign-in on this device requires an active internet connection to verify your account.';
+        setFormError(offlineMsg);
+        if (showToast) showToast(offlineMsg);
+      } else {
+        const errMsg = err?.message && err.message.includes('Failed to fetch')
+          ? 'Network error: Unable to reach LineCart server. If you have not logged in on this device before, an internet connection is required.'
+          : 'Invalid mobile number or password.';
+        setFormError(errMsg);
+        if (showToast) showToast(errMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -522,6 +530,27 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
                 >
                   <span>👆</span> {loading ? 'Verifying biometric...' : 'Unlock with Fingerprint'}
                 </button>
+              </div>
+            )}
+
+            {/* First-Time Offline Notice (When device has no previously saved local credentials) */}
+            {typeof navigator !== 'undefined' && !navigator.onLine && (!savedAccounts || savedAccounts.length === 0) && (
+              <div style={{
+                marginBottom: '16px',
+                padding: '12px 14px',
+                borderRadius: '10px',
+                background: '#fffbeb',
+                border: '1px solid #fef3c7',
+                color: '#92400e',
+                fontSize: '12.5px',
+                lineHeight: 1.45
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>⚠️</span> First sign-in requires internet
+                </div>
+                <div>
+                  No local session exists on this device yet. Please connect to the internet to sign in for the first time. Once signed in, you can unlock offline with device biometrics.
+                </div>
               </div>
             )}
 

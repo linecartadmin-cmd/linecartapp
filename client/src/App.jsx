@@ -1,26 +1,62 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { api } from './api';
 import OverviewScreen from './components/OverviewScreen';
-import OrderEntryScreen from './components/OrderEntryScreen';
-import ReportsScreen from './components/ReportsScreen';
-import CustomersScreen from './components/CustomersScreen';
-import SummaryReportScreen from './components/SummaryReportScreen';
 import LoginScreen from './components/LoginScreen';
-import ManagerReportsScreen from './components/ManagerReportsScreen';
-import ManagerOrdersScreen from './components/ManagerOrdersScreen';
-import ShopMapScreen from './components/ShopMapScreen';
-import TeamAssignmentsScreen from './components/TeamAssignmentsScreen';
-import AdminDashboardScreen from './components/AdminDashboardScreen';
-import AdminUsersScreen from './components/AdminUsersScreen';
-import AdminRolesPermissionsScreen from './components/AdminRolesPermissionsScreen';
-import AdminAuditScreen from './components/AdminAuditScreen';
-import AdminSettingsScreen from './components/AdminSettingsScreen';
-import AdminTargetsScreen from './components/AdminTargetsScreen';
-import DeliveryRouteScreen from './components/DeliveryRouteScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncStatusBar from './components/SyncStatusBar';
 import { initSyncEngine } from './offline/syncEngine';
 import { signOutAppSession } from './offline/biometricAuth';
+
+// Lazy-loaded secondary screens for reduced initial bundle and fast APK startup
+const OrderEntryScreen = lazy(() => import('./components/OrderEntryScreen'));
+const ReportsScreen = lazy(() => import('./components/ReportsScreen'));
+const CustomersScreen = lazy(() => import('./components/CustomersScreen'));
+const SummaryReportScreen = lazy(() => import('./components/SummaryReportScreen'));
+const ManagerReportsScreen = lazy(() => import('./components/ManagerReportsScreen'));
+const ManagerOrdersScreen = lazy(() => import('./components/ManagerOrdersScreen'));
+const ShopMapScreen = lazy(() => import('./components/ShopMapScreen'));
+const TeamAssignmentsScreen = lazy(() => import('./components/TeamAssignmentsScreen'));
+const AdminDashboardScreen = lazy(() => import('./components/AdminDashboardScreen'));
+const AdminUsersScreen = lazy(() => import('./components/AdminUsersScreen'));
+const AdminRolesPermissionsScreen = lazy(() => import('./components/AdminRolesPermissionsScreen'));
+const AdminAuditScreen = lazy(() => import('./components/AdminAuditScreen'));
+const AdminSettingsScreen = lazy(() => import('./components/AdminSettingsScreen'));
+const AdminTargetsScreen = lazy(() => import('./components/AdminTargetsScreen'));
+const DeliveryRouteScreen = lazy(() => import('./components/DeliveryRouteScreen'));
+const ItemsScreen = lazy(() => import('./components/ItemsScreen'));
+
+function ScreenLoadingSkeleton() {
+  return (
+    <div className="screen-loading-skeleton" role="status" aria-label="Loading page content" style={{
+      padding: '28px 20px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '16px',
+      maxWidth: '900px',
+      margin: '0 auto'
+    }}>
+      <div style={{
+        height: '24px',
+        width: '35%',
+        borderRadius: '6px',
+        background: '#e2e8f0',
+        opacity: 0.7
+      }} />
+      <div style={{
+        height: '96px',
+        borderRadius: '12px',
+        background: '#f8fafc',
+        border: '1px solid #e2e8f0'
+      }} />
+      <div style={{
+        height: '180px',
+        borderRadius: '12px',
+        background: '#f8fafc',
+        border: '1px solid #e2e8f0'
+      }} />
+    </div>
+  );
+}
 
 
 
@@ -106,18 +142,18 @@ export default function App() {
       if (r === 'admin') {
         const validAdmin = [
           'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
-          'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery'
+          'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
         ];
         return validAdmin.includes(hash) ? hash : 'admin-dashboard';
       }
       if (r === 'sales manager') {
-        const validManager = ['reports', 'orders', 'map', 'team', 'customers'];
+        const validManager = ['reports', 'orders', 'map', 'team', 'customers', 'items'];
         return validManager.includes(hash) ? hash : 'reports';
       }
       if (r === 'delivery agent') return 'delivery';
     } catch {}
     const valid = [
-      'overview', 'orders', 'reports', 'customers', 'summary', 'map', 'team', 'delivery',
+      'overview', 'orders', 'reports', 'customers', 'summary', 'map', 'team', 'delivery', 'items',
       'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
       'admin-targets', 'admin-orders', 'admin-reports', 'admin-audit', 'admin-settings'
     ];
@@ -162,9 +198,9 @@ export default function App() {
       const hash = window.location.hash.replace('#', '');
       const validAdminPages = [
         'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
-        'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery'
+        'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
       ];
-      const validManagerPages = ['reports', 'orders', 'map', 'team', 'customers'];
+      const validManagerPages = ['reports', 'orders', 'map', 'team', 'customers', 'items'];
       const validAgentPages = ['overview', 'orders', 'reports', 'customers', 'summary'];
       const validDeliveryPages = ['delivery'];
 
@@ -402,7 +438,8 @@ export default function App() {
     'admin-assignments': 'Team Assignments',
     'admin-targets': 'Targets & Quotas',
     'admin-audit': 'Security Audit Trail',
-    'admin-settings': 'System Settings'
+    'admin-settings': 'System Settings',
+    items: 'Items & Daily Pricing'
   };
 
   if (!user) {
@@ -494,6 +531,13 @@ export default function App() {
             </button>
 
             <button
+              className={`nav-item ${page === 'items' ? 'active' : ''}`}
+              onClick={() => navigate('items')}
+            >
+              <span className="nav-icon">🏷️</span>Items &amp; Daily Pricing
+            </button>
+
+            <button
               className={`nav-item ${page === 'reports' ? 'active' : ''}`}
               onClick={() => navigate('reports')}
             >
@@ -545,6 +589,15 @@ export default function App() {
                 onClick={() => navigate('orders')}
               >
                 <span className="nav-icon">▤</span>Team Orders
+              </button>
+            )}
+
+            {isPageAllowed('items') && (
+              <button
+                className={`nav-item ${page === 'items' ? 'active' : ''}`}
+                onClick={() => navigate('items')}
+              >
+                <span className="nav-icon">🏷️</span>Items &amp; Daily Pricing
               </button>
             )}
 
@@ -678,11 +731,14 @@ export default function App() {
               title="Go back"
               aria-label="Go back"
             >
-              <span className="back-arrow" aria-hidden="true">←</span>
+              <svg className="back-arrow-svg" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+              </svg>
               <span className="sr-only">Go back</span>
             </button>
             <div className="breadcrumbs">
-              <span>Linecart</span>
+              <span className="crumb-brand">Linecart</span>
               <span className="crumb-slash">/</span>
               <strong id="crumbCurrent">{pageLabels[page] || 'Overview'}</strong>
             </div>
@@ -718,7 +774,8 @@ export default function App() {
               title="Sign out of LineCart"
               aria-label="Sign out"
             >
-              🚪 Sign out
+              <span className="signout-icon" aria-hidden="true">🚪</span>
+              <span className="signout-text">Sign out</span>
             </button>
 
             {/* Avatar Pill */}
@@ -731,6 +788,7 @@ export default function App() {
         {/* Main Content Router */}
         <div className="page-content" id="pageContent">
           <ErrorBoundary>
+            <Suspense fallback={<ScreenLoadingSkeleton />}>
             {/* Administrator Exclusive Screens */}
             {(page === 'admin-dashboard' || (page === 'overview' && isAdmin)) && (
             <AdminDashboardScreen
@@ -881,12 +939,22 @@ export default function App() {
             />
           )}
 
+          {page === 'items' && (isAdmin || isManager) && (
+            <ItemsScreen
+              user={user}
+              clusters={clusters}
+              showToast={showToast}
+              onNavigate={navigate}
+            />
+          )}
+
           {page === 'summary' && !isAdmin && !isManager && (
             <SummaryReportScreen
               user={user}
               showToast={showToast}
             />
           )}
+            </Suspense>
           </ErrorBoundary>
         </div>
 
@@ -929,6 +997,12 @@ export default function App() {
               <span>📦</span>Orders
             </button>
             <button
+              className={page === 'items' ? 'active' : ''}
+              onClick={() => navigate('items')}
+            >
+              <span>🏷️</span>Items
+            </button>
+            <button
               className={page === 'admin-roles' ? 'active' : ''}
               onClick={() => navigate('admin-roles')}
             >
@@ -965,6 +1039,14 @@ export default function App() {
                 onClick={() => navigate('orders')}
               >
                 <span>▤</span>Orders
+              </button>
+            )}
+            {isPageAllowed('items') && (
+              <button
+                className={page === 'items' ? 'active' : ''}
+                onClick={() => navigate('items')}
+              >
+                <span>🏷️</span>Pricing
               </button>
             )}
             {isPageAllowed('map') && (

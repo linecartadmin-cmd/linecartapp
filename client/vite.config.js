@@ -28,6 +28,21 @@ export default defineConfig(({ mode }) => {
     define: {
       'import.meta.env.VITE_ENABLE_DEMO_LOGIN': JSON.stringify(isDemo ? 'true' : 'false')
     },
+    build: {
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+              return 'vendor-react';
+            }
+            if (id.includes('node_modules/@capacitor') || id.includes('node_modules/@capgo')) {
+              return 'vendor-capacitor';
+            }
+          }
+        }
+      }
+    },
     server: {
       port: 3000
     }

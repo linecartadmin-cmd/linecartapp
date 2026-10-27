@@ -49,68 +49,51 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
 
   return (
     <>
-      <div className="sync-status-bar" style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        padding: '4px 10px',
-        fontSize: '12px',
-        borderRadius: '20px',
-        background: isOnline ? 'rgba(46, 125, 50, 0.08)' : 'rgba(237, 108, 2, 0.12)',
-        border: `1px solid ${isOnline ? 'rgba(46, 125, 50, 0.25)' : 'rgba(237, 108, 2, 0.35)'}`,
-        cursor: 'pointer',
-        userSelect: 'none'
-      }}
-      onClick={() => {
-        refreshQueue();
-        setModalOpen(true);
-      }}
-      title="Click to view offline sync queue"
+      <div
+        className={`sync-status-bar ${isOnline ? 'is-online' : 'is-offline'} ${isSyncing ? 'is-syncing' : ''}`}
+        onClick={() => {
+          refreshQueue();
+          setModalOpen(true);
+        }}
+        title="Click to view offline sync queue"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            refreshQueue();
+            setModalOpen(true);
+          }
+        }}
+        aria-label={`Offline sync status: ${isOnline ? 'Online' : 'Offline'}. ${isSyncing ? 'Syncing' : failedCount > 0 ? `${failedCount} items need attention` : pendingCount > 0 ? `${pendingCount} items waiting to sync` : 'All synced'}. Click to view queue.`}
       >
         {/* Network Dot */}
-        <span style={{
-          display: 'inline-block',
-          width: '8px',
-          height: '8px',
-          borderRadius: '50%',
-          background: isOnline ? '#2e7d32' : '#ed6c02',
-          boxShadow: isOnline ? '0 0 6px rgba(46, 125, 50, 0.6)' : '0 0 6px rgba(237, 108, 2, 0.6)'
-        }} />
+        <span className="sync-status-dot" aria-hidden="true" />
 
-        <span style={{ fontWeight: 600, color: isOnline ? '#1b5e20' : '#b25e00' }}>
+        <span className="sync-network-label">
           {isOnline ? 'Online' : 'Offline'}
         </span>
 
         {/* Sync Status Badge */}
         {isSyncing ? (
-          <span style={{ color: '#0288d1', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span className="sync-spinner">🔄</span> Syncing...
+          <span className="sync-badge sync-badge-syncing">
+            <span className="sync-spinner" aria-hidden="true">🔄</span>
+            <span className="sync-badge-full">Syncing...</span>
+            <span className="sync-badge-compact">Syncing</span>
           </span>
         ) : failedCount > 0 ? (
-          <span style={{
-            background: '#d32f2f',
-            color: '#fff',
-            padding: '1px 6px',
-            borderRadius: '10px',
-            fontSize: '11px',
-            fontWeight: 700
-          }}>
-            {failedCount} Needs attention
+          <span className="sync-badge sync-badge-failed">
+            <span className="sync-badge-full">{failedCount} Needs attention</span>
+            <span className="sync-badge-compact">{failedCount} alert</span>
           </span>
         ) : pendingCount > 0 ? (
-          <span style={{
-            background: '#ed6c02',
-            color: '#fff',
-            padding: '1px 6px',
-            borderRadius: '10px',
-            fontSize: '11px',
-            fontWeight: 700
-          }}>
-            {pendingCount} Waiting to sync
+          <span className="sync-badge sync-badge-pending">
+            <span className="sync-badge-full">{pendingCount} Waiting to sync</span>
+            <span className="sync-badge-compact">{pendingCount} wait</span>
           </span>
         ) : (
-          <span style={{ color: '#2e7d32', fontSize: '11px' }}>
-            ✓ Synced
+          <span className="sync-badge sync-badge-synced">
+            <span className="sync-badge-full">✓ Synced</span>
+            <span className="sync-badge-compact">✓</span>
           </span>
         )}
       </div>

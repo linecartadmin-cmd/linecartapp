@@ -15,7 +15,7 @@
  */
 
 const DB_NAME = 'LineCartOfflineDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbInstance = null;
 
@@ -80,6 +80,13 @@ export function openOfflineDB() {
         queueStore.createIndex('status', 'status', { unique: false });
         queueStore.createIndex('createdAt', 'createdAt', { unique: false });
         queueStore.createIndex('idempotencyKey', 'idempotencyKey', { unique: true });
+      }
+
+      // 8. Price History Cache
+      if (!db.objectStoreNames.contains('price_history')) {
+        const phStore = db.createObjectStore('price_history', { keyPath: 'id' });
+        phStore.createIndex('userId', 'userId', { unique: false });
+        phStore.createIndex('itemId', 'itemId', { unique: false });
       }
     };
 
@@ -456,4 +463,37 @@ export async function getUnsyncedCount(userId) {
 export async function hasUnsyncedMutations(userId) {
   const counts = await getUnsyncedCount(userId);
   return counts.total > 0;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Price History Cache
+// ---------------------------------------------------------------------------
+
+export async function saveCachedPriceHistory(userId, itemId, history = []) {
+  if (!userId || !itemId) return;
+  const db = await openOfflineDB();
+  const tx = db.transaction('price_history', 'readwrite');
+  const store = tx.objectStore('price_history');
+  store.put({
+    id: `${userId}_${itemId}`,
+    userId: Number(userId),
+    itemId: Number(itemId),
+    history,
+    cachedAt: new Date().toISOString()
+  });
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getCachedPriceHistory(userId, itemId) {
+  if (!userId || !itemId) return [];
+  try {
+    const store = await getStore('price_history', 'readonly');
+    const res = await promisifyRequest(store.get(`${userId}_${itemId}`));
+    return res?.history || [];
+  } catch {
+    return [];
+  }
 }
