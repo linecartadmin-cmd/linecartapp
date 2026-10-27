@@ -3495,9 +3495,26 @@ async function startServer() {
     console.warn(`[Security WARNING] ${invalidPhoneAccounts.length} user account(s) require a valid 10-digit Indian mobile number before they can sign in.`);
   }
 
-  app.listen(port, '0.0.0.0', () => {
+  const server = app.listen(port, '0.0.0.0', () => {
     console.log(`LineCart Server running on http://localhost:${port}`);
   });
+
+  const handleShutdown = async (signal) => {
+    console.log(`[Server] Received ${signal}. Draining HTTP requests and closing database connection pool...`);
+    server.close(() => {
+      console.log('[Server] HTTP listener closed.');
+    });
+    try {
+      await db.close();
+      console.log('[DB] Database pool closed successfully.');
+    } catch (closeErr) {
+      console.error('[DB] Error closing pool:', closeErr?.message || closeErr);
+    }
+    process.exit(0);
+  };
+
+  process.once('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.once('SIGINT', () => handleShutdown('SIGINT'));
 }
 
 startServer().catch((err) => {

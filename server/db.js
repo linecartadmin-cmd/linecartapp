@@ -101,18 +101,54 @@ class DatabaseAdapter {
         }
       }
 
+      const isSupabase = dbUrl.includes('supabase.com');
+      const defaultPoolMax = isSupabase ? 3 : 10;
+      const parsedPoolMax = parseInt(process.env.DB_POOL_MAX, 10);
+      const poolMax = !isNaN(parsedPoolMax) && parsedPoolMax > 0 ? parsedPoolMax : defaultPoolMax;
+
+      const idleTimeoutMillis = Number(process.env.DB_POOL_IDLE_TIMEOUT_MS || 5000);
+      const connectionTimeoutMillis = Number(process.env.DB_POOL_CONN_TIMEOUT_MS || 10000);
+
       this.pool = new Pool({
         connectionString: dbUrl,
-        max: Number(process.env.DB_POOL_MAX || (dbUrl.includes('supabase.com') ? 10 : 20)),
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
+        max: poolMax,
+        idleTimeoutMillis,
+        connectionTimeoutMillis,
         ssl: sslOptions
       });
 
-      // Verify connection
-      const client = await this.pool.connect();
-      client.release();
-      console.log(`[DB] Connected to external PostgreSQL database (${dbUrl.includes('supabase.com') ? 'Supabase' : 'Remote Postgres'}) via DATABASE_URL`);
+      this.pool.on('error', (err) => {
+        console.error('[DB Pool Error]', err?.message || err);
+      });
+
+      // Verify connection with graceful retry for pooler session availability
+      const maxRetries = 6;
+      const retryDelayMs = 2500;
+      let lastErr = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const client = await this.pool.connect();
+          client.release();
+          console.log(`[DB] Connected to external PostgreSQL database (${isSupabase ? 'Supabase' : 'Remote Postgres'}) via DATABASE_URL (pool max: ${poolMax}, idleTimeout: ${idleTimeoutMillis}ms)`);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const isSessionExhausted = err.message && (
+            err.message.includes('EMAXCONNSESSION') ||
+            err.message.includes('max clients reached') ||
+            err.message.includes('pool_size')
+          );
+          if (isSessionExhausted && attempt < maxRetries) {
+            console.warn(`[DB] Supabase pooler session capacity reached (attempt ${attempt}/${maxRetries}). Waiting ${retryDelayMs / 1000}s for existing sessions to drain...`);
+            await new Promise((res) => setTimeout(res, retryDelayMs));
+          } else {
+            throw err;
+          }
+        }
+      }
+      if (lastErr) throw lastErr;
     } else {
       if (isCloudOrStaging) {
         throw new Error(
@@ -160,6 +196,23 @@ class DatabaseAdapter {
         const info = stmt.run(...sqliteParams);
         return { rows: [], rowCount: Number(info.changes || 0) };
       }
+    }
+  }
+
+  async withClient(fn) {
+    if (this.mode === 'postgres') {
+      const client = await this.pool.connect();
+      try {
+        const clientQuery = async (sql, params = []) => {
+          const res = await client.query(sql, params);
+          return { rows: res.rows || [], rowCount: res.rowCount || 0 };
+        };
+        return await fn({ query: clientQuery });
+      } finally {
+        client.release();
+      }
+    } else {
+      return await fn({ query: (sql, params) => this.query(sql, params) });
     }
   }
 
@@ -728,27 +781,16 @@ export async function runMigrationsAndSeed({
  * Load all current business & administrative state from the relational database.
  */
 export async function loadDatabaseState(defaultRolePermissions = {}) {
-  const [
-    usersRes,
-    shopsRes,
-    ordersRes,
-    orderItemsRes,
-    assignRes,
-    targetsRes,
-    permsRes,
-    settingsRes,
-    auditRes
-  ] = await Promise.all([
-    db.query('SELECT * FROM users ORDER BY id ASC'),
-    db.query('SELECT * FROM shops ORDER BY shop_id ASC'),
-    db.query('SELECT * FROM orders ORDER BY serial_no DESC, order_id DESC'),
-    db.query('SELECT * FROM order_items ORDER BY id ASC'),
-    db.query('SELECT * FROM manager_assignments ORDER BY manager_id ASC, agent_id ASC'),
-    db.query('SELECT * FROM sales_targets ORDER BY id ASC'),
-    db.query('SELECT * FROM role_permissions'),
-    db.query('SELECT * FROM app_settings WHERE setting_key = $1', ['global']),
-    db.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 500')
-  ]);
+  return await db.withClient(async (runner) => {
+    const usersRes = await runner.query('SELECT * FROM users ORDER BY id ASC');
+    const shopsRes = await runner.query('SELECT * FROM shops ORDER BY shop_id ASC');
+    const ordersRes = await runner.query('SELECT * FROM orders ORDER BY serial_no DESC, order_id DESC');
+    const orderItemsRes = await runner.query('SELECT * FROM order_items ORDER BY id ASC');
+    const assignRes = await runner.query('SELECT * FROM manager_assignments ORDER BY manager_id ASC, agent_id ASC');
+    const targetsRes = await runner.query('SELECT * FROM sales_targets ORDER BY id ASC');
+    const permsRes = await runner.query('SELECT * FROM role_permissions');
+    const settingsRes = await runner.query('SELECT * FROM app_settings WHERE setting_key = $1', ['global']);
+    const auditRes = await runner.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 500');
 
   const users = usersRes.rows.map((r) => ({
     id: Number(r.id),
@@ -898,15 +940,16 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
     details: r.details || ''
   }));
 
-  return {
-    users,
-    shops,
-    orders,
-    managerAssignments,
-    salesTargets,
-    rolePermissions,
-    appSettings,
-    auditLogs
-  };
+    return {
+      users,
+      shops,
+      orders,
+      managerAssignments,
+      salesTargets,
+      rolePermissions,
+      appSettings,
+      auditLogs
+    };
+  });
 }
 
