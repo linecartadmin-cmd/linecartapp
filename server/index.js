@@ -1034,7 +1034,7 @@ const handleLogin = async (req, res) => {
       clusterid: found.clusterid,
       active: found.active,
       createdon: found.createdon,
-      mustChangePassword: Boolean(found.mustChangePassword)
+      mustChangePassword: false
     };
 
     return res.json({
@@ -1707,6 +1707,7 @@ const handleCreateOrder = async (req, res) => {
     const idempotencyKey = String(
       req.headers['x-idempotency-key'] || req.body?.idempotencyKey || ''
     ).trim() || null;
+    const deviceEventTime = req.headers['x-device-event-time'] || req.body?.deviceEventTime || null;
 
     let resultPayload = null;
 
@@ -1725,7 +1726,8 @@ const handleCreateOrder = async (req, res) => {
             id: String(row.serial_no),
             orderId: row.order_id,
             shopId: row.shop_short_id,
-            idempotentReplay: true
+            idempotentReplay: true,
+            deviceEventTime
           };
           return;
         }
@@ -2189,7 +2191,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     nextId = Math.max(Number(idRes.rows[0]?.next_id || 101), 101);
     await tx.query(
       `INSERT INTO users (id, name, role, phone, phone_valid, password_hash, must_change_password, cluster_id, active, created_on)
-       VALUES ($1, $2, $3, $4, 1, $5, 1, $6, 1, $7)`,
+       VALUES ($1, $2, $3, $4, 1, $5, 0, $6, 1, $7)`,
       [nextId, trimmedName, assignedRole, rawPhone, passwordHash, Number(clusterid || 1), createdOn]
     );
   });
@@ -2616,6 +2618,9 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
   }
 
   const { status, reason, note } = req.body || {};
+  const idempotencyKey = String(req.headers['x-idempotency-key'] || req.body?.idempotencyKey || '').trim() || null;
+  const deviceEventTime = req.headers['x-device-event-time'] || req.body?.deviceEventTime || null;
+
   const allowedStatuses = ['Pending', 'In progress', 'Picked up', 'Delivered', 'Could not deliver'];
   if (!status || !allowedStatuses.includes(status)) {
     return res.status(400).json({
@@ -2626,17 +2631,27 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
 
   const currentStatus = order.status || 'In progress';
 
+  // Idempotency: if the order is already in the target status, return 200 idempotent replay
+  if (currentStatus === status) {
+    return res.status(200).json({
+      status: 200,
+      message: `Order '${orderId}' is already '${status}'`,
+      idempotentReplay: true,
+      order: {
+        id: order.id,
+        orderId: order.orderId || order.id,
+        status: currentStatus,
+        deliveryReason: order.deliveryReason || null,
+        deliveryNote: order.deliveryNote || null,
+        deliveryUpdatedAt: order.deliveryUpdatedAt || null
+      }
+    });
+  }
+
   if (!isAdmin && ['Delivered', 'Could not deliver'].includes(currentStatus)) {
     return res.status(400).json({
       status: 400,
       message: `Duplicate or invalid status update: Order '${orderId}' is already finalized as '${currentStatus}'`
-    });
-  }
-
-  if (!isAdmin && currentStatus === status) {
-    return res.status(400).json({
-      status: 400,
-      message: `Duplicate status update: Order '${orderId}' is already '${status}'`
     });
   }
 
@@ -2675,7 +2690,7 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
     'UPDATE_DELIVERY_STATUS',
     'Order',
     order.id,
-    `Updated order ${order.id} delivery status from '${currentStatus}' to '${status}'${updatedReason ? ` (Reason: ${updatedReason})` : ''}`
+    `Updated order ${order.id} delivery status from '${currentStatus}' to '${status}'${updatedReason ? ` (Reason: ${updatedReason})` : ''}${deviceEventTime ? ` [deviceEventTime: ${deviceEventTime}]` : ''}${idempotencyKey ? ` [idempotencyKey: ${idempotencyKey}]` : ''}`
   );
 
   res.json({
@@ -2994,6 +3009,60 @@ app.post('/api/manager/assignments', requireAdmin, async (req, res) => {
     managerId: targetManagerId,
     assignedAgentIds: agentIds,
     assignedAgents
+  });
+});
+
+// Standard Authenticated Orders Endpoint for Field Sales Agents, Managers, and Admins
+app.get('/api/orders', requireAuth, async (req, res) => {
+  await refreshStateFromDb();
+  const caller = getCaller(req);
+  if (!caller) return res.status(401).json({ status: 401, message: 'Authentication required' });
+
+  const callerRole = (caller.role || '').toLowerCase();
+  let orders = [];
+
+  if (callerRole === 'admin') {
+    orders = submittedOrders;
+  } else if (callerRole === 'sales manager') {
+    const assignedAgentIds = getAssignedAgentIds(caller.id);
+    orders = submittedOrders.filter((o) => assignedAgentIds.includes(Number(o.spersonid)));
+  } else if (callerRole === 'delivery agent') {
+    orders = submittedOrders.filter((o) => Number(o.assignedDeliveryAgentId) === Number(caller.id));
+  } else {
+    // Field Sales Agent: strictly scoped to caller.id
+    orders = submittedOrders.filter((o) => Number(o.spersonid) === Number(caller.id));
+  }
+
+  const { status, limit } = req.query;
+  let filtered = [...orders];
+  if (status && status !== 'all') {
+    filtered = filtered.filter((o) => (o.status || '').toLowerCase() === status.toLowerCase());
+  }
+
+  filtered.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.orderId || b.id || '').localeCompare(a.orderId || a.id || ''));
+
+  if (limit) {
+    filtered = filtered.slice(0, Number(limit));
+  }
+
+  const formatted = filtered.map((o) => ({
+    id: o.orderId || o.id,
+    orderId: o.orderId || o.id,
+    customer: o.shopName || o.customer || 'Shop',
+    shopName: o.shopName || o.customer || 'Shop',
+    shopid: o.shopid || o.customerId || o.shopId,
+    customerId: o.shopid || o.customerId || o.shopId,
+    date: o.date || o.orderDate,
+    itemsCount: (o.orderList || []).length || o.itemsCount || 0,
+    total: Number(o.total || 0),
+    status: o.status || 'In progress',
+    clusterId: o.clusterId,
+    spersonid: o.spersonid
+  }));
+
+  res.json({
+    status: 200,
+    orders: formatted
   });
 });
 

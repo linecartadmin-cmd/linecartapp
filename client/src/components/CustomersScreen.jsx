@@ -157,6 +157,11 @@ export default function CustomersScreen({
       return;
     }
 
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('Shop registration requires an active internet connection.');
+      return;
+    }
+
     setSubmitting(true);
     const customerPayload = {
       clusterid: Number(formData.clusterid),

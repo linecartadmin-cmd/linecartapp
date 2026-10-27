@@ -399,7 +399,14 @@ export default function ReportsScreen({
                   {shownOrders.length > 0 ? (
                     shownOrders.map((o) => (
                       <tr key={o.id}>
-                        <td><strong className="order-id-tag">{o.id}</strong></td>
+                        <td>
+                          <strong className="order-id-tag">{o.id}</strong>
+                          {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
+                            <span style={{ display: 'block', fontSize: '10px', color: '#ed6c02', fontWeight: 600 }}>
+                              ⏳ Waiting to sync
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <div className="customer-cell">
                             <span className="customer-dot">{initials(o.customer)}</span>
@@ -418,6 +425,21 @@ export default function ReportsScreen({
                           >
                             {o.status || 'Pending'}
                           </span>
+                          {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
+                            <span style={{
+                              display: 'inline-block',
+                              marginLeft: '6px',
+                              fontSize: '10px',
+                              color: '#ed6c02',
+                              background: '#fff7ed',
+                              border: '1px solid #fed7aa',
+                              padding: '1px 5px',
+                              borderRadius: '8px',
+                              fontWeight: 600
+                            }}>
+                              Offline
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))

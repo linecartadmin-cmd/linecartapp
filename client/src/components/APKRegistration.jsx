@@ -228,6 +228,11 @@ export default function APKRegistration({ user }) {
       itemsReqList
     };
 
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('Shop registration requires an active internet connection.');
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await api.addCustomer(customerData, photoFile);

@@ -2,3 +2,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@keyframes syncSpin {
+  100% { transform: rotate(360deg); }
+}
+.sync-spinner {
+  display: inline-block;
+  animation: syncSpin 1.2s linear infinite;
+}

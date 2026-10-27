@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api, INDIAN_MOBILE_REGEX } from '../api';
 
-export default function AdminUsersScreen({ user, clusters, onNavigate, showToast }) {
+export default function AdminUsersScreen({ user, clusters = [], onNavigate, showToast }) {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState('');
@@ -10,6 +10,7 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
 
   // Create User Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [createForm, setCreateForm] = useState({
     name: '',
     phone: '',
@@ -21,6 +22,7 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
 
   // Edit User Modal State
   const [editingUser, setEditingUser] = useState(null);
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editForm, setEditForm] = useState({
     name: '',
     phone: '',
@@ -75,6 +77,10 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
   // Handle Create User
   const handleCreateSubmit = (e) => {
     e.preventDefault();
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('User management requires an active online connection.');
+      return;
+    }
     if (!createForm.name.trim() || !createForm.phone) {
       showToast('Name and a 10-digit Indian mobile number are required.');
       return;
@@ -124,6 +130,10 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
   // Handle Edit User Submit
   const handleEditSubmit = (e) => {
     e.preventDefault();
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('User management requires an active online connection.');
+      return;
+    }
     if (!editingUser) return;
     if (!INDIAN_MOBILE_REGEX.test(editForm.phone || '')) {
       showToast('Invalid mobile number: must be exactly 10 digits starting with 6, 7, 8, or 9 (no spaces or country codes).');
@@ -216,7 +226,8 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
   };
 
   const getClusterName = (clusterId) => {
-    const match = clusters.find((c) => Number(c.clusterId) === Number(clusterId));
+    const list = Array.isArray(clusters) ? clusters : [];
+    const match = list.find((c) => Number(c.clusterId) === Number(clusterId));
     return match ? (match.clusterName || `Cluster ${match.clusterId}`) : `Cluster ${clusterId || 1}`;
   };
 
@@ -455,14 +466,36 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
 
                 <div className="field-group">
                   <label className="filter-label">Password *</label>
-                  <input
-                    type="password"
-                    required
-                    className="filter-input"
-                    placeholder="Account password"
-                    value={createForm.password}
-                    onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showCreatePassword ? 'text' : 'password'}
+                      required
+                      className="filter-input"
+                      placeholder="Account password"
+                      value={createForm.password}
+                      onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                      style={{ paddingRight: '40px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCreatePassword(!showCreatePassword)}
+                      aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none',
+                        border: 'none',
+                        padding: '4px',
+                        fontSize: '15px',
+                        cursor: 'pointer',
+                        color: '#64748b'
+                      }}
+                    >
+                      {showCreatePassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="field-group">
@@ -566,13 +599,35 @@ export default function AdminUsersScreen({ user, clusters, onNavigate, showToast
 
                 <div className="field-group">
                   <label className="filter-label">Reset Password (Leave blank to keep unchanged)</label>
-                  <input
-                    type="password"
-                    className="filter-input"
-                    placeholder="Enter new password (min. 8 characters)"
-                    value={editForm.password}
-                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showEditPassword ? 'text' : 'password'}
+                      className="filter-input"
+                      placeholder="Enter new password (min. 8 characters)"
+                      value={editForm.password}
+                      onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                      style={{ paddingRight: '40px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowEditPassword(!showEditPassword)}
+                      aria-label={showEditPassword ? 'Hide password' : 'Show password'}
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none',
+                        border: 'none',
+                        padding: '4px',
+                        fontSize: '15px',
+                        cursor: 'pointer',
+                        color: '#64748b'
+                      }}
+                    >
+                      {showEditPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="field-group">

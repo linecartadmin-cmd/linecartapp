@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { OutlinedInput, OutlinedDropdown, AndroidToast } from './MaterialUI';
+import { queueOrderCreation } from '../offline/syncEngine';
 
 // Exact remarks array from decompiled/resources/res/values/arrays.xml
 const REMARKS_ARRAY = [
@@ -201,6 +202,20 @@ export default function APKOrderRequest({ user }) {
     }));
 
     setLoading(true);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      try {
+        const curShop = shopsList.find((s) => Number(s.shopid) === Number(oselectedShop));
+        await queueOrderCreation(user?.id || spersonid, orderList, curShop, orderItems);
+        showToast('Order saved locally (Offline). Waiting to sync.');
+      } catch (err) {
+        showToast(`Failed to save offline order: ${err.message}`);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const res = await api.createOrder(orderList);
       if (res && (res.status === 200 || res.status === 1)) {
@@ -209,7 +224,13 @@ export default function APKOrderRequest({ user }) {
         showToast('Failed to create Order.');
       }
     } catch {
-      showToast('Failed to create Order.');
+      try {
+        const curShop = shopsList.find((s) => Number(s.shopid) === Number(oselectedShop));
+        await queueOrderCreation(user?.id || spersonid, orderList, curShop, orderItems);
+        showToast('Network drop: Order saved locally. Waiting to sync.');
+      } catch {
+        showToast('Failed to create Order.');
+      }
     } finally {
       setLoading(false);
     }

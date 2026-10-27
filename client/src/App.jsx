@@ -17,13 +17,12 @@ import AdminAuditScreen from './components/AdminAuditScreen';
 import AdminSettingsScreen from './components/AdminSettingsScreen';
 import AdminTargetsScreen from './components/AdminTargetsScreen';
 import DeliveryRouteScreen from './components/DeliveryRouteScreen';
-import ChangePasswordModal from './components/ChangePasswordModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import SyncStatusBar from './components/SyncStatusBar';
+import { initSyncEngine } from './offline/syncEngine';
+import { signOutAppSession } from './offline/biometricAuth';
 
-const DEFAULT_ORDERS = [
-  { id: 'S101-24018', customer: 'Sunrise Fresh Produce', date: '2026-10-24', itemsCount: 2, total: 4280, status: 'In progress' },
-  { id: 'S103-24017', customer: 'Sri Krishna Bakery & Cafe', date: '2026-10-23', itemsCount: 2, total: 3150, status: 'Delivered' }
-];
+
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -78,6 +77,14 @@ export default function App() {
       .catch(() => {});
   }, [user]);
 
+  // Initialize background and foreground sync engine
+  useEffect(() => {
+    const cleanup = initSyncEngine(() => user?.id);
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [user?.id]);
+
   const isPageAllowed = (pageId) => {
     if (pageId.startsWith('admin-')) {
       return isAdmin;
@@ -92,20 +99,29 @@ export default function App() {
 
   const [page, setPage] = useState(() => {
     const hash = window.location.hash.replace('#', '');
+    try {
+      const saved = localStorage.getItem('LineCartPref_user');
+      const u = saved ? JSON.parse(saved) : null;
+      const r = (u?.role || '').toLowerCase();
+      if (r === 'admin') {
+        const validAdmin = [
+          'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
+          'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery'
+        ];
+        return validAdmin.includes(hash) ? hash : 'admin-dashboard';
+      }
+      if (r === 'sales manager') {
+        const validManager = ['reports', 'orders', 'map', 'team', 'customers'];
+        return validManager.includes(hash) ? hash : 'reports';
+      }
+      if (r === 'delivery agent') return 'delivery';
+    } catch {}
     const valid = [
       'overview', 'orders', 'reports', 'customers', 'summary', 'map', 'team', 'delivery',
       'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
       'admin-targets', 'admin-orders', 'admin-reports', 'admin-audit', 'admin-settings'
     ];
     if (valid.includes(hash)) return hash;
-    try {
-      const saved = localStorage.getItem('LineCartPref_user');
-      const u = saved ? JSON.parse(saved) : null;
-      const r = (u?.role || '').toLowerCase();
-      if (r === 'admin') return 'admin-dashboard';
-      if (r === 'sales manager') return 'reports';
-      if (r === 'delivery agent') return 'delivery';
-    } catch {}
     return 'overview';
   });
 
@@ -121,9 +137,15 @@ export default function App() {
   const [orders, setOrders] = useState(() => {
     try {
       const saved = localStorage.getItem('linecart_orders');
-      return saved ? JSON.parse(saved) : DEFAULT_ORDERS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((o) => o.id !== 'S101-24018' && o.id !== 'S103-24017');
+        }
+      }
+      return [];
     } catch {
-      return DEFAULT_ORDERS;
+      return [];
     }
   });
 
@@ -171,13 +193,29 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleHash);
   }, [isAdmin, isManager, isDelivery, permissions]);
 
-  // Route security guard: automatically redirect away if non-admin is on admin route
+  // Route security & role-home normalization guard
   useEffect(() => {
-    if (user && page.startsWith('admin-') && !isAdmin) {
+    if (!user) return;
+    if (page.startsWith('admin-') && !isAdmin) {
       const fallback = isManager ? 'reports' : isDelivery ? 'delivery' : 'overview';
       setPage(fallback);
       window.location.hash = `#${fallback}`;
       showToast('Access Denied: Administrator role required.');
+      return;
+    }
+    if (isAdmin && page === 'overview') {
+      setPage('admin-dashboard');
+      window.location.hash = '#admin-dashboard';
+      return;
+    }
+    if (isManager && page === 'overview') {
+      setPage('reports');
+      window.location.hash = '#reports';
+      return;
+    }
+    if (isDelivery && page !== 'delivery') {
+      setPage('delivery');
+      window.location.hash = '#delivery';
     }
   }, [page, isAdmin, isManager, isDelivery, user]);
 
@@ -257,9 +295,57 @@ export default function App() {
     });
   }, [user]);
 
+  // Load authoritative orders from backend
+  useEffect(() => {
+    if (!user || isDelivery) return;
+    api.getOrders().then((res) => {
+      if (res && res.status === 200 && Array.isArray(res.orders)) {
+        setOrders((prev) => {
+          // Keep any local un-synced offline temporary orders at the top
+          const pendingLocal = prev.filter((o) => String(o.id || '').startsWith('TEMP-') || o.syncStatus === 'pending');
+          const merged = [...pendingLocal];
+          for (const srvOrder of res.orders) {
+            if (!merged.some((m) => m.id === srvOrder.id || (srvOrder.orderId && m.orderId === srvOrder.orderId))) {
+              merged.push(srvOrder);
+            }
+          }
+          localStorage.setItem('linecart_orders', JSON.stringify(merged));
+          return merged;
+        });
+      }
+    }).catch(() => {});
+  }, [user?.id, isDelivery]);
+
+  // Listen for sync engine updates to orders
+  useEffect(() => {
+    const handleOrdersSync = () => {
+      try {
+        const raw = localStorage.getItem('linecart_orders');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) setOrders(list);
+        }
+      } catch {}
+    };
+    window.addEventListener('linecart:orders_updated', handleOrdersSync);
+    return () => window.removeEventListener('linecart:orders_updated', handleOrdersSync);
+  }, []);
+
   const handleOrderPlaced = (newOrder) => {
     setOrders((prev) => {
-      const updated = [newOrder, ...prev];
+      // Deduplicate: if an order with same ID, clientMutationId, or orderId exists, update in-place
+      const existingIdx = prev.findIndex(
+        (o) => (newOrder.id && o.id === newOrder.id) ||
+               (newOrder.orderId && (o.orderId === newOrder.orderId || o.id === newOrder.orderId)) ||
+               (newOrder.clientMutationId && o.clientMutationId === newOrder.clientMutationId)
+      );
+      let updated;
+      if (existingIdx >= 0) {
+        updated = [...prev];
+        updated[existingIdx] = { ...updated[existingIdx], ...newOrder };
+      } else {
+        updated = [newOrder, ...prev];
+      }
       localStorage.setItem('linecart_orders', JSON.stringify(updated));
       return updated;
     });
@@ -276,6 +362,7 @@ export default function App() {
 
   const handleLogout = () => {
     api.logout();
+    signOutAppSession();
     localStorage.removeItem('LineCartPref_token');
     localStorage.removeItem('LineCartPref_userid');
     localStorage.removeItem('LineCartPref_user');
@@ -301,7 +388,7 @@ export default function App() {
       .toUpperCase();
 
   const pageLabels = {
-    overview: 'Overview',
+    overview: isAdmin ? 'Executive Command Center' : isManager ? 'Performance Reports' : 'Overview',
     orders: isAdmin ? 'All Company Orders' : isManager ? 'Team Orders' : 'Order entry',
     reports: isAdmin ? 'Executive Reports' : isManager ? 'Performance Reports' : 'Reports',
     customers: 'Customer Shops',
@@ -341,22 +428,6 @@ export default function App() {
 
   return (
     <div className={`app-shell`}>
-      {user?.mustChangePassword && (
-        <ChangePasswordModal
-          user={user}
-          onSuccess={() => {
-            const updated = { ...user, mustChangePassword: false };
-            setUser(updated);
-            localStorage.setItem('LineCartPref_user', JSON.stringify(updated));
-          }}
-          onClose={() => {
-            const updated = { ...user, mustChangePassword: false };
-            setUser(updated);
-            localStorage.setItem('LineCartPref_user', JSON.stringify(updated));
-          }}
-          showToast={showToast}
-        />
-      )}
       {/* --- DESKTOP SIDEBAR --- */}
       <aside className="sidebar">
         {/* Brand */}
@@ -590,11 +661,13 @@ export default function App() {
 
       {/* --- MAIN CONTENT AREA --- */}
       <main className="main-area">
-        {/* Android Simulated Status Bar (Visible in Android preview) */}
-        <div className="android-status-bar">
-          <span>9:41</span>
-          <span>● ● ▰</span>
-        </div>
+        {/* Android Simulated Status Bar (Visible only in desktop Android preview) */}
+        {androidPreview && (
+          <div className="android-status-bar">
+            <span>9:41</span>
+            <span>● ● ▰</span>
+          </div>
+        )}
 
         {/* Top Sticky Header */}
         <header className="topbar">
@@ -616,6 +689,7 @@ export default function App() {
           </div>
 
           <div className="top-actions">
+            <SyncStatusBar userId={user?.id} userName={user?.name} showToast={showToast} />
             <span className="today-label" id="todayLabel">{todayStr}</span>
 
             {/* Laptop / Mobile Preview Toggle Button */}
@@ -658,7 +732,7 @@ export default function App() {
         <div className="page-content" id="pageContent">
           <ErrorBoundary>
             {/* Administrator Exclusive Screens */}
-            {page === 'admin-dashboard' && (
+            {(page === 'admin-dashboard' || (page === 'overview' && isAdmin)) && (
             <AdminDashboardScreen
               user={user}
               onNavigate={navigate}
@@ -760,7 +834,7 @@ export default function App() {
             )
           )}
 
-          {(page === 'reports' || page === 'admin-reports') && (
+          {(page === 'reports' || page === 'admin-reports' || (page === 'overview' && isManager)) && (
             (isAdmin || isManager) ? (
               <ManagerReportsScreen
                 user={user}
@@ -837,7 +911,7 @@ export default function App() {
         ) : isAdmin ? (
           <nav className="mobile-bottom-nav" aria-label="Mobile admin navigation">
             <button
-              className={page === 'admin-dashboard' ? 'active' : ''}
+              className={page === 'admin-dashboard' || page === 'overview' ? 'active' : ''}
               onClick={() => navigate('admin-dashboard')}
             >
               <span>▦</span>Overview
@@ -982,10 +1056,12 @@ export default function App() {
           </nav>
         )}
 
-        {/* Android System Gesture Bar (Visible in Android preview) */}
-        <div className="android-system-nav">
-          <span></span>
-        </div>
+        {/* Android System Gesture Bar (Visible only in desktop Android preview) */}
+        {androidPreview && (
+          <div className="android-system-nav">
+            <span></span>
+          </div>
+        )}
       </main>
 
       {/* Floating Exit Android Preview Button */}

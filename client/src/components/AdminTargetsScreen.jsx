@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../api';
 
-export default function AdminTargetsScreen({ user, clusters, onNavigate, showToast }) {
+export default function AdminTargetsScreen({ user, clusters = [], onNavigate, showToast }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [targets, setTargets] = useState([]);
@@ -292,7 +292,8 @@ export default function AdminTargetsScreen({ user, clusters, onNavigate, showToa
   };
 
   const getClusterName = (clusterId) => {
-    const match = clusters.find((c) => Number(c.clusterId) === Number(clusterId));
+    const list = Array.isArray(clusters) ? clusters : [];
+    const match = list.find((c) => Number(c.clusterId) === Number(clusterId));
     return match ? (match.clusterName || `Cluster ${match.clusterId}`) : `Cluster ${clusterId || 1}`;
   };
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import { formatShopId, getGoogleMapsUrl } from '../utils';
+import { queueOrderCreation } from '../offline/syncEngine';
 
 const REMARKS_OPTIONS = [
   'Not Connected',
@@ -93,7 +94,7 @@ export default function OrderEntryScreen({
     setLoadingHistory(true);
     setHistoryError(null);
 
-    api.getShopOrderHistory(shopId, 7)
+    api.getShopOrderHistory(shopId, 7, user?.id)
       .then((res) => {
         if (res && res.status === 200) {
           setHistoryOrders(Array.isArray(res.orders) ? res.orders : []);
@@ -228,13 +229,51 @@ export default function OrderEntryScreen({
       notes: orderNotes
     }));
 
+    const shortId = formatShopId(currentShop.shopid);
+
+    // If offline, queue locally immediately without attempting remote fetch
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      try {
+        const { tempRef, idempotencyKey } = await queueOrderCreation(
+          user?.id || spersonid,
+          orderList,
+          currentShop,
+          activeItems
+        );
+        showToast(`Order saved locally (Offline). Waiting to sync.`);
+        if (onOrderPlaced) {
+          onOrderPlaced({
+            id: tempRef,
+            tempRef,
+            idempotencyKey,
+            customer: currentShop.shopName,
+            shopId: shortId,
+            shopid: currentShop.shopid,
+            clusterId: finalClusterId,
+            date: orderDate,
+            items: activeItems.length,
+            itemsCount: activeItems.length,
+            total: subtotal,
+            status: 'In progress',
+            syncState: 'waiting',
+            itemsList: activeItems
+          });
+        }
+        onNavigate('reports');
+      } catch (err) {
+        showToast(`Failed to save offline order: ${err.message}`);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     try {
       const res = await api.createOrder(orderList);
       if (res && (res.status === 200 || res.status === 1)) {
         showToast(`Order for ${currentShop.shopName} placed successfully!`);
         fetchOrderHistory(selectedShopId);
         if (onOrderPlaced) {
-          const shortId = formatShopId(currentShop.shopid);
           const serial = res.id || Math.floor(Math.random() * 90000 + 10000);
           const orderId = res.orderId || `${shortId}-${serial}`;
 
@@ -249,6 +288,7 @@ export default function OrderEntryScreen({
             itemsCount: activeItems.length,
             total: subtotal,
             status: 'In progress',
+            syncState: 'synced',
             itemsList: activeItems
           });
         }
@@ -256,8 +296,38 @@ export default function OrderEntryScreen({
       } else {
         showToast(res?.message || 'Failed to place order.');
       }
-    } catch {
-      showToast('Failed to connect to order service.');
+    } catch (networkErr) {
+      // If network fails during online submission, fall back gracefully to offline queue
+      try {
+        const { tempRef, idempotencyKey } = await queueOrderCreation(
+          user?.id || spersonid,
+          orderList,
+          currentShop,
+          activeItems
+        );
+        showToast(`Network drop: Order saved locally. Waiting to sync.`);
+        if (onOrderPlaced) {
+          onOrderPlaced({
+            id: tempRef,
+            tempRef,
+            idempotencyKey,
+            customer: currentShop.shopName,
+            shopId: shortId,
+            shopid: currentShop.shopid,
+            clusterId: finalClusterId,
+            date: orderDate,
+            items: activeItems.length,
+            itemsCount: activeItems.length,
+            total: subtotal,
+            status: 'In progress',
+            syncState: 'waiting',
+            itemsList: activeItems
+          });
+        }
+        onNavigate('reports');
+      } catch {
+        showToast('Failed to connect or save offline order.');
+      }
     } finally {
       setSubmitting(false);
     }

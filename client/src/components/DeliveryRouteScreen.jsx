@@ -5,6 +5,9 @@ import { api } from '../api';
 import { planRoadDeliveryRoute } from '../routing';
 import { getGoogleMapsUrl } from '../utils';
 import { createMapTileLayer, getMapTileConfig } from '../mapConfig';
+import { queueDeliveryStatusUpdate } from '../offline/syncEngine';
+import { updateLocalDeliveryOrderStatus } from '../offline/offlineDb';
+import SyncStatusBar from './SyncStatusBar';
 
 const I18N = {
   en: {
@@ -184,7 +187,7 @@ export default function DeliveryRouteScreen({
   const loadAssignedOrders = async () => {
     setLoading(true);
     try {
-      const res = await api.getDeliveryOrders(selectedClusterId === 'all' ? undefined : selectedClusterId);
+      const res = await api.getDeliveryOrders(selectedClusterId === 'all' ? undefined : selectedClusterId, user?.id);
       if (res && res.status === 200) {
         setOrders(res.orders || []);
         if (res.clusters && res.clusters.length > 0) {
@@ -561,9 +564,41 @@ export default function DeliveryRouteScreen({
   // Execute authenticated delivery status update
   const executeStatusUpdate = async (orderId, newStatus, reason = null, note = null) => {
     setUpdating(true);
+
+    // If offline, update locally and enqueue for sync
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      try {
+        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note);
+        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note);
+
+        setOrders(prev => prev.map(o => {
+          if (String(o.id) === String(orderId)) {
+            return {
+              ...o,
+              status: newStatus,
+              deliveryReason: reason,
+              deliveryNote: note,
+              deliveryUpdatedAt: new Date().toISOString(),
+              syncState: 'waiting'
+            };
+          }
+          return o;
+        }));
+
+        if (showToast) showToast('Status updated locally (Offline). Waiting to sync.');
+        setConfirmModal(null);
+        setFailModal(null);
+      } catch (err) {
+        if (showToast) showToast(`Failed to update offline status: ${err.message}`);
+      } finally {
+        setUpdating(false);
+      }
+      return;
+    }
+
     try {
       const res = await api.updateDeliveryStatus(orderId, newStatus, reason, note);
-      if (res && res.status === 200) {
+      if (res && (res.status === 200 || res.status === 1)) {
         if (showToast) showToast(t.updateSuccess);
 
         setOrders(prev => prev.map(o => {
@@ -573,7 +608,8 @@ export default function DeliveryRouteScreen({
               status: newStatus,
               deliveryReason: reason,
               deliveryNote: note,
-              deliveryUpdatedAt: new Date().toISOString()
+              deliveryUpdatedAt: new Date().toISOString(),
+              syncState: 'synced'
             };
           }
           return o;
@@ -591,9 +627,32 @@ export default function DeliveryRouteScreen({
       } else {
         if (showToast) showToast(res?.message || t.updateFailed);
       }
-    } catch (err) {
-      console.error('Failed to update status:', err);
-      if (showToast) showToast(t.updateFailed);
+    } catch (networkErr) {
+      // Fallback to queue if network dropped mid-request
+      try {
+        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note);
+        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note);
+
+        setOrders(prev => prev.map(o => {
+          if (String(o.id) === String(orderId)) {
+            return {
+              ...o,
+              status: newStatus,
+              deliveryReason: reason,
+              deliveryNote: note,
+              deliveryUpdatedAt: new Date().toISOString(),
+              syncState: 'waiting'
+            };
+          }
+          return o;
+        }));
+
+        if (showToast) showToast('Network drop: Status saved locally. Waiting to sync.');
+        setConfirmModal(null);
+        setFailModal(null);
+      } catch {
+        if (showToast) showToast(t.updateFailed);
+      }
     } finally {
       setUpdating(false);
     }
@@ -648,7 +707,12 @@ export default function DeliveryRouteScreen({
           </div>
 
           {/* Status Indicator */}
-          <div>
+          <div className="flex items-center gap-1.5">
+            {stop.syncState === 'waiting' && (
+              <span className="bg-amber-50 text-amber-700 border border-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                ⏳ Waiting to sync
+              </span>
+            )}
             {isDelivered ? (
               <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold px-3 py-1 rounded-full flex items-center gap-1">
                 ✅ {t.statusDelivered}
@@ -864,6 +928,7 @@ export default function DeliveryRouteScreen({
 
           {/* Right: Preview Switcher, Bilingual Toggle & Sign Out */}
           <div className="flex items-center gap-2 flex-wrap">
+            <SyncStatusBar userId={user?.id} userName={user?.name} showToast={showToast} />
             {/* Laptop / Mobile View Switcher */}
             {onTogglePreview && (
               <div className="flex items-center bg-slate-800 p-0.5 rounded-xl border border-slate-700">

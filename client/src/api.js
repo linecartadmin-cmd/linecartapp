@@ -1,3 +1,17 @@
+import { getMemorySessionToken } from './offline/biometricAuth';
+import {
+  saveClusters,
+  getClusters,
+  saveShops,
+  getShops,
+  saveCatalog,
+  getCatalog,
+  saveOrderHistory,
+  getShopOrderHistory as getCachedOrderHistory,
+  saveDeliveryOrders,
+  getDeliveryOrders as getCachedDeliveryOrders
+} from './offline/offlineDb';
+
 const ENV_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
   ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
   : '';
@@ -12,7 +26,7 @@ export function isValidIndianMobile(phone) {
 const getAuthHeaders = () => {
   try {
     const headers = {};
-    const token = localStorage.getItem('LineCartPref_token');
+    const token = getMemorySessionToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('LineCartPref_token') : null);
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
@@ -90,43 +104,127 @@ export const api = {
 
   // 2. GET /clusterinfo?spersonId=...
   async getClusterInfo(spersonId) {
-    const res = await fetch(`${BASE_URL}/clusterinfo?spersonId=${encodeURIComponent(spersonId || '')}`, {
-      headers: { ...getAuthHeaders() }
-    });
-    return res.json();
+    try {
+      const res = await fetch(`${BASE_URL}/clusterinfo?spersonId=${encodeURIComponent(spersonId || '')}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if ((data.status === 200 || data.status === 1) && data.result?.clusterList) {
+        saveClusters(spersonId, data.result.clusterList).catch(() => {});
+      }
+      return data;
+    } catch (err) {
+      if (spersonId) {
+        const cached = await getClusters(spersonId);
+        if (cached && cached.length > 0) {
+          return { status: 200, result: { clusterList: cached }, cached: true };
+        }
+      }
+      return { status: 500, message: err.message, result: { clusterList: [] } };
+    }
   },
 
   // 3. GET /getitemsorder?spersonId=...
   async getItemsOrder(spersonId) {
-    const res = await fetch(`${BASE_URL}/getitemsorder?spersonId=${encodeURIComponent(spersonId || '')}`, {
-      headers: { ...getAuthHeaders() }
-    });
-    return res.json();
+    try {
+      const res = await fetch(`${BASE_URL}/getitemsorder?spersonId=${encodeURIComponent(spersonId || '')}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if ((data.status === 200 || data.status === 1) && data.result?.clusterList) {
+        const allShops = [];
+        let catalog = [];
+        data.result.clusterList.forEach((c) => {
+          if (c.shopsList) {
+            c.shopsList.forEach((s) => allShops.push({ ...s, clusterid: c.clusterId }));
+            if (!catalog.length && c.shopsList[0]?.itemsList) {
+              catalog = c.shopsList[0].itemsList;
+            }
+          }
+        });
+        if (allShops.length && spersonId) saveShops(spersonId, allShops).catch(() => {});
+        if (catalog.length && spersonId) saveCatalog(spersonId, catalog).catch(() => {});
+      }
+      return data;
+    } catch (err) {
+      if (spersonId) {
+        const cachedShops = await getShops(spersonId);
+        const cachedCatalog = await getCatalog(spersonId);
+        if (cachedShops && cachedShops.length > 0) {
+          const clusterMap = {};
+          cachedShops.forEach((s) => {
+            const cid = s.clusterid || 1;
+            if (!clusterMap[cid]) {
+              clusterMap[cid] = { clusterId: cid, shopsList: [] };
+            }
+            clusterMap[cid].shopsList.push({
+              ...s,
+              itemsList: cachedCatalog
+            });
+          });
+          return {
+            status: 200,
+            result: { clusterList: Object.values(clusterMap) },
+            cached: true
+          };
+        }
+      }
+      return { status: 500, message: err.message, result: { clusterList: [] } };
+    }
   },
 
   // 4. POST /createorder
-  async createOrder(orderList, idempotencyKey = null) {
+  async createOrder(orderList, idempotencyKey = null, deviceEventTime = null) {
     const key = idempotencyKey || `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const eventTime = deviceEventTime || new Date().toISOString();
     const res = await fetch(`${BASE_URL}/createorder`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Idempotency-Key': key,
+        'X-Device-Event-Time': eventTime,
         ...getAuthHeaders()
       },
-      body: JSON.stringify({ orderList, idempotencyKey: key })
+      body: JSON.stringify({ orderList, idempotencyKey: key, deviceEventTime: eventTime })
     });
     return res.json();
   },
 
-  // 4a. GET /api/shops/:shopId/order-history (Previous 7-day past orders for selected shop)
-  async getShopOrderHistory(shopId, days = 7) {
+  // 4b. GET /api/orders (Authoritative orders scoped by caller role)
+  async getOrders(params = {}) {
     try {
-      const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/order-history?days=${encodeURIComponent(days)}`, {
+      const q = new URLSearchParams();
+      if (params.status) q.set('status', params.status);
+      if (params.limit) q.set('limit', String(params.limit));
+      const res = await fetch(`${BASE_URL}/api/orders${q.toString() ? '?' + q.toString() : ''}`, {
         headers: { ...getAuthHeaders() }
       });
       return await res.json();
     } catch (err) {
+      return { status: 500, orders: [], message: err.message };
+    }
+  },
+
+  // 4a. GET /api/shops/:shopId/order-history (Previous 7-day past orders for selected shop)
+  async getShopOrderHistory(shopId, days = 7, userId = null) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/order-history?days=${encodeURIComponent(days)}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if (data && data.status === 200 && Array.isArray(data.orders)) {
+        if (userId) {
+          saveOrderHistory(userId, shopId, data.orders).catch(() => {});
+        }
+      }
+      return data;
+    } catch (err) {
+      if (userId) {
+        const cached = await getCachedOrderHistory(userId, shopId, days);
+        if (cached && cached.length > 0) {
+          return { status: 200, orders: cached, cached: true };
+        }
+      }
       return { status: 500, message: err.message, orders: [] };
     }
   },
@@ -385,19 +483,42 @@ export const api = {
   },
 
   // 17. Delivery Agent APIs
-  async getDeliveryOrders(clusterId) {
-    const q = clusterId && clusterId !== 'all' ? `?clusterId=${encodeURIComponent(clusterId)}` : '';
-    const res = await fetch(`${BASE_URL}/api/delivery/orders${q}`, {
-      headers: { ...getAuthHeaders() }
-    });
-    return res.json();
+  async getDeliveryOrders(clusterId, userId = null) {
+    try {
+      const q = clusterId && clusterId !== 'all' ? `?clusterId=${encodeURIComponent(clusterId)}` : '';
+      const res = await fetch(`${BASE_URL}/api/delivery/orders${q}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if (data && data.status === 200 && Array.isArray(data.orders)) {
+        if (userId) {
+          saveDeliveryOrders(userId, data.orders).catch(() => {});
+        }
+      }
+      return data;
+    } catch (err) {
+      if (userId) {
+        const cached = await getCachedDeliveryOrders(userId, clusterId);
+        if (cached && cached.length > 0) {
+          return { status: 200, orders: cached, clusters: [], cached: true };
+        }
+      }
+      return { status: 500, message: err.message, orders: [], clusters: [] };
+    }
   },
 
-  async updateDeliveryStatus(orderId, status, reason = null, note = null) {
+  async updateDeliveryStatus(orderId, status, reason = null, note = null, idempotencyKey = null, deviceEventTime = null) {
+    const key = idempotencyKey || `del-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const eventTime = deviceEventTime || new Date().toISOString();
     const res = await fetch(`${BASE_URL}/api/delivery/orders/${encodeURIComponent(orderId)}/status`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-      body: JSON.stringify({ status, reason, note })
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': key,
+        'X-Device-Event-Time': eventTime,
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ status, reason, note, idempotencyKey: key, deviceEventTime: eventTime })
     });
     return res.json();
   }

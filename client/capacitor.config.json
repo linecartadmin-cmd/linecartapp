@@ -3,6 +3,7 @@
   "appName": "LineCart Wholesale",
   "webDir": "dist",
   "bundledWebRuntime": false,
+  "backgroundColor": "#f6f8fa",
   "server": {
     "androidScheme": "https",
     "cleartext": false
@@ -10,6 +11,9 @@
   "plugins": {
     "CapacitorHttp": {
       "enabled": true
+    },
+    "SystemBars": {
+      "insetsHandling": "disable"
     }
   }
 }

@@ -530,21 +530,43 @@ export default function ManagerReportsScreen({
             </p>
 
             <form onSubmit={handleSaveTarget} className="space-y-4">
-              <div className="field-group">
-                <label className="text-xs font-semibold text-slate-700">Assigned Field Sales Agent *</label>
-                <select
-                  className="select w-full"
-                  value={targetFormAgentId}
-                  onChange={(e) => setTargetFormAgentId(e.target.value)}
-                  required
-                >
-                  {assignedAgents.map((a) => (
-                    <option key={a.id} value={String(a.id)}>
-                      {a.name} ({a.phone})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {assignedAgents.length === 0 ? (
+                <div style={{ padding: '12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '14px' }}>
+                  <div style={{ fontWeight: 700, color: '#92400e', fontSize: '12px', marginBottom: '4px' }}>
+                    ⚠️ No Field Sales Agents Assigned
+                  </div>
+                  <p style={{ margin: '0 0 10px 0', fontSize: '11px', color: '#78350f', lineHeight: 1.4 }}>
+                    Your manager account currently has no Field Sales Agents assigned to your team. Please assign agents to your team first before configuring quotas.
+                  </p>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => {
+                      setShowTargetModal(false);
+                      if (onNavigate) onNavigate('team');
+                    }}
+                    style={{ fontSize: '11px', height: '32px' }}
+                  >
+                    👥 Open Manage Team
+                  </button>
+                </div>
+              ) : (
+                <div className="field-group">
+                  <label className="text-xs font-semibold text-slate-700">Assigned Field Sales Agent *</label>
+                  <select
+                    className="select w-full"
+                    value={targetFormAgentId}
+                    onChange={(e) => setTargetFormAgentId(e.target.value)}
+                    required
+                  >
+                    {assignedAgents.map((a) => (
+                      <option key={a.id} value={String(a.id)}>
+                        {a.name} ({a.phone})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="field-group">
                 <label className="text-xs font-semibold text-slate-700">Monthly Sales Target Amount (₹) *</label>
@@ -552,6 +574,7 @@ export default function ManagerReportsScreen({
                   type="number"
                   className="field w-full"
                   required
+                  disabled={assignedAgents.length === 0}
                   value={targetFormAmount}
                   onChange={(e) => setTargetFormAmount(e.target.value)}
                   placeholder="e.g. 50000"
@@ -564,6 +587,7 @@ export default function ManagerReportsScreen({
                   <input
                     type="number"
                     className="field w-full"
+                    disabled={assignedAgents.length === 0}
                     value={targetFormItem1Qty}
                     onChange={(e) => setTargetFormItem1Qty(e.target.value)}
                     placeholder="e.g. 500"
@@ -574,6 +598,7 @@ export default function ManagerReportsScreen({
                   <input
                     type="number"
                     className="field w-full"
+                    disabled={assignedAgents.length === 0}
                     value={targetFormItem2Qty}
                     onChange={(e) => setTargetFormItem2Qty(e.target.value)}
                     placeholder="e.g. 400"
@@ -591,7 +616,7 @@ export default function ManagerReportsScreen({
                 </button>
                 <button
                   type="submit"
-                  disabled={savingTarget}
+                  disabled={savingTarget || assignedAgents.length === 0}
                   className="primary-button"
                 >
                   {savingTarget ? 'Saving...' : 'Save Target'}

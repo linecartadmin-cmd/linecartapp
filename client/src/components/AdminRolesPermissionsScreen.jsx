@@ -94,6 +94,10 @@ export default function AdminRolesPermissionsScreen({ user, onNavigate, showToas
   };
 
   const handleSave = () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('Permissions configuration requires an active online connection.');
+      return;
+    }
     if (isAdminRole) {
       showToast('Administrator permissions are protected and immutable.');
       return;
