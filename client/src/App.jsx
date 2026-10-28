@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { api } from './api';
 import OverviewScreen from './components/OverviewScreen';
 import LoginScreen from './components/LoginScreen';
@@ -131,6 +131,9 @@ export default function App() {
   }, [user?.id]);
 
   const isPageAllowed = (pageId) => {
+    if (pageId === 'price-requests') {
+      return isAdmin || isManager;
+    }
     if (pageId.startsWith('admin-')) {
       return isAdmin;
     }
@@ -151,18 +154,18 @@ export default function App() {
       if (r === 'admin') {
         const validAdmin = [
           'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
-          'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
+          'admin-targets', 'orders', 'price-requests', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
         ];
         return validAdmin.includes(hash) ? hash : 'admin-dashboard';
       }
       if (r === 'sales manager') {
-        const validManager = ['reports', 'orders', 'map', 'team', 'customers', 'items'];
+        const validManager = ['reports', 'orders', 'price-requests', 'map', 'team', 'customers', 'items'];
         return validManager.includes(hash) ? hash : 'reports';
       }
       if (r === 'delivery agent') return 'delivery';
     } catch {}
     const valid = [
-      'overview', 'orders', 'reports', 'customers', 'summary', 'map', 'team', 'delivery', 'items',
+      'overview', 'orders', 'price-requests', 'reports', 'customers', 'summary', 'map', 'team', 'delivery', 'items',
       'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
       'admin-targets', 'admin-orders', 'admin-reports', 'admin-audit', 'admin-settings'
     ];
@@ -208,9 +211,9 @@ export default function App() {
       const hash = window.location.hash.replace('#', '');
       const validAdminPages = [
         'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
-        'admin-targets', 'orders', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
+        'admin-targets', 'orders', 'price-requests', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
       ];
-      const validManagerPages = ['reports', 'orders', 'map', 'team', 'customers', 'items'];
+      const validManagerPages = ['reports', 'orders', 'price-requests', 'map', 'team', 'customers', 'items'];
       const validAgentPages = ['overview', 'orders', 'reports', 'customers', 'summary'];
       const validDeliveryPages = ['delivery'];
 
@@ -392,6 +395,29 @@ export default function App() {
     return () => window.removeEventListener('linecart:orders_updated', handleOrdersSync);
   }, []);
 
+  // Live pending price requests count for Admin and Sales Manager queues
+  const [pendingPriceRequestsCount, setPendingPriceRequestsCount] = useState(0);
+
+  const refreshPendingPriceRequestsCount = useCallback(() => {
+    if (!user || (!isAdmin && !isManager)) return;
+    api.getPriceRequests('pending', user.id).then((res) => {
+      if (res && res.status === 200 && Array.isArray(res.priceRequests)) {
+        setPendingPriceRequestsCount(res.priceRequests.filter((p) => p.status === 'pending').length);
+      }
+    }).catch(() => {});
+  }, [user, isAdmin, isManager]);
+
+  useEffect(() => {
+    refreshPendingPriceRequestsCount();
+    const handleUpdate = () => refreshPendingPriceRequestsCount();
+    window.addEventListener('linecart:orders_updated', handleUpdate);
+    window.addEventListener('linecart:price_requests_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('linecart:orders_updated', handleUpdate);
+      window.removeEventListener('linecart:price_requests_updated', handleUpdate);
+    };
+  }, [refreshPendingPriceRequestsCount]);
+
   const handleOrderPlaced = (newOrder) => {
     setOrders((prev) => {
       // Deduplicate: if an order with same ID, clientMutationId, or orderId exists, update in-place
@@ -556,6 +582,26 @@ export default function App() {
             </button>
 
             <button
+              className={`nav-item ${page === 'price-requests' ? 'active' : ''}`}
+              onClick={() => navigate('price-requests')}
+            >
+              <span className="nav-icon">⏳</span>Price Approvals
+              {pendingPriceRequestsCount > 0 && (
+                <span style={{
+                  marginLeft: 'auto',
+                  background: '#d97706',
+                  color: '#fff',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  padding: '1px 7px',
+                  borderRadius: '999px'
+                }}>
+                  {pendingPriceRequestsCount}
+                </span>
+              )}
+            </button>
+
+            <button
               className={`nav-item ${page === 'items' ? 'active' : ''}`}
               onClick={() => navigate('items')}
             >
@@ -614,6 +660,28 @@ export default function App() {
                 onClick={() => navigate('orders')}
               >
                 <span className="nav-icon">▤</span>Team Orders
+              </button>
+            )}
+
+            {isPageAllowed('orders') && (
+              <button
+                className={`nav-item ${page === 'price-requests' ? 'active' : ''}`}
+                onClick={() => navigate('price-requests')}
+              >
+                <span className="nav-icon">⏳</span>Price Approvals
+                {pendingPriceRequestsCount > 0 && (
+                  <span style={{
+                    marginLeft: 'auto',
+                    background: '#d97706',
+                    color: '#fff',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '1px 7px',
+                    borderRadius: '999px'
+                  }}>
+                    {pendingPriceRequestsCount}
+                  </span>
+                )}
               </button>
             )}
 
@@ -895,13 +963,16 @@ export default function App() {
             />
           )}
 
-          {(page === 'orders' || page === 'admin-orders') && (
+          {(page === 'orders' || page === 'admin-orders' || page === 'price-requests') && (
             (isAdmin || isManager) ? (
               <ManagerOrdersScreen
                 user={user}
                 clusters={clusters}
                 shops={shops}
                 showToast={showToast}
+                defaultTab={page === 'price-requests' ? 'price-requests' : 'orders'}
+                onNavigate={navigate}
+                isAdmin={isAdmin}
               />
             ) : (
               <OrderEntryScreen

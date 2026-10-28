@@ -15,6 +15,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
   const [loading, setLoading] = useState(!data);
   const [error, setError] = useState(null);
   const [isOfflineView, setIsOfflineView] = useState(false);
+  const [pendingPriceCount, setPendingPriceCount] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState(() => {
     try {
       const raw = localStorage.getItem('LineCart_admin_dashboard_cache');
@@ -76,6 +77,13 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         }
       })
       .finally(() => setLoading(false));
+    api.getPriceRequests('pending', user?.id)
+      .then((res) => {
+        if (res && res.status === 200 && Array.isArray(res.priceRequests)) {
+          setPendingPriceCount(res.priceRequests.filter((p) => p.status === 'pending').length);
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -210,6 +218,40 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
       </div>
 
+      {/* Pending Price Requests Alert Banner */}
+      {pendingPriceCount > 0 && (
+        <div style={{
+          background: '#fffbeb',
+          border: '1px solid #fde68a',
+          borderRadius: '10px',
+          padding: '12px 18px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.25rem' }}>⏳</span>
+            <div>
+              <strong style={{ color: '#92400e', fontSize: '13px' }}>Price Approval Requests Pending</strong>
+              <div style={{ color: '#b45309', fontSize: '12px' }}>
+                {pendingPriceCount} custom price {pendingPriceCount === 1 ? 'request requires' : 'requests require'} review and decision.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onNavigate('price-requests')}
+            style={{ padding: '6px 14px', fontSize: '12px', fontWeight: 700, borderColor: '#f59e0b', color: '#b45309', background: '#fff' }}
+          >
+            Review Price Requests →
+          </button>
+        </div>
+      )}
+
       {/* Top Organization KPI Grid */}
       <div className="admin-kpi-grid">
         <div className="kpi-card highlight-kpi">
@@ -282,6 +324,21 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
             <span>Inspect unscoped orders across all teams, shops, and clusters</span>
           </div>
           <span className="tile-arrow">→</span>
+        </div>
+
+        <div className="nav-tile" onClick={() => onNavigate('price-requests')}>
+          <div className="tile-icon">⏳</div>
+          <div className="tile-info">
+            <strong>Price Approvals</strong>
+            <span>Review, approve, or reject customer custom price requests</span>
+          </div>
+          {pendingPriceCount > 0 ? (
+            <span style={{ background: '#d97706', color: '#fff', fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px' }}>
+              {pendingPriceCount} pending
+            </span>
+          ) : (
+            <span className="tile-arrow">→</span>
+          )}
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-reports')}>

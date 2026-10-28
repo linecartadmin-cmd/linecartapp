@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
 import { getPaymentSummary } from '../utils';
 
-export default function ManagerOrdersScreen({ user, clusters, shops, showToast }) {
+export default function ManagerOrdersScreen({ user, clusters, shops, showToast, defaultTab = 'orders', onNavigate, isAdmin: propsIsAdmin }) {
   const [loading, setLoading] = useState(true);
   const [assignedAgents, setAssignedAgents] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -27,24 +27,37 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
   const [isExporting, setIsExporting] = useState(false);
 
   // Price Requests Tab & Decision State
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'price-requests'
+  const [activeTab, setActiveTab] = useState(defaultTab || 'orders'); // 'orders' | 'price-requests'
   const [priceRequests, setPriceRequests] = useState([]);
   const [priceRequestsLoading, setPriceRequestsLoading] = useState(false);
+  const [priceRequestsError, setPriceRequestsError] = useState(null);
   const [priceStatusFilter, setPriceStatusFilter] = useState('pending');
   const [decisionModal, setDecisionModal] = useState(null);
   const [deciding, setDeciding] = useState(false);
 
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab]);
+
   const fetchPriceRequests = () => {
     if (!user) return;
     setPriceRequestsLoading(true);
+    setPriceRequestsError(null);
     api.getPriceRequests(priceStatusFilter, user.id)
       .then((res) => {
-        if (res && res.priceRequests) {
+        if (res && (res.status === 200 || !res.status) && Array.isArray(res.priceRequests)) {
           setPriceRequests(res.priceRequests);
+          setPriceRequestsError(null);
+        } else {
+          setPriceRequests([]);
+          setPriceRequestsError(res?.message || 'Failed to load price requests');
         }
       })
       .catch((err) => {
-        console.warn('Failed to load price requests', err);
+        setPriceRequests([]);
+        setPriceRequestsError(err?.message || 'Network error loading price requests');
       })
       .finally(() => setPriceRequestsLoading(false));
   };
@@ -680,8 +693,25 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
             ))}
           </div>
 
-          {priceRequestsLoading ? (
-            <div className="loading-state">Loading price requests...</div>
+          {priceRequestsError ? (
+            <div className="card" style={{ padding: '2.5rem', textAlign: 'center', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
+              <span style={{ fontSize: '2.5rem' }}>⚠️</span>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '0.5rem 0', color: '#991b1b' }}>Failed to Load Price Requests</h3>
+              <p style={{ color: '#b91c1c', fontSize: '0.85rem', marginBottom: '1.25rem' }}>{priceRequestsError}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={fetchPriceRequests}
+                style={{ padding: '8px 20px', fontWeight: 600 }}
+              >
+                ↻ Retry Loading
+              </button>
+            </div>
+          ) : priceRequestsLoading ? (
+            <div className="loading-state card" style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
+              <div className="spinner" style={{ margin: '0 auto 12px' }} />
+              <div>Loading customer price requests...</div>
+            </div>
           ) : priceRequests.length === 0 ? (
             <div className="empty-state card" style={{ padding: '3rem', textAlign: 'center' }}>
               <span className="empty-icon" style={{ fontSize: '2.5rem' }}>✅</span>

@@ -1967,6 +1967,46 @@ const handleCreateOrder = async (req, res) => {
     const spersonid = requestedSpersonId;
     const agent = salesPersons.find((s) => Number(s.id) === Number(spersonid));
 
+    // Helper: resolve official catalog price for an item
+    const resolveCatalogPrice = (item, clusterId) => {
+      const req = (item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '')
+        ? parseFloat(item.requestedPrice)
+        : null;
+
+      // 1. Check explicit catalogPrice / price / actprice passed by caller
+      if (item.catalogPrice !== undefined && item.catalogPrice !== null && !isNaN(Number(item.catalogPrice)) && Number(item.catalogPrice) > 0) {
+        return Number(item.catalogPrice);
+      }
+      if (item.actprice !== undefined && item.actprice !== null && !isNaN(Number(item.actprice)) && Number(item.actprice) > 0 && (req === null || Math.abs(Number(item.actprice) - req) > 0.001)) {
+        return Number(item.actprice);
+      }
+      if (item.price !== undefined && item.price !== null && !isNaN(Number(item.price)) && Number(item.price) > 0 && (req === null || Math.abs(Number(item.price) - req) > 0.001)) {
+        return Number(item.price);
+      }
+      if (item.custprice !== undefined && item.custprice !== null && !isNaN(Number(item.custprice)) && Number(item.custprice) > 0 && (req === null || Math.abs(Number(item.custprice) - req) > 0.001)) {
+        return Number(item.custprice);
+      }
+
+      // 2. Fall back to clusterItemPrices, orderItemsCatalog, or defaultOrderItems
+      const itemId = Number(item.itemid || item.itemId || 0);
+      const effCluster = Number(clusterId || item.clusterid || 1);
+      const clusterPriceRow = clusterItemPrices.find(
+        (cip) => Number(cip.clusterId) === effCluster && Number(cip.itemId) === itemId
+      );
+      if (clusterPriceRow && Number(clusterPriceRow.price) > 0) {
+        return Number(clusterPriceRow.price);
+      }
+      const catalogItem = orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === itemId);
+      if (catalogItem && Number(catalogItem.price) > 0) {
+        return Number(catalogItem.price);
+      }
+      const defaultItem = defaultOrderItems.find((d) => Number(d.itemid || d.itemId) === itemId);
+      if (defaultItem && Number(defaultItem.price) > 0) {
+        return Number(defaultItem.price);
+      }
+      return Number(item.custprice || item.price || 0);
+    };
+
     // Validate requested prices and identify if price approval is pending
     let hasPriceRequest = false;
     for (const item of activeItems) {
@@ -1980,7 +2020,7 @@ const handleCreateOrder = async (req, res) => {
             id: '0'
           });
         }
-        const catPrice = parseFloat(item.price || item.custprice || item.actprice || 0);
+        const catPrice = resolveCatalogPrice(item, clusterid);
         if (Math.abs(reqPrice - catPrice) > 0.001) {
           hasPriceRequest = true;
         }
@@ -2096,8 +2136,8 @@ const handleCreateOrder = async (req, res) => {
         nextItemRowId += 1;
         const hasReq = item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '';
         const reqPrice = hasReq ? parseFloat(item.requestedPrice) : null;
-        const catPrice = parseFloat(item.price || item.custprice || item.actprice || 0);
-        const isReq = hasReq && reqPrice !== null && Math.abs(reqPrice - catPrice) > 0.001;
+        const catPrice = resolveCatalogPrice(item, clusterid);
+        const isReq = hasReq && reqPrice !== null && !isNaN(reqPrice) && Math.abs(reqPrice - catPrice) > 0.001;
         const itemPriceStatus = isReq ? 'pending' : null;
 
         const itemName =
@@ -2108,6 +2148,7 @@ const handleCreateOrder = async (req, res) => {
         const enrichedLine = {
           ...item,
           itemName,
+          catalogPrice: catPrice,
           requestedPrice: isReq ? reqPrice : undefined,
           priceRequestStatus: itemPriceStatus
         };
@@ -2122,7 +2163,7 @@ const handleCreateOrder = async (req, res) => {
             String(itemName),
             Number(item.qty || 0),
             catPrice,
-            catPrice,
+            isReq ? reqPrice : catPrice,
             catPrice,
             isReq ? reqPrice : null,
             itemPriceStatus,
@@ -2227,8 +2268,8 @@ const handleGetShopOrderHistory = async (req, res) => {
     const istDateString = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric',
-      month: '02-digit',
-      day: '02-digit'
+      month: '2-digit',
+      day: '2-digit'
     }).format(now);
 
     const todayStr = (req.query.today && /^\d{4}-\d{2}-\d{2}$/.test(req.query.today))
@@ -2240,12 +2281,14 @@ const handleGetShopOrderHistory = async (req, res) => {
 
     const ordersRes = await db.query(
       `SELECT order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category,
-              sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total
+              sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total,
+              payment_status, payment_amount_collected, payment_balance_due
        FROM orders
        WHERE (customer_id = $1 OR shop_short_id = $2)
-         AND order_date >= $3
+         AND SUBSTR(order_date, 1, 10) >= $3
+         AND SUBSTR(order_date, 1, 10) <= $4
        ORDER BY order_date DESC, serial_no DESC`,
-      [shop.shopid, shopShortId, cutoffDateStr]
+      [shop.shopid, shopShortId, cutoffDateStr, todayStr]
     );
 
     const orderRows = ordersRes.rows || [];
@@ -2305,6 +2348,9 @@ const handleGetShopOrderHistory = async (req, res) => {
         status: o.status || 'In progress',
         agentName: o.agent_name,
         total: orderTotal,
+        paymentStatus: o.payment_status || 'Not collected',
+        paymentAmountCollected: Number(o.payment_amount_collected || 0),
+        paymentBalanceDue: Number(o.payment_balance_due !== undefined && o.payment_balance_due !== null ? o.payment_balance_due : orderTotal),
         itemsCount: items.length,
         items
       };
@@ -4058,6 +4104,25 @@ app.get('/api/items/:id/history', async (req, res) => {
 // CUSTOMER-SPECIFIC PRICE REQUESTS & APPROVAL CONTROLS
 // ============================================================================
 
+function canCallerAccessPriceRequest(caller, pr) {
+  if (!caller || !pr) return false;
+  const role = (caller.role || '').toLowerCase();
+  if (role === 'admin') return true;
+  if (role === 'sales manager') {
+    const assignedAgentIds = getAssignedAgentIds(caller.id);
+    if (assignedAgentIds.includes(Number(pr.agentId))) return true;
+    const callerClusterId = Number(caller.cluster_id || caller.clusterid || 0);
+    if (callerClusterId === 0 || callerClusterId === Number(pr.clusterId)) return true;
+    const shop = shops.find((s) => Number(s.shopid) === Number(pr.shopId));
+    if (shop && canCallerAccessShop(caller, shop)) return true;
+    return false;
+  }
+  if (role === 'field sales agent') {
+    return Number(pr.agentId) === Number(caller.id);
+  }
+  return false;
+}
+
 // 1. GET /api/price-requests (List price requests scoped by role & assignments)
 app.get('/api/price-requests', async (req, res) => {
   try {
@@ -4076,14 +4141,7 @@ app.get('/api/price-requests', async (req, res) => {
       return res.status(403).json({ status: 403, message: 'Access Denied: Role cannot view price requests.' });
     }
 
-    let list = [...priceRequestsList];
-
-    if (isManager) {
-      const assignedAgentIds = getAssignedAgentIds(caller.id);
-      list = list.filter((pr) => assignedAgentIds.includes(Number(pr.agentId)) || Number(pr.clusterId) === Number(caller.clusterid));
-    } else if (isAgent) {
-      list = list.filter((pr) => Number(pr.agentId) === Number(caller.id));
-    }
+    let list = priceRequestsList.filter((pr) => canCallerAccessPriceRequest(caller, pr));
 
     const statusFilter = req.query.status;
     if (statusFilter && statusFilter !== 'all') {
@@ -4092,7 +4150,8 @@ app.get('/api/price-requests', async (req, res) => {
 
     const enriched = list.map((pr) => {
       const sh = shops.find((s) => Number(s.shopid) === Number(pr.shopId));
-      const it = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === Number(pr.itemId));
+      const it = orderItemsCatalog.find((i) => Number(i.itemId || i.itemid) === Number(pr.itemId)) ||
+                 defaultOrderItems.find((i) => Number(i.itemId || i.itemid) === Number(pr.itemId));
       const ag = salesPersons.find((u) => Number(u.id) === Number(pr.agentId));
       const cl = clusters.find((c) => Number(c.clusterId || c.clusterid) === Number(pr.clusterId));
       return {
@@ -4151,13 +4210,10 @@ const handlePriceRequestDecision = async (req, res) => {
 
     // Enforce manager assignment scope
     if (isManager) {
-      const assignedAgentIds = getAssignedAgentIds(caller.id);
-      const isAssignedAgent = assignedAgentIds.includes(Number(pr.agentId));
-      const isAssignedCluster = Number(pr.clusterId) === Number(caller.clusterid);
-      if (!isAssignedAgent && !isAssignedCluster) {
+      if (!canCallerAccessPriceRequest(caller, pr)) {
         return res.status(403).json({
           status: 403,
-          message: `Access Denied: Price request #${requestId} is outside your assigned team and cluster scope.`
+          message: `Access Denied: Price request #${requestId} is outside your assigned team and shop scope.`
         });
       }
     }

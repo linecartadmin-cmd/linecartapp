@@ -190,16 +190,23 @@ export default function APKOrderRequest({ user }) {
     }
 
     const spersonid = Number(user?.id || localStorage.getItem('LineCartPref_userid') || 1);
-    const orderList = orderItems.map((it) => ({
-      customerid: oselectedShop,
-      itemid: it.itemid,
-      qty: it.qty,
-      actprice: it.price,
-      custprice: it.cprice,
-      spersonid,
-      clusterid: oselectedCluster,
-      remarks: it.remarksIndex
-    }));
+    const orderList = orderItems.map((it) => {
+      const hasReq = it.cprice !== undefined && it.cprice !== null && Number(it.cprice) > 0 && Math.abs(Number(it.cprice) - Number(it.price)) > 0.001;
+      return {
+        customerid: oselectedShop,
+        itemid: it.itemid,
+        itemName: it.itemName,
+        qty: it.qty,
+        price: Number(it.price),
+        catalogPrice: Number(it.price),
+        actprice: Number(it.price),
+        custprice: hasReq ? Number(it.cprice) : Number(it.price),
+        requestedPrice: hasReq ? Number(it.cprice) : undefined,
+        spersonid,
+        clusterid: oselectedCluster,
+        remarks: it.remarksIndex
+      };
+    });
 
     setLoading(true);
 

@@ -36,6 +36,16 @@ export default function ManagerReportsScreen({
   const [targetFormItem1Qty, setTargetFormItem1Qty] = useState('500');
   const [targetFormItem2Qty, setTargetFormItem2Qty] = useState('400');
   const [savingTarget, setSavingTarget] = useState(false);
+  const [pendingPriceCount, setPendingPriceCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    api.getPriceRequests('pending', user.id).then((res) => {
+      if (res && res.status === 200 && Array.isArray(res.priceRequests)) {
+        setPendingPriceCount(res.priceRequests.filter((p) => p.status === 'pending').length);
+      }
+    }).catch(() => {});
+  }, [user]);
 
   const money = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
@@ -168,6 +178,26 @@ export default function ManagerReportsScreen({
             👥 Manage Team ({assignedAgents.length} assigned)
           </button>
           <button
+            className="secondary-button"
+            onClick={() => onNavigate && onNavigate('price-requests')}
+            title="Review price approval requests"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <span>⏳ Price Approvals</span>
+            {pendingPriceCount > 0 && (
+              <span style={{
+                background: '#d97706',
+                color: '#fff',
+                fontSize: '11px',
+                fontWeight: 800,
+                padding: '1px 6px',
+                borderRadius: '999px'
+              }}>
+                {pendingPriceCount}
+              </span>
+            )}
+          </button>
+          <button
             className="primary-button"
             onClick={() => setShowTargetModal(true)}
           >
@@ -175,6 +205,35 @@ export default function ManagerReportsScreen({
           </button>
         </div>
       </div>
+
+      {/* Pending Price Requests Alert Banner */}
+      {pendingPriceCount > 0 && (
+        <div style={{
+          background: '#fffbeb',
+          border: '1px solid #fde68a',
+          borderRadius: '10px',
+          padding: '12px 16px',
+          marginBottom: '16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '10px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#92400e' }}>
+            <span>⏳</span>
+            <span><b>{pendingPriceCount} price approval {pendingPriceCount === 1 ? 'request is' : 'requests are'} pending</b> from your assigned sales team.</span>
+          </div>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => onNavigate && onNavigate('price-requests')}
+            style={{ padding: '4px 12px', fontSize: '12px', borderColor: '#f59e0b', color: '#92400e' }}
+          >
+            Review Queue →
+          </button>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <div className="reports-toolbar mb-5">
