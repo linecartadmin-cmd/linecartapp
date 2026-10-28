@@ -387,19 +387,41 @@ export async function getDeliveryOrders(userId, clusterId = null) {
   return list;
 }
 
-export async function updateLocalDeliveryOrderStatus(userId, orderId, newStatus, reason = null, note = null) {
+export async function updateLocalDeliveryOrderStatus(userId, orderId, newStatus, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null) {
   if (!userId || !orderId) return;
   const store = await getStore('delivery_orders', 'readwrite');
   const key = `${userId}_${orderId}`;
   const existing = await promisifyRequest(store.get(key));
 
   if (existing) {
+    const total = Number(existing.raw?.total || 0);
+    let paymentStatus = existing.raw?.paymentStatus || 'Not collected';
+    let amountCollected = Number(existing.raw?.paymentAmountCollected || 0);
+    let balanceDue = existing.raw?.paymentBalanceDue !== undefined && existing.raw?.paymentBalanceDue !== null
+      ? Number(existing.raw.paymentBalanceDue)
+      : Math.max(0, total - amountCollected);
+
+    if (newStatus === 'Delivered') {
+      amountCollected = paymentAmountCollected !== null && paymentAmountCollected !== undefined ? Number(paymentAmountCollected) : 0;
+      balanceDue = Math.max(0, total - amountCollected);
+      if (amountCollected >= total && total > 0) {
+        paymentStatus = 'Collected';
+      } else if (amountCollected > 0) {
+        paymentStatus = 'Partially collected';
+      } else {
+        paymentStatus = 'Not collected';
+      }
+    }
+
     const updatedRaw = {
       ...existing.raw,
       status: newStatus,
       deliveryReason: reason !== null ? reason : existing.raw?.deliveryReason,
       deliveryNote: note !== null ? note : existing.raw?.deliveryNote,
       deliveryUpdatedAt: new Date().toISOString(),
+      paymentStatus,
+      paymentAmountCollected: amountCollected,
+      paymentBalanceDue: balanceDue,
       syncState: 'waiting' // Mark as waiting for cloud sync
     };
 
@@ -407,6 +429,32 @@ export async function updateLocalDeliveryOrderStatus(userId, orderId, newStatus,
     existing.raw = updatedRaw;
     existing.cachedAt = new Date().toISOString();
     await promisifyRequest(store.put(existing));
+
+    // Also sync localStorage linecart_orders if available
+    try {
+      const rawStored = localStorage.getItem('linecart_orders');
+      if (rawStored) {
+        const parsed = JSON.parse(rawStored);
+        if (Array.isArray(parsed)) {
+          const idx = parsed.findIndex((o) => String(o.id) === String(orderId) || String(o.orderId) === String(orderId));
+          if (idx >= 0) {
+            parsed[idx] = {
+              ...parsed[idx],
+              status: newStatus,
+              deliveryReason: reason !== null ? reason : parsed[idx].deliveryReason,
+              deliveryNote: note !== null ? note : parsed[idx].deliveryNote,
+              deliveryUpdatedAt: new Date().toISOString(),
+              paymentStatus,
+              paymentAmountCollected: amountCollected,
+              paymentBalanceDue: balanceDue,
+              syncState: 'waiting'
+            };
+            localStorage.setItem('linecart_orders', JSON.stringify(parsed));
+            window.dispatchEvent(new CustomEvent('linecart:orders_updated'));
+          }
+        }
+      }
+    } catch {}
   }
 }
 

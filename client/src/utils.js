@@ -36,3 +36,74 @@ export function getGoogleMapsUrl(shop) {
 
   return null;
 }
+
+/**
+ * Computes payment collection breakdown and formatted display text for an order.
+ * Keeps delivery completion separate from payment status.
+ *
+ * Statuses: 'Collected' | 'Partially collected' | 'Not collected'
+ * Examples:
+ *   - Delivered · Collected ₹500 of ₹500 · Balance ₹0
+ *   - Delivered · Partially collected ₹200 of ₹500 · Balance ₹300
+ *   - Delivered · Not collected · Balance ₹500
+ */
+export function getPaymentSummary(order) {
+  if (!order) {
+    return {
+      deliveryStatus: 'Pending',
+      paymentStatus: 'Not collected',
+      total: 0,
+      collected: 0,
+      balance: 0,
+      summaryText: 'Not collected · Balance ₹0',
+      fullText: 'Pending · Not collected · Balance ₹0',
+      statusClass: 'unpaid'
+    };
+  }
+
+  const total = Number(order.total || 0);
+  const collected = Number(order.paymentAmountCollected ?? order.payment_amount_collected ?? 0);
+  const balance = order.paymentBalanceDue !== undefined && order.paymentBalanceDue !== null
+    ? Number(order.paymentBalanceDue)
+    : Math.max(0, total - collected);
+
+  let paymentStatus = order.paymentStatus || order.payment_status;
+  if (!paymentStatus) {
+    if (collected >= total && total > 0) {
+      paymentStatus = 'Collected';
+    } else if (collected > 0) {
+      paymentStatus = 'Partially collected';
+    } else {
+      paymentStatus = 'Not collected';
+    }
+  }
+
+  let summaryText = '';
+  let statusClass = 'unpaid';
+  if (paymentStatus === 'Collected') {
+    summaryText = `Collected ₹${collected.toLocaleString('en-IN')} of ₹${total.toLocaleString('en-IN')} · Balance ₹${balance.toLocaleString('en-IN')}`;
+    statusClass = 'paid';
+  } else if (paymentStatus === 'Partially collected') {
+    summaryText = `Partially collected ₹${collected.toLocaleString('en-IN')} of ₹${total.toLocaleString('en-IN')} · Balance ₹${balance.toLocaleString('en-IN')}`;
+    statusClass = 'partial';
+  } else {
+    summaryText = `Not collected · Balance ₹${balance.toLocaleString('en-IN')}`;
+    statusClass = 'unpaid';
+  }
+
+  const deliveryStatus = order.status || 'In progress';
+  const fullText = `${deliveryStatus} · ${summaryText}`;
+
+  return {
+    deliveryStatus,
+    paymentStatus,
+    total,
+    collected,
+    balance,
+    summaryText,
+    fullText,
+    statusClass,
+    collectedAt: order.paymentCollectedAt || order.payment_collected_at || null,
+    collectedBy: order.paymentCollectedByName || order.payment_collected_by_name || null
+  };
+}

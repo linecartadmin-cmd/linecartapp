@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { formatShopId } from '../utils';
+import { formatShopId, getPaymentSummary } from '../utils';
 
 export default function ReportsScreen({
   user,
@@ -79,15 +79,22 @@ export default function ReportsScreen({
   const maxSales = Math.max(todayAchieved, yestAchieved, 1000);
 
   const handleExportCSV = () => {
-    const headers = ['Order ID', 'Customer', 'Date', 'Items', 'Total', 'Status'];
-    const rows = clusterFilteredOrders.map((o) => [
-      o.id,
-      o.customer,
-      o.date,
-      o.itemsCount || o.items || 1,
-      o.total,
-      o.status
-    ]);
+    const headers = ['Order ID', 'Customer', 'Date', 'Items', 'Total', 'Delivery Status', 'Payment Status', 'Amount Collected', 'Balance Remaining', 'Payment Summary'];
+    const rows = clusterFilteredOrders.map((o) => {
+      const pay = getPaymentSummary(o);
+      return [
+        o.id,
+        o.customer,
+        o.date,
+        o.itemsCount || o.items || 1,
+        o.total,
+        pay.deliveryStatus,
+        pay.paymentStatus,
+        pay.collected,
+        pay.balance,
+        pay.summaryText
+      ];
+    });
     const csvContent = [headers, ...rows]
       .map((r) => r.map((c) => `"${String(c || '').replace(/"/g, '""')}"`).join(','))
       .join('\r\n');
@@ -420,26 +427,46 @@ export default function ReportsScreen({
                         <td>{o.itemsCount || o.items || 1} items</td>
                         <td><strong>{money(o.total)}</strong></td>
                         <td>
-                          <span
-                            className={`status ${(o.status || 'pending').toLowerCase().replace(/\s/g, '-')}`}
-                          >
-                            {o.status || 'Pending'}
-                          </span>
-                          {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
-                            <span style={{
-                              display: 'inline-block',
-                              marginLeft: '6px',
-                              fontSize: '10px',
-                              color: '#ed6c02',
-                              background: '#fff7ed',
-                              border: '1px solid #fed7aa',
-                              padding: '1px 5px',
-                              borderRadius: '8px',
-                              fontWeight: 600
-                            }}>
-                              Offline
-                            </span>
-                          )}
+                          {(() => {
+                            const pay = getPaymentSummary(o);
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                  <span
+                                    className={`status ${(o.status || 'pending').toLowerCase().replace(/\s/g, '-')}`}
+                                  >
+                                    {o.status || 'Pending'}
+                                  </span>
+                                  <span style={{
+                                    fontSize: '10px',
+                                    fontWeight: 700,
+                                    padding: '1px 6px',
+                                    borderRadius: '999px',
+                                    background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
+                                    color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
+                                  }}>
+                                    {pay.paymentStatus}
+                                  </span>
+                                  {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
+                                    <span style={{
+                                      fontSize: '10px',
+                                      color: '#ed6c02',
+                                      background: '#fff7ed',
+                                      border: '1px solid #fed7aa',
+                                      padding: '1px 5px',
+                                      borderRadius: '8px',
+                                      fontWeight: 600
+                                    }}>
+                                      Offline
+                                    </span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                                  {pay.summaryText}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))

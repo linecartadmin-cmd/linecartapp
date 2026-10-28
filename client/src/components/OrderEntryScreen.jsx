@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
-import { formatShopId, getGoogleMapsUrl } from '../utils';
+import { formatShopId, getGoogleMapsUrl, getPaymentSummary } from '../utils';
 import { queueOrderCreation } from '../offline/syncEngine';
 
 const REMARKS_OPTIONS = [
@@ -640,13 +640,38 @@ export default function OrderEntryScreen({
                                 <span className="history-order-date">
                                   📅 {formatOrderDate(order.date)}
                                 </span>
-                                <span className={`status ${statusClass}`}>
-                                  {order.status || 'In progress'}
-                                </span>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  <span className={`status ${statusClass}`}>
+                                    {order.status || 'In progress'}
+                                  </span>
+                                  {(() => {
+                                    const pay = getPaymentSummary(order);
+                                    return (
+                                      <span style={{
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        padding: '1px 8px',
+                                        borderRadius: '999px',
+                                        background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
+                                        color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
+                                      }}>
+                                        {pay.paymentStatus}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
                               </div>
-                              <div className="history-order-total-block">
+                              <div className="history-order-total-block" style={{ textAlign: 'right' }}>
                                 <span className="history-total-label">Order total:</span>
                                 <strong className="history-total-value">{money(order.total)}</strong>
+                                {(() => {
+                                  const pay = getPaymentSummary(order);
+                                  return (
+                                    <div style={{ fontSize: '11px', color: '#475569', fontWeight: 600, marginTop: '2px' }}>
+                                      {pay.summaryText}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
 

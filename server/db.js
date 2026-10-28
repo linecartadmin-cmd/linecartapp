@@ -283,7 +283,7 @@ export async function runMigrationsAndSeed({
   verifyPassword,
   isProduction,
   defaultRolePermissions
-}) {
+} = {}) {
   const migrationFile = path.join(__dirname, 'migrations', '001_initial_schema.sql');
   const migrationSql = fs.readFileSync(migrationFile, 'utf8');
   await db.execRaw(migrationSql);
@@ -422,6 +422,71 @@ export async function runMigrationsAndSeed({
       );
       console.log('[DB Migration] Applied 004_shop_agent_assignments.sql');
     }
+  }
+
+  // Ensure orders table has payment collection columns and migration 005
+  if (db.mode === 'postgres') {
+    await db.execRaw(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'Not collected';
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_amount_collected REAL DEFAULT 0;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_balance_due REAL DEFAULT 0;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_collected_at TEXT;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_collected_by INTEGER;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_collected_by_name TEXT;
+      CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status);
+    `);
+  } else {
+    try {
+      const orderTableInfo = await db.query("PRAGMA table_info('orders')");
+      const orderCols = new Set(orderTableInfo.rows.map((r) => r.name));
+      if (!orderCols.has('payment_status')) {
+        await db.execRaw("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'Not collected';");
+      }
+      if (!orderCols.has('payment_amount_collected')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN payment_amount_collected REAL DEFAULT 0;');
+      }
+      if (!orderCols.has('payment_balance_due')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN payment_balance_due REAL DEFAULT 0;');
+      }
+      if (!orderCols.has('payment_collected_at')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN payment_collected_at TEXT;');
+      }
+      if (!orderCols.has('payment_collected_by')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN payment_collected_by INTEGER;');
+      }
+      if (!orderCols.has('payment_collected_by_name')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN payment_collected_by_name TEXT;');
+      }
+      await db.execRaw('CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status);');
+    } catch (orderErr) {
+      console.warn('[DB Migration] Could not verify/add payment columns in SQLite:', orderErr.message);
+    }
+  }
+
+  const mig5File = path.join(__dirname, 'migrations', '005_payment_collection.sql');
+  if (fs.existsSync(mig5File)) {
+    const mig5Check = await db.query(
+      'SELECT version FROM schema_migrations WHERE version = $1',
+      ['005_payment_collection']
+    );
+    if (mig5Check.rowCount === 0) {
+      await db.query(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)',
+        ['005_payment_collection', new Date().toISOString()]
+      );
+      console.log('[DB Migration] Applied 005_payment_collection.sql');
+    }
+  }
+
+  // Safely backfill balance_due for existing orders without inventing past collections
+  try {
+    await db.query(`
+      UPDATE orders
+      SET payment_balance_due = total - COALESCE(payment_amount_collected, 0)
+      WHERE payment_balance_due IS NULL OR (payment_balance_due = 0 AND payment_amount_collected = 0 AND total > 0)
+    `);
+  } catch (balErr) {
+    console.warn('[DB Migration] Could not backfill payment_balance_due:', balErr.message);
   }
 
   // Preserve existing data: safely backfill assigned_agent_id from created_by for any unassigned shops
@@ -750,11 +815,17 @@ export async function runMigrationsAndSeed({
     }
 
     // 9. Role Permissions
+    const safeDefaultPerms = defaultRolePermissions || {
+      Admin: { pages: ['items', 'admin-dashboard', 'manager-orders', 'reports', 'settings'], actions: ['manage_items', 'manage_daily_prices', 'approve_price_requests'] },
+      'Sales Manager': { pages: ['items', 'manager-orders', 'reports'], actions: ['view_items', 'update_daily_prices', 'approve_price_requests'] },
+      'Field Sales Agent': { pages: ['overview', 'order-entry'], actions: ['create_order'] },
+      'Delivery Agent': { pages: ['delivery'], actions: ['update_delivery_status'] }
+    };
     const rolePermsSource = {
-      ...defaultRolePermissions,
+      ...safeDefaultPerms,
       ...(legacyConfig.rolePermissions || {}),
-      Admin: defaultRolePermissions.Admin,
-      'Delivery Agent': legacyConfig.rolePermissions?.['Delivery Agent'] || defaultRolePermissions['Delivery Agent']
+      Admin: safeDefaultPerms.Admin,
+      'Delivery Agent': legacyConfig.rolePermissions?.['Delivery Agent'] || safeDefaultPerms['Delivery Agent']
     };
     for (const [roleName, permsObj] of Object.entries(rolePermsSource)) {
       if (!permsObj) continue;
@@ -955,6 +1026,14 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       deliveryNote: r.delivery_note || null,
       deliveryUpdatedAt: r.delivery_updated_at || null,
       deliveryUpdatedBy: r.delivery_updated_by !== null && r.delivery_updated_by !== undefined ? Number(r.delivery_updated_by) : null,
+      paymentStatus: r.payment_status || 'Not collected',
+      paymentAmountCollected: Number(r.payment_amount_collected || 0),
+      paymentBalanceDue: r.payment_balance_due !== null && r.payment_balance_due !== undefined
+        ? Number(r.payment_balance_due)
+        : Math.max(0, Number(r.total || 0) - Number(r.payment_amount_collected || 0)),
+      paymentCollectedAt: r.payment_collected_at || null,
+      paymentCollectedBy: r.payment_collected_by !== null && r.payment_collected_by !== undefined ? Number(r.payment_collected_by) : null,
+      paymentCollectedByName: r.payment_collected_by_name || null,
       idempotencyKey: r.idempotency_key || null,
       orderList
     };

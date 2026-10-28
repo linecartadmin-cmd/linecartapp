@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { formatShopId } from '../utils';
+import { formatShopId, getPaymentSummary } from '../utils';
 
 export default function OverviewScreen({
   user,
@@ -153,7 +153,8 @@ export default function OverviewScreen({
             unit: item.unitType || item.unit || 'Kg',
             orderDate: formattedDate,
             status: statusText,
-            total: order.total
+            total: order.total,
+            order
           });
         });
       } else {
@@ -167,7 +168,8 @@ export default function OverviewScreen({
           unit: 'Kg',
           orderDate: formattedDate,
           status: statusText,
-          total: order.total
+          total: order.total,
+          order
         });
       }
     }
@@ -438,9 +440,31 @@ export default function OverviewScreen({
                       {row.orderDate}
                     </td>
                     <td style={{ textAlign: 'center', padding: '12px 14px' }}>
-                      <span className={`status ${(row.status || 'pending').toLowerCase().replace(/\s/g, '-')}`}>
-                        {row.status}
-                      </span>
+                      {(() => {
+                        const pay = getPaymentSummary(row.order || { status: row.status, total: row.total });
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                              <span className={`status ${(row.status || 'pending').toLowerCase().replace(/\s/g, '-')}`}>
+                                {row.status}
+                              </span>
+                              <span style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                padding: '1px 6px',
+                                borderRadius: '999px',
+                                background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
+                                color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
+                              }}>
+                                {pay.paymentStatus}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>
+                              {pay.summaryText}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ textAlign: 'center', padding: '12px 14px' }}>
                       <button

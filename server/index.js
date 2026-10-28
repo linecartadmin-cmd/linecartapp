@@ -2064,8 +2064,8 @@ const handleCreateOrder = async (req, res) => {
       const deliveryAgentId = clusterDeliveryAgent ? Number(clusterDeliveryAgent.id) : 50;
 
       await tx.query(
-        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, delivery_agent_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, delivery_agent_id, idempotency_key, payment_status, payment_amount_collected, payment_balance_due)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           newOrderId,
           nextSerial,
@@ -2082,7 +2082,10 @@ const handleCreateOrder = async (req, res) => {
           activeItems.length,
           orderTotal,
           deliveryAgentId,
-          idempotencyKey
+          idempotencyKey,
+          'Not collected',
+          0,
+          orderTotal
         ]
       );
 
@@ -3015,7 +3018,15 @@ app.get('/api/delivery/orders', requireAuth, async (req, res) => {
       deliveryAgentId: o.deliveryAgentId,
       deliveryReason: o.deliveryReason || null,
       deliveryNote: o.deliveryNote || null,
-      deliveryUpdatedAt: o.deliveryUpdatedAt || null
+      deliveryUpdatedAt: o.deliveryUpdatedAt || null,
+      paymentStatus: o.paymentStatus || 'Not collected',
+      paymentAmountCollected: Number(o.paymentAmountCollected || 0),
+      paymentBalanceDue: o.paymentBalanceDue !== undefined && o.paymentBalanceDue !== null
+        ? Number(o.paymentBalanceDue)
+        : Math.max(0, Number(o.total || 0) - Number(o.paymentAmountCollected || 0)),
+      paymentCollectedAt: o.paymentCollectedAt || null,
+      paymentCollectedBy: o.paymentCollectedBy || null,
+      paymentCollectedByName: o.paymentCollectedByName || null
     };
   });
 
@@ -3109,7 +3120,11 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
         status: currentStatus,
         deliveryReason: order.deliveryReason || null,
         deliveryNote: order.deliveryNote || null,
-        deliveryUpdatedAt: order.deliveryUpdatedAt || null
+        deliveryUpdatedAt: order.deliveryUpdatedAt || null,
+        paymentStatus: order.paymentStatus || 'Not collected',
+        paymentAmountCollected: Number(order.paymentAmountCollected || 0),
+        paymentBalanceDue: Number(order.paymentBalanceDue || 0),
+        total: Number(order.total || 0)
       }
     });
   }
@@ -3150,11 +3165,62 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
   const updatedReason = reason ? String(reason).trim() : (order.deliveryReason || null);
   const updatedNote = note ? String(note).trim() : (order.deliveryNote || null);
 
+  // Payment collection validation & calculation
+  let paymentAmount = Number(order.paymentAmountCollected || 0);
+  let paymentStatus = order.paymentStatus || 'Not collected';
+  let balanceDue = Number(order.paymentBalanceDue !== undefined && order.paymentBalanceDue !== null ? order.paymentBalanceDue : (order.total || 0));
+  let paymentCollectedAt = order.paymentCollectedAt || null;
+  let paymentCollectedBy = order.paymentCollectedBy || null;
+  let paymentCollectedByName = order.paymentCollectedByName || null;
+
+  if (status === 'Delivered') {
+    const rawCollected = req.body?.paymentAmountCollected ?? req.body?.amountCollected ?? req.body?.paymentAmount;
+    const orderTotal = Number(order.total || 0);
+
+    if (rawCollected !== undefined && rawCollected !== null && rawCollected !== '') {
+      paymentAmount = Number(rawCollected);
+      if (isNaN(paymentAmount) || paymentAmount < 0) {
+        return res.status(400).json({
+          status: 400,
+          message: 'Invalid payment amount: collected amount must be a non-negative number.'
+        });
+      }
+      if (paymentAmount > orderTotal) {
+        return res.status(400).json({
+          status: 400,
+          message: `Collected amount (₹${paymentAmount}) cannot exceed order total of ₹${orderTotal}.`
+        });
+      }
+    } else {
+      paymentAmount = 0;
+    }
+
+    balanceDue = Math.max(0, orderTotal - paymentAmount);
+    if (paymentAmount >= orderTotal && orderTotal > 0) {
+      paymentStatus = 'Collected';
+    } else if (paymentAmount > 0) {
+      paymentStatus = 'Partially collected';
+    } else {
+      paymentStatus = 'Not collected';
+    }
+
+    paymentCollectedAt = updatedAt;
+    paymentCollectedBy = Number(caller.id);
+    paymentCollectedByName = caller.name || 'Delivery Agent';
+  }
+
   await db.query(
     `UPDATE orders
-     SET status = $1, delivery_reason = $2, delivery_note = $3, delivery_updated_at = $4, delivery_updated_by = $5
-     WHERE order_id = $6`,
-    [status, updatedReason, updatedNote, updatedAt, Number(caller.id), order.orderId || order.id]
+     SET status = $1, delivery_reason = $2, delivery_note = $3, delivery_updated_at = $4, delivery_updated_by = $5,
+         payment_status = $6, payment_amount_collected = $7, payment_balance_due = $8,
+         payment_collected_at = $9, payment_collected_by = $10, payment_collected_by_name = $11
+     WHERE order_id = $12`,
+    [
+      status, updatedReason, updatedNote, updatedAt, Number(caller.id),
+      paymentStatus, paymentAmount, balanceDue,
+      paymentCollectedAt, paymentCollectedBy, paymentCollectedByName,
+      order.orderId || order.id
+    ]
   );
 
   await refreshStateFromDb();
@@ -3163,7 +3229,7 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
     'UPDATE_DELIVERY_STATUS',
     'Order',
     order.id,
-    `Updated order ${order.id} delivery status from '${currentStatus}' to '${status}'${updatedReason ? ` (Reason: ${updatedReason})` : ''}${deviceEventTime ? ` [deviceEventTime: ${deviceEventTime}]` : ''}${idempotencyKey ? ` [idempotencyKey: ${idempotencyKey}]` : ''}`
+    `Updated order ${order.id} delivery status from '${currentStatus}' to '${status}'${updatedReason ? ` (Reason: ${updatedReason})` : ''} (Payment: ${paymentStatus}, Collected: ₹${paymentAmount}, Balance: ₹${balanceDue})${deviceEventTime ? ` [deviceEventTime: ${deviceEventTime}]` : ''}${idempotencyKey ? ` [idempotencyKey: ${idempotencyKey}]` : ''}`
   );
 
   res.json({
@@ -3171,9 +3237,17 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
     message: `Delivery status updated to '${status}'`,
     order: {
       id: order.id,
+      orderId: order.orderId || order.id,
       status,
       deliveryReason: updatedReason,
-      deliveryUpdatedAt: updatedAt
+      deliveryUpdatedAt: updatedAt,
+      paymentStatus,
+      paymentAmountCollected: paymentAmount,
+      paymentBalanceDue: balanceDue,
+      paymentCollectedBy,
+      paymentCollectedByName,
+      paymentCollectedAt,
+      total: Number(order.total || 0)
     }
   });
 });
@@ -4152,13 +4226,13 @@ const handlePriceRequestDecision = async (req, res) => {
       if (remainingPending === 0) {
         await tx.query(
           `UPDATE orders
-           SET total = $1, status = 'In progress'
+           SET total = $1, payment_balance_due = $1 - COALESCE(payment_amount_collected, 0), status = 'In progress'
            WHERE order_id = $2 AND status = 'Price approval pending'`,
           [recalculatedTotal, pr.orderId]
         );
       } else {
         await tx.query(
-          'UPDATE orders SET total = $1 WHERE order_id = $2',
+          'UPDATE orders SET total = $1, payment_balance_due = $1 - COALESCE(payment_amount_collected, 0) WHERE order_id = $2',
           [recalculatedTotal, pr.orderId]
         );
       }
@@ -4345,6 +4419,14 @@ app.get('/api/orders', requireAuth, async (req, res) => {
     clusterId: o.clusterId,
     spersonid: o.spersonid,
     deliveryAgentId: o.deliveryAgentId,
+    paymentStatus: o.paymentStatus || 'Not collected',
+    paymentAmountCollected: Number(o.paymentAmountCollected || 0),
+    paymentBalanceDue: o.paymentBalanceDue !== undefined && o.paymentBalanceDue !== null
+      ? Number(o.paymentBalanceDue)
+      : Math.max(0, Number(o.total || 0) - Number(o.paymentAmountCollected || 0)),
+    paymentCollectedAt: o.paymentCollectedAt || null,
+    paymentCollectedBy: o.paymentCollectedBy || null,
+    paymentCollectedByName: o.paymentCollectedByName || null,
     orderList: o.orderList || []
   }));
 
@@ -4409,8 +4491,8 @@ app.post('/api/admin/orders', requireAdmin, async (req, res) => {
 
       // 2. Insert parent order first (to satisfy foreign key constraints)
       await tx.query(
-        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'In progress', $12, $13)`,
+        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, payment_status, payment_amount_collected, payment_balance_due)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'In progress', $12, $13, 'Not collected', 0, $13)`,
         [
           newOrderId,
           newSerial,

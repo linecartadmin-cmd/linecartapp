@@ -5,7 +5,8 @@ const testFiles = [
   'items-daily-pricing.test.js',
   'order-history-and-summary-report.test.js',
   'offline-and-price-approvals.test.js',
-  'shop-assignment-and-agent-flow.test.js'
+  'shop-assignment-and-agent-flow.test.js',
+  'payment-collection-tracking.test.js'
 ];
 
 async function cleanupDb() {

@@ -716,9 +716,22 @@ export const api = {
     }
   },
 
-  async updateDeliveryStatus(orderId, status, reason = null, note = null, idempotencyKey = null, deviceEventTime = null) {
+  async updateDeliveryStatus(orderId, status, reason = null, note = null, idempotencyKey = null, deviceEventTime = null, paymentAmountCollected = null, paymentNotes = null) {
     const key = idempotencyKey || `del-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const eventTime = deviceEventTime || new Date().toISOString();
+    const payload = {
+      status,
+      reason,
+      note,
+      idempotencyKey: key,
+      deviceEventTime: eventTime
+    };
+    if (paymentAmountCollected !== null && paymentAmountCollected !== undefined) {
+      payload.paymentAmountCollected = paymentAmountCollected;
+    }
+    if (paymentNotes !== null && paymentNotes !== undefined) {
+      payload.paymentNotes = paymentNotes;
+    }
     const res = await fetch(`${BASE_URL}/api/delivery/orders/${encodeURIComponent(orderId)}/status`, {
       method: 'POST',
       headers: {
@@ -727,7 +740,7 @@ export const api = {
         'X-Device-Event-Time': eventTime,
         ...getAuthHeaders()
       },
-      body: JSON.stringify({ status, reason, note, idempotencyKey: key, deviceEventTime: eventTime })
+      body: JSON.stringify(payload)
     });
     return res.json();
   },

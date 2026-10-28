@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
+import { getPaymentSummary } from '../utils';
 
 export default function ManagerOrdersScreen({ user, clusters, shops, showToast }) {
   const [loading, setLoading] = useState(true);
@@ -1017,9 +1018,31 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
                     </td>
                     <td className="total-amount-cell">{formatInr(order.total)}</td>
                     <td>
-                      <span className={`status-pill ${getStatusBadge(order.status)}`}>
-                        {order.status || 'Active'}
-                      </span>
+                      {(() => {
+                        const pay = getPaymentSummary(order);
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                              <span className={`status-pill ${getStatusBadge(order.status)}`}>
+                                {order.status || 'Active'}
+                              </span>
+                              <span style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                padding: '1px 6px',
+                                borderRadius: '999px',
+                                background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
+                                color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
+                              }}>
+                                {pay.paymentStatus}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '11px', color: '#475569', fontWeight: 600 }}>
+                              {pay.summaryText}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
@@ -1243,6 +1266,70 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast }
                   </div>
                 </div>
               </div>
+
+              {/* Payment & Delivery Status Card */}
+              {(() => {
+                const pay = getPaymentSummary(selectedOrder);
+                return (
+                  <div style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '10px',
+                    padding: '12px 16px',
+                    marginTop: '12px',
+                    marginBottom: '14px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>
+                        Delivery & Payment Summary
+                      </span>
+                      <span style={{
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        padding: '2px 10px',
+                        borderRadius: '999px',
+                        background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
+                        color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
+                      }}>
+                        {pay.paymentStatus}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
+                      {pay.fullText}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', fontSize: '12px', borderTop: '1px solid #e2e8f0', paddingTop: '8px' }}>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block', fontSize: '11px' }}>Delivery Status</span>
+                        <b>{pay.deliveryStatus}</b>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block', fontSize: '11px' }}>Order Total</span>
+                        <b>₹{pay.total.toLocaleString('en-IN')}</b>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block', fontSize: '11px' }}>Amount Collected</span>
+                        <b style={{ color: '#16a34a' }}>₹{pay.collected.toLocaleString('en-IN')}</b>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block', fontSize: '11px' }}>Balance Remaining</span>
+                        <b style={{ color: pay.balance > 0 ? '#dc2626' : '#16a34a' }}>₹{pay.balance.toLocaleString('en-IN')}</b>
+                      </div>
+                      {pay.collectedBy && (
+                        <div>
+                          <span style={{ color: '#64748b', display: 'block', fontSize: '11px' }}>Collected By</span>
+                          <b>{pay.collectedBy}</b>
+                        </div>
+                      )}
+                      {pay.collectedAt && (
+                        <div>
+                          <span style={{ color: '#64748b', display: 'block', fontSize: '11px' }}>Collected At</span>
+                          <b>{new Date(pay.collectedAt).toLocaleDateString('en-IN')}</b>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Items Breakdown Table */}
               <h4 className="detail-section-title">Purchased Commodities</h4>

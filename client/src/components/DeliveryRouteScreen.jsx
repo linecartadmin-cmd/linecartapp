@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../api';
 import { planRoadDeliveryRoute } from '../routing';
-import { getGoogleMapsUrl } from '../utils';
+import { getGoogleMapsUrl, getPaymentSummary } from '../utils';
 import { createMapTileLayer, getMapTileConfig } from '../mapConfig';
 import { queueDeliveryStatusUpdate } from '../offline/syncEngine';
 import { updateLocalDeliveryOrderStatus, getDeliveryOrders, saveDeliveryOrders } from '../offline/offlineDb';
@@ -162,6 +162,10 @@ export default function DeliveryRouteScreen({
   const [failModal, setFailModal] = useState(null); // { order }
   const [selectedReason, setSelectedReason] = useState('Shop Closed');
   const [customNote, setCustomNote] = useState('');
+
+  // Payment collection modal state for Delivery Agent
+  const [deliveryModal, setDeliveryModal] = useState(null); // { order, step: 'ask' | 'input', amountCollected: '', error: '' }
+  const [deliverySuccessConfirm, setDeliverySuccessConfirm] = useState(null); // { orderId, shopName, total, collected, balance, paymentStatus, summaryText }
 
   // Map DOM and Leaflet references
   const mapContainerRef = useRef(null);
@@ -575,23 +579,33 @@ export default function DeliveryRouteScreen({
     }, 100);
   }, [showMap, activeStops, routeInfo, nextIncompleteIndex]);
 
-  // Execute authenticated delivery status update
-  const executeStatusUpdate = async (orderId, newStatus, reason = null, note = null) => {
+  // Execute authenticated delivery status update (with payment collection tracking)
+  const executeStatusUpdate = async (orderId, newStatus, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null) => {
     const targetOrder = orders.find(o => String(o.id) === String(orderId));
     if (targetOrder && targetOrder.status === 'Price approval pending') {
       if (showToast) showToast('Cannot update delivery: Order has price approval pending.');
       setConfirmModal(null);
       setFailModal(null);
+      setDeliveryModal(null);
       return;
     }
 
     setUpdating(true);
 
+    const tot = Number(targetOrder?.total || 0);
+    const col = paymentAmountCollected !== null && paymentAmountCollected !== undefined
+      ? Number(paymentAmountCollected)
+      : Number(targetOrder?.paymentAmountCollected || 0);
+    const bal = Math.max(0, tot - col);
+    const calculatedPayStatus = newStatus === 'Delivered'
+      ? (col >= tot && tot > 0 ? 'Collected' : (col > 0 ? 'Partially collected' : 'Not collected'))
+      : (targetOrder?.paymentStatus || 'Not collected');
+
     // If offline, update locally and enqueue for sync
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       try {
-        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note);
-        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note);
+        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
+        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
 
         setOrders(prev => prev.map(o => {
           if (String(o.id) === String(orderId)) {
@@ -601,6 +615,9 @@ export default function DeliveryRouteScreen({
               deliveryReason: reason,
               deliveryNote: note,
               deliveryUpdatedAt: new Date().toISOString(),
+              paymentStatus: calculatedPayStatus,
+              paymentAmountCollected: col,
+              paymentBalanceDue: bal,
               syncState: 'waiting'
             };
           }
@@ -619,7 +636,7 @@ export default function DeliveryRouteScreen({
     }
 
     try {
-      const res = await api.updateDeliveryStatus(orderId, newStatus, reason, note);
+      const res = await api.updateDeliveryStatus(orderId, newStatus, reason, note, null, null, paymentAmountCollected, paymentNotes);
       if (res && (res.status === 200 || res.status === 1)) {
         if (showToast) showToast(t.updateSuccess);
 
@@ -631,6 +648,9 @@ export default function DeliveryRouteScreen({
               deliveryReason: reason,
               deliveryNote: note,
               deliveryUpdatedAt: new Date().toISOString(),
+              paymentStatus: res.order?.paymentStatus || calculatedPayStatus,
+              paymentAmountCollected: res.order?.paymentAmountCollected !== undefined ? res.order.paymentAmountCollected : col,
+              paymentBalanceDue: res.order?.paymentBalanceDue !== undefined ? res.order.paymentBalanceDue : bal,
               syncState: 'synced'
             };
           }
@@ -639,7 +659,10 @@ export default function DeliveryRouteScreen({
 
         const orderShop = orders.find(o => String(o.id) === String(orderId))?.shopName || 'Shop';
         if (newStatus === 'Delivered') {
-          speak(lang === 'ta' ? `${orderShop} கடைக்கு டெலிவரி முடிந்தது.` : `${orderShop} marked as Delivered.`);
+          const speakText = lang === 'ta'
+            ? `${orderShop} கடைக்கு டெலிவரி முடிந்தது.`
+            : `${orderShop} marked as Delivered.`;
+          speak(speakText);
         } else if (newStatus === 'Picked up') {
           speak(lang === 'ta' ? `${orderShop} பொருட்கள் எடுக்கப்பட்டது.` : `${orderShop} order picked up.`);
         }
@@ -652,8 +675,8 @@ export default function DeliveryRouteScreen({
     } catch (networkErr) {
       // Fallback to queue if network dropped mid-request
       try {
-        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note);
-        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note);
+        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
+        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
 
         setOrders(prev => prev.map(o => {
           if (String(o.id) === String(orderId)) {
@@ -663,6 +686,9 @@ export default function DeliveryRouteScreen({
               deliveryReason: reason,
               deliveryNote: note,
               deliveryUpdatedAt: new Date().toISOString(),
+              paymentStatus: calculatedPayStatus,
+              paymentAmountCollected: col,
+              paymentBalanceDue: bal,
               syncState: 'waiting'
             };
           }
@@ -678,6 +704,46 @@ export default function DeliveryRouteScreen({
     } finally {
       setUpdating(false);
     }
+  };
+
+  // Handler for Delivery Agent confirming delivery with payment collection prompt
+  const handleCompleteDeliveryWithPayment = async (order, collectedAmount = 0) => {
+    const tot = Number(order.total || 0);
+    const col = Number(collectedAmount || 0);
+
+    if (isNaN(col) || col < 0) {
+      if (showToast) showToast('Collected amount must be a non-negative number.');
+      return;
+    }
+    if (col > tot) {
+      if (showToast) showToast(`Collected amount cannot exceed order total of ₹${tot}.`);
+      return;
+    }
+
+    const bal = Math.max(0, tot - col);
+    const paymentStatus = col >= tot && tot > 0 ? 'Collected' : (col > 0 ? 'Partially collected' : 'Not collected');
+
+    let summaryText = '';
+    if (paymentStatus === 'Collected') {
+      summaryText = `Delivered · Collected ₹${col.toLocaleString('en-IN')} of ₹${tot.toLocaleString('en-IN')} · Balance ₹${bal.toLocaleString('en-IN')}`;
+    } else if (paymentStatus === 'Partially collected') {
+      summaryText = `Delivered · Partially collected ₹${col.toLocaleString('en-IN')} of ₹${tot.toLocaleString('en-IN')} · Balance ₹${bal.toLocaleString('en-IN')}`;
+    } else {
+      summaryText = `Delivered · Not collected · Balance ₹${bal.toLocaleString('en-IN')}`;
+    }
+
+    await executeStatusUpdate(order.id, 'Delivered', null, null, col);
+
+    setDeliveryModal(null);
+    setDeliverySuccessConfirm({
+      orderId: order.id,
+      shopName: order.shopName,
+      total: tot,
+      collected: col,
+      balance: bal,
+      paymentStatus,
+      summaryText
+    });
   };
 
   // Render Stop Card
@@ -871,6 +937,25 @@ export default function DeliveryRouteScreen({
             <span style={{ fontSize: '18px' }}>⏳</span>
             <span>Price approval pending — cannot dispatch or deliver until authorized by Admin or Sales Manager.</span>
           </div>
+        ) : isDelivered ? (
+          <div className="pt-2">
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="text-xl">✅</span>
+                <div>
+                  <span className="text-xs font-bold text-emerald-950 block">Delivered</span>
+                  <span className="text-xs text-emerald-800 font-semibold block">
+                    {getPaymentSummary(stop).summaryText}
+                  </span>
+                </div>
+              </div>
+              <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${
+                stop.paymentStatus === 'Collected' ? 'bg-emerald-200 text-emerald-900' : (stop.paymentStatus === 'Partially collected' ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-800')
+              }`}>
+                {stop.paymentStatus || 'Not collected'}
+              </span>
+            </div>
+          </div>
         ) : !isDelivered && !isFailed && (
           <div className="pt-2 flex flex-col sm:flex-row items-stretch gap-2.5">
             {isReadyForPickup ? (
@@ -897,13 +982,11 @@ export default function DeliveryRouteScreen({
                 type="button"
                 disabled={updating}
                 onClick={() => {
-                  setConfirmModal({
+                  setDeliveryModal({
                     order: stop,
-                    targetStatus: 'Delivered',
-                    title: t.markDelivered,
-                    text: lang === 'ta'
-                      ? `இந்த ஆர்டரை (${stop.id}) ${stop.shopName} கடைக்கு டெலிவரி செய்துவிட்டீர்களா?`
-                      : `Confirm delivery of Order #${stop.id} to ${stop.shopName}?`
+                    step: 'ask',
+                    amountCollected: String(stop.total || ''),
+                    error: ''
                   });
                 }}
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-base py-3.5 px-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 min-h-[56px]"
@@ -1355,6 +1438,266 @@ export default function DeliveryRouteScreen({
                 {t.cancel}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Collection Step Modal for Delivery Agent */}
+      {deliveryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-5">
+            {deliveryModal.step === 'ask' ? (
+              <>
+                <div className="text-center">
+                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black mb-3">
+                    💰
+                  </div>
+                  <h2 className="text-xl font-black text-slate-900 leading-snug">
+                    Was payment collected at the shop?
+                  </h2>
+                  <p className="text-xs text-slate-500 font-semibold mt-1">
+                    {deliveryModal.order.shopName} · Order #{deliveryModal.order.id}
+                  </p>
+                  <div className="mt-3 inline-block bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-800">
+                    Order Total: <span className="font-extrabold text-slate-950">₹{Number(deliveryModal.order.total || 0).toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={updating}
+                    onClick={() => handleCompleteDeliveryWithPayment(deliveryModal.order, 0)}
+                    className="p-4 rounded-2xl border-2 border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-800 font-black text-sm flex flex-col items-center justify-center gap-1 transition min-h-[72px]"
+                  >
+                    <span className="text-xl">❌</span>
+                    <span>No</span>
+                    <span className="text-[11px] font-semibold text-slate-500">(₹0 / Not collected)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating}
+                    onClick={() => setDeliveryModal(prev => ({
+                      ...prev,
+                      step: 'input',
+                      amountCollected: String(prev.order?.total || 0),
+                      error: ''
+                    }))}
+                    className="p-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-black text-sm flex flex-col items-center justify-center gap-1 transition ring-2 ring-emerald-500/20 min-h-[72px]"
+                  >
+                    <span className="text-xl">💵</span>
+                    <span>Yes</span>
+                    <span className="text-[11px] font-bold text-emerald-700">(Enter amount)</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={updating}
+                  onClick={() => setDeliveryModal(null)}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs py-2.5 px-4 rounded-xl transition"
+                >
+                  {t.cancel}
+                </button>
+              </>
+            ) : (
+              /* Step: input */
+              <>
+                <div className="text-center">
+                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl font-black mb-2">
+                    💵
+                  </div>
+                  <h2 className="text-lg font-black text-slate-900 leading-snug">
+                    Amount Collected at Shop
+                  </h2>
+                  <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                    {deliveryModal.order.shopName} (Order #{deliveryModal.order.id})
+                  </p>
+                </div>
+
+                {(() => {
+                  const tot = Number(deliveryModal.order.total || 0);
+                  const rawVal = deliveryModal.amountCollected;
+                  const parsed = parseFloat(rawVal);
+                  const col = isNaN(parsed) ? 0 : parsed;
+                  const bal = Math.max(0, tot - col);
+                  const isNegative = !isNaN(parsed) && parsed < 0;
+                  const isExceeding = !isNaN(parsed) && parsed > tot;
+                  const isValid = !isNaN(parsed) && parsed >= 0 && parsed <= tot;
+                  const calculatedPayStatus = col >= tot && tot > 0
+                    ? 'Collected'
+                    : (col > 0 ? 'Partially collected' : 'Not collected');
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Live Balance / Calculation Card */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-slate-600 font-semibold">Order Total:</span>
+                          <span className="font-black text-slate-900">₹{tot.toLocaleString('en-IN')}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-slate-600 font-semibold">Amount Collected:</span>
+                          <span className="font-black text-emerald-700">₹{col.toLocaleString('en-IN')}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-200">
+                          <span className="text-slate-700 font-bold">Remaining Balance Due:</span>
+                          <span className="font-black text-rose-700">₹{bal.toLocaleString('en-IN')}</span>
+                        </div>
+                        <div className="pt-1.5 flex justify-between items-center">
+                          <span className="text-[11px] font-semibold text-slate-500">Payment Status:</span>
+                          <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                            calculatedPayStatus === 'Collected'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : (calculatedPayStatus === 'Partially collected'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-200 text-slate-800')
+                          }`}>
+                            {calculatedPayStatus}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Input */}
+                      <div>
+                        <label className="text-xs font-bold text-slate-700 block mb-1">
+                          Amount Collected (₹)
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-bold text-slate-500">
+                            ₹
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            max={tot}
+                            step="any"
+                            autoFocus
+                            value={deliveryModal.amountCollected}
+                            onChange={e => setDeliveryModal(prev => ({
+                              ...prev,
+                              amountCollected: e.target.value,
+                              error: ''
+                            }))}
+                            placeholder="0"
+                            className="w-full text-base font-black pl-8 pr-4 py-3 rounded-xl border border-slate-300 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                          />
+                        </div>
+
+                        {/* Quick amount presets */}
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setDeliveryModal(prev => ({ ...prev, amountCollected: String(tot) }))}
+                            className="text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg transition"
+                          >
+                            Full Amount (₹{tot})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeliveryModal(prev => ({ ...prev, amountCollected: '0' }))}
+                            className="text-[11px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 px-2.5 py-1 rounded-lg transition"
+                          >
+                            ₹0 (Unpaid)
+                          </button>
+                        </div>
+
+                        {/* Validation message */}
+                        {isExceeding && (
+                          <p className="text-xs text-rose-600 font-bold mt-1.5 flex items-center gap-1">
+                            <span>⚠️</span> Collected amount cannot exceed order total of ₹{tot}.
+                          </p>
+                        )}
+                        {isNegative && (
+                          <p className="text-xs text-rose-600 font-bold mt-1.5 flex items-center gap-1">
+                            <span>⚠️</span> Amount cannot be negative.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex flex-col gap-2 pt-2">
+                        <button
+                          type="button"
+                          disabled={updating || !isValid}
+                          onClick={() => handleCompleteDeliveryWithPayment(deliveryModal.order, col)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-sm py-3.5 px-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 min-h-[52px]"
+                        >
+                          <span>{updating ? '⏳' : '✅'}</span>
+                          <span>{updating ? t.updating : 'Save & Mark Delivered'}</span>
+                        </button>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => setDeliveryModal(prev => ({ ...prev, step: 'ask' }))}
+                            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition"
+                          >
+                            ← Back
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => setDeliveryModal(null)}
+                            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition"
+                          >
+                            {t.cancel}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delivery & Payment Completion Confirmation Modal */}
+      {deliverySuccessConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-center">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black">
+              ✅
+            </div>
+            <h2 className="text-xl font-black text-slate-900">
+              Delivery Completed
+            </h2>
+            <p className="text-xs text-slate-500 font-semibold">
+              {deliverySuccessConfirm.shopName} · Order #{deliverySuccessConfirm.orderId}
+            </p>
+
+            {/* Summary Banner */}
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-left space-y-2">
+              <div className="text-xs font-black text-emerald-950 leading-relaxed">
+                {deliverySuccessConfirm.summaryText}
+              </div>
+              <div className="pt-2 border-t border-emerald-200 grid grid-cols-3 gap-2 text-center text-xs">
+                <div>
+                  <span className="text-[10px] text-emerald-700 font-semibold block">Total</span>
+                  <span className="font-black text-slate-900">₹{deliverySuccessConfirm.total.toLocaleString('en-IN')}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-emerald-700 font-semibold block">Collected</span>
+                  <span className="font-black text-emerald-700">₹{deliverySuccessConfirm.collected.toLocaleString('en-IN')}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-emerald-700 font-semibold block">Balance</span>
+                  <span className="font-black text-rose-700">₹{deliverySuccessConfirm.balance.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setDeliverySuccessConfirm(null)}
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black text-sm py-3.5 px-4 rounded-2xl shadow-md transition"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}

@@ -116,7 +116,7 @@ export async function queueOrderCreation(userId, orderList, currentShop, activeI
 /**
  * Enqueue a delivery status update mutation
  */
-export async function queueDeliveryStatusUpdate(userId, orderId, status, reason = null, note = null) {
+export async function queueDeliveryStatusUpdate(userId, orderId, status, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null) {
   const deviceEventTime = new Date().toISOString();
   const idempotencyKey = `del-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -129,7 +129,9 @@ export async function queueDeliveryStatusUpdate(userId, orderId, status, reason 
       orderId: String(orderId),
       status,
       reason,
-      note
+      note,
+      paymentAmountCollected,
+      paymentNotes
     }
   });
 
@@ -293,14 +295,16 @@ export async function triggerSync(userId) {
             });
           }
         } else if (item.type === 'UPDATE_DELIVERY_STATUS') {
-          const { orderId, status, reason, note } = item.payload;
+          const { orderId, status, reason, note, paymentAmountCollected, paymentNotes } = item.payload;
           const res = await api.updateDeliveryStatus(
             orderId,
             status,
             reason,
             note,
             item.idempotencyKey,
-            item.deviceEventTime
+            item.deviceEventTime,
+            paymentAmountCollected,
+            paymentNotes
           );
 
           if (res && (res.status === 200 || res.status === 1)) {
