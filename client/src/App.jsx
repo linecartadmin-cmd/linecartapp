@@ -973,7 +973,7 @@ export default function App() {
             />
           )}
 
-          {page === 'summary' && !isAdmin && !isManager && (
+          {page === 'summary' && (
             <SummaryReportScreen
               user={user}
               showToast={showToast}

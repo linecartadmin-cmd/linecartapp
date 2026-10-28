@@ -1286,10 +1286,11 @@ function canCallerAccessShop(caller, shop) {
 
   const shopClusterId = Number(shop.cluster_id || shop.clusterid || 0);
   const shopCreatedBy = Number(shop.created_by || shop.createdby || 0);
+  const assignedAgentId = Number(shop.assignedAgentId ?? shop.assigned_agent_id ?? shopCreatedBy);
   const callerClusterId = Number(caller.cluster_id || caller.clusterid || 0);
   const callerId = Number(caller.id || 0);
 
-  // Sales Manager: authorized for shops in their supervised cluster, or created by assigned agents
+  // Sales Manager: authorized for shops in their supervised cluster, or assigned to/created by assigned agents
   if (role === 'sales manager') {
     if (
       !checkActionPermission(caller.role, 'view_cluster_shops') &&
@@ -1298,11 +1299,11 @@ function canCallerAccessShop(caller, shop) {
     ) {
       return false;
     }
-    if (callerClusterId === 0 || callerClusterId === shopClusterId) {
+    const assignedAgentIds = getAssignedAgentIds(callerId);
+    if (assignedAgentIds.includes(assignedAgentId) || assignedAgentIds.includes(shopCreatedBy)) {
       return true;
     }
-    const assignedAgentIds = getAssignedAgentIds(callerId);
-    if (assignedAgentIds.includes(shopCreatedBy)) {
+    if (callerClusterId === 0 || callerClusterId === shopClusterId) {
       return true;
     }
     const assignedAgents = salesPersons.filter((u) => assignedAgentIds.includes(Number(u.id)));
@@ -1312,7 +1313,7 @@ function canCallerAccessShop(caller, shop) {
     return false;
   }
 
-  // Field Sales Agent: authorized for shops in their assigned cluster, or registered by them
+  // Field Sales Agent: authorized strictly for shops assigned to them
   if (role === 'field sales agent') {
     if (
       !checkActionPermission(caller.role, 'view_assigned_shops') &&
@@ -1322,10 +1323,7 @@ function canCallerAccessShop(caller, shop) {
     ) {
       return false;
     }
-    if (callerClusterId === 0 || callerClusterId === shopClusterId || shopCreatedBy === callerId) {
-      return true;
-    }
-    return false;
+    return assignedAgentId === callerId;
   }
 
   // Delivery Agent: authorized for shops in their assigned route cluster
@@ -1340,9 +1338,11 @@ function canCallerAccessShop(caller, shop) {
 }
 
 // Compute live cluster statistics from real persisted database shops & orders
-function computeClusterStatsForScope(clusterId, scopedOrders = null) {
+function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops = null) {
   const cId = Number(clusterId);
-  const clusterShops = shops.filter((s) => Number(s.clusterid || s.cluster_id) === cId);
+  const clusterShops = (scopedShops !== null ? scopedShops : shops).filter(
+    (s) => Number(s.clusterid || s.cluster_id) === cId
+  );
   const allOrders = scopedOrders !== null ? scopedOrders : submittedOrders;
 
   // Non-cancelled orders for this cluster
@@ -1428,12 +1428,21 @@ function computeClusterStatsForScope(clusterId, scopedOrders = null) {
       : 'Active'
   }));
 
+  // Shops by category breakdown
+  const categoryCounts = {};
+  for (const s of clusterShops) {
+    const cat = s.shopCategory || s.shop_category || 'Retail';
+    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+  }
+  const shopsByCategory = Object.entries(categoryCounts).map(([category, count]) => ({ category, count }));
+
   return {
     totalshops,
     totalorderedshops,
     totalnotorderedshops,
     deliverystatus,
-    order_item_status
+    order_item_status,
+    shopsByCategory
   };
 }
 
@@ -1488,6 +1497,19 @@ const handleGetHomeReport = async (req, res) => {
     baseOrders = baseOrders.filter((o) => (o.date || '').slice(0, 10) <= toDate);
   }
 
+  // Scoped shops for stats
+  let scopedShops = shops;
+  if (callerRole === 'field sales agent') {
+    scopedShops = shops.filter((s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(effectiveSpersonId));
+  } else if (callerRole === 'sales manager') {
+    const assigned = getAssignedAgentIds(caller.id);
+    scopedShops = shops.filter((s) => {
+      const assignedId = Number(s.assignedAgentId || s.assigned_agent_id || 0);
+      const createdId = Number(s.createdby || s.created_by || 0);
+      return assigned.includes(assignedId) || assigned.includes(createdId) || Number(s.clusterid) === Number(caller.clusterid);
+    });
+  }
+
   // Filter clusters if clusterId query parameter is provided
   const filterClusterId = req.query.clusterId || req.query.clusterid;
   let relevantClusters = clusters;
@@ -1498,8 +1520,15 @@ const handleGetHomeReport = async (req, res) => {
     }
   }
 
+  // For Field Sales Agent: only show clusters containing shops assigned to this agent
+  if (callerRole === 'field sales agent') {
+    relevantClusters = relevantClusters.filter((c) =>
+      scopedShops.some((s) => Number(s.clusterid || s.cluster_id) === Number(c.clusterId))
+    );
+  }
+
   const clusterList = relevantClusters.map((cluster) => {
-    const stats = computeClusterStatsForScope(cluster.clusterId, baseOrders);
+    const stats = computeClusterStatsForScope(cluster.clusterId, baseOrders, scopedShops);
     return {
       clusterId: cluster.clusterId,
       clusterName: cluster.clusterName,
@@ -1509,7 +1538,8 @@ const handleGetHomeReport = async (req, res) => {
         totalorderedshops: stats.totalorderedshops,
         totalnotorderedshops: stats.totalnotorderedshops
       },
-      order_item_status: stats.order_item_status
+      order_item_status: stats.order_item_status,
+      shopsByCategory: stats.shopsByCategory
     };
   });
 
@@ -1537,11 +1567,11 @@ const handleClusterInfo = async (req, res) => {
   if (!scope.authorized) return;
 
   const { caller, effectiveSpersonId } = scope;
-  const callerRole = caller.role || 'Field Sales Agent';
+  const callerRole = (caller.role || 'Field Sales Agent').toLowerCase();
   if (
-    !checkActionPermission(callerRole, 'view_assigned_shops') &&
-    !checkActionPermission(callerRole, 'view_cluster_shops') &&
-    !checkActionPermission(callerRole, 'view_shops')
+    !checkActionPermission(caller.role, 'view_assigned_shops') &&
+    !checkActionPermission(caller.role, 'view_cluster_shops') &&
+    !checkActionPermission(caller.role, 'view_shops')
   ) {
     return res.status(403).json({
       status: 403,
@@ -1549,12 +1579,21 @@ const handleClusterInfo = async (req, res) => {
     });
   }
 
+  let scopedClusters = clusters;
+  if (callerRole === 'field sales agent') {
+    const assignedShops = shops.filter(
+      (s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(effectiveSpersonId)
+    );
+    const assignedClusterIds = new Set(assignedShops.map((s) => Number(s.clusterid || s.cluster_id)));
+    scopedClusters = clusters.filter((c) => assignedClusterIds.has(Number(c.clusterId)));
+  }
+
   res.json({
     status: 200,
     message: 'Data Received Successfully.',
     result: {
       salesPersonId: String(effectiveSpersonId),
-      clusterList: clusters
+      clusterList: scopedClusters
     }
   });
 };
@@ -1647,10 +1686,13 @@ const handleAddCustomer = async (req, res) => {
 
       const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
       const surveyArr = Array.isArray(customerData.survey) ? customerData.survey : [];
+      const assignedAgentId = (callerRole || '').toLowerCase() === 'field sales agent'
+        ? Number(caller.id)
+        : (customerData.assignedAgentId ? Number(customerData.assignedAgentId) : createdby);
 
       await tx.query(
-        `INSERT INTO shops (shop_id, cluster_id, shop_name, shop_category, owner_name, contact1, contact2, latitude, longitude, address, pincode, payment_mode, created_by, photo, active, created_on, survey_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 1, $15, $16)`,
+        `INSERT INTO shops (shop_id, cluster_id, shop_name, shop_category, owner_name, contact1, contact2, latitude, longitude, address, pincode, payment_mode, created_by, assigned_agent_id, photo, active, created_on, survey_json)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, $16, $17)`,
         [
           savedShopId,
           clusterid,
@@ -1665,6 +1707,7 @@ const handleAddCustomer = async (req, res) => {
           String(customerData.pincode || ''),
           parseInt(customerData.paymentmode, 10) || 0,
           createdby,
+          assignedAgentId,
           savedPhotoName,
           nowStr,
           JSON.stringify(surveyArr)
@@ -1738,11 +1781,11 @@ const handleGetItemsOrder = async (req, res) => {
   if (!scope.authorized) return;
 
   const { caller, effectiveSpersonId } = scope;
-  const callerRole = caller.role || 'Field Sales Agent';
+  const callerRole = (caller.role || 'Field Sales Agent').toLowerCase();
   if (
-    !checkActionPermission(callerRole, 'view_assigned_shops') &&
-    !checkActionPermission(callerRole, 'view_cluster_shops') &&
-    !checkActionPermission(callerRole, 'view_shops')
+    !checkActionPermission(caller.role, 'view_assigned_shops') &&
+    !checkActionPermission(caller.role, 'view_cluster_shops') &&
+    !checkActionPermission(caller.role, 'view_shops')
   ) {
     return res.status(403).json({
       status: 403,
@@ -1754,43 +1797,66 @@ const handleGetItemsOrder = async (req, res) => {
     ? orderItemsCatalog.filter((item) => Number(item.active ?? 1) === 1)
     : defaultOrderItems;
 
-  const clusterList = clusters.map((cluster) => {
-    const clusterItems = activeCatalog.map((item) => {
-      const itemId = Number(item.itemId || item.itemid);
-      const clusterPriceRow = clusterItemPrices.find(
-        (cip) => Number(cip.clusterId) === Number(cluster.clusterId) && Number(cip.itemId) === itemId
-      );
-      const effectivePrice = clusterPriceRow ? Number(clusterPriceRow.price) : Number(item.price);
-      return {
-        itemid: itemId,
-        itemId: itemId,
-        itemName: item.itemName,
-        itemimage: item.itemImage || item.itemimage || '',
-        qty: Number(item.qty || 0),
-        price: effectivePrice,
-        cprice: Number(item.cprice || 0),
-        kgsperunit: Number(item.kgsPerUnit || item.kgsperunit || 50),
-        remarks: Number(item.remarks || 0),
-        unitType: item.unitType || 'Kgs',
-        clusterId: cluster.clusterId,
-        active: Number(item.active ?? 1),
-        updatedAt: clusterPriceRow ? clusterPriceRow.updatedAt : item.updatedAt
-      };
+  let scopedShops = shops;
+  if (callerRole === 'field sales agent') {
+    scopedShops = shops.filter(
+      (s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(effectiveSpersonId)
+    );
+  } else if (callerRole === 'sales manager') {
+    const assignedAgentIds = getAssignedAgentIds(caller.id);
+    scopedShops = shops.filter((s) => {
+      const assignedId = Number(s.assignedAgentId || s.assigned_agent_id || 0);
+      const createdId = Number(s.createdby || s.created_by || 0);
+      return assignedAgentIds.includes(assignedId) ||
+             assignedAgentIds.includes(createdId) ||
+             Number(s.clusterid) === Number(caller.clusterid);
     });
+  }
 
-    const clusterShops = shops
-      .filter((s) => Number(s.clusterid) === Number(cluster.clusterId))
-      .map((shop) => ({
-        ...shop,
-        itemsList: clusterItems
-      }));
+  const clusterList = clusters
+    .map((cluster) => {
+      const clusterItems = activeCatalog.map((item) => {
+        const itemId = Number(item.itemId || item.itemid);
+        const clusterPriceRow = clusterItemPrices.find(
+          (cip) => Number(cip.clusterId) === Number(cluster.clusterId) && Number(cip.itemId) === itemId
+        );
+        const effectivePrice = clusterPriceRow ? Number(clusterPriceRow.price) : Number(item.price);
+        return {
+          itemid: itemId,
+          itemId: itemId,
+          itemName: item.itemName,
+          itemimage: item.itemImage || item.itemimage || '',
+          qty: Number(item.qty || 0),
+          price: effectivePrice,
+          cprice: Number(item.cprice || 0),
+          kgsperunit: Number(item.kgsPerUnit || item.kgsperunit || 50),
+          remarks: Number(item.remarks || 0),
+          unitType: item.unitType || 'Kgs',
+          clusterId: cluster.clusterId,
+          active: Number(item.active ?? 1),
+          updatedAt: clusterPriceRow ? clusterPriceRow.updatedAt : item.updatedAt
+        };
+      });
 
-    return {
-      clusterId: cluster.clusterId,
-      clusterName: cluster.clusterName,
-      shopsList: clusterShops
-    };
-  });
+      const clusterShops = scopedShops
+        .filter((s) => Number(s.clusterid) === Number(cluster.clusterId))
+        .map((shop) => ({
+          ...shop,
+          itemsList: clusterItems
+        }));
+
+      return {
+        clusterId: cluster.clusterId,
+        clusterName: cluster.clusterName,
+        shopsList: clusterShops
+      };
+    })
+    .filter((c) => {
+      if (callerRole === 'field sales agent') {
+        return c.shopsList.length > 0;
+      }
+      return true;
+    });
 
   res.json({
     status: 200,
@@ -1866,7 +1932,21 @@ const handleCreateOrder = async (req, res) => {
 
     const customerId = Number(orderList[0]?.customerid || 0);
     const shop = shops.find((s) => Number(s.shopid) === customerId);
-    const shopShortId = shop ? `S${String(shop.shopid).padStart(3, '0')}` : `S${String(customerId).padStart(3, '0')}`;
+    if (!shop) {
+      return res.status(404).json({
+        status: 404,
+        message: `Shop not found with ID ${customerId}.`,
+        id: '0'
+      });
+    }
+    if (!canCallerAccessShop(caller, shop)) {
+      return res.status(403).json({
+        status: 403,
+        message: `Access Denied: You cannot create orders for shop #${shop.shopid} (${shop.shopName}) as it is not assigned to you.`,
+        id: '0'
+      });
+    }
+    const shopShortId = `S${String(shop.shopid).padStart(3, '0')}`;
     const clusterid = parseInt(orderList[0]?.clusterid, 10) || (shop?.clusterid || Number(caller.clusterid || 1));
     const spersonid = requestedSpersonId;
     const agent = salesPersons.find((s) => Number(s.id) === Number(spersonid));
@@ -1958,7 +2038,8 @@ const handleCreateOrder = async (req, res) => {
       const nextSerial = Number(serialRes.rows[0]?.next_serial || 24019);
       const newOrderId = `${shopShortId}-${nextSerial}`;
       const nowIso = new Date().toISOString();
-      const todayDate = nowIso.slice(0, 10);
+      const customDate = String(req.body?.orderDate || orderList[0]?.date || '').trim();
+      const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(customDate) ? customDate : nowIso.slice(0, 10);
 
       // Assign default delivery agent in cluster if one exists
       const clusterDeliveryAgent = salesPersons.find(
@@ -2240,6 +2321,137 @@ const handleGetShopOrderHistory = async (req, res) => {
 
 app.get('/api/shops/:shopId/order-history', requireAuth, handleGetShopOrderHistory);
 app.get('/api/linecart/shops/:shopId/order-history', requireAuth, handleGetShopOrderHistory);
+
+// 6b. PUT /api/shops/:shopId/assign (Assign shop to Field Sales Agent - Admin & Sales Manager)
+const handleAssignShopAgent = async (req, res) => {
+  try {
+    await refreshStateFromDb();
+    const caller = getCaller(req);
+    if (!caller) {
+      return res.status(401).json({ status: 401, message: 'Authentication required' });
+    }
+
+    const callerRole = (caller.role || '').toLowerCase();
+    if (callerRole === 'field sales agent') {
+      return res.status(403).json({
+        status: 403,
+        message: 'Permission Denied: Field Sales Agents cannot assign shops to agents or themselves.'
+      });
+    }
+
+    if (callerRole !== 'admin' && callerRole !== 'sales manager') {
+      return res.status(403).json({
+        status: 403,
+        message: 'Permission Denied: Only Admins and Sales Managers can assign shops to agents.'
+      });
+    }
+
+    const rawShopParam = String(req.params.shopId || req.body?.shopId || '').trim();
+    const numericShopId = parseInt(rawShopParam.replace(/^S/i, ''), 10);
+    const shop = shops.find(
+      (s) => Number(s.shopid) === numericShopId || String(s.shopid) === rawShopParam
+    );
+
+    if (!shop) {
+      return res.status(404).json({ status: 404, message: `Shop not found with ID ${rawShopParam}` });
+    }
+
+    const agentId = Number(req.body?.agentId || req.body?.agent_id || req.body?.assignedAgentId);
+    if (!agentId || isNaN(agentId)) {
+      return res.status(400).json({ status: 400, message: 'Valid agentId is required in request body.' });
+    }
+
+    const targetAgent = salesPersons.find((u) => Number(u.id) === agentId);
+    if (!targetAgent) {
+      return res.status(404).json({ status: 404, message: `Agent not found with ID ${agentId}` });
+    }
+
+    if ((targetAgent.role || '').toLowerCase() !== 'field sales agent') {
+      return res.status(400).json({ status: 400, message: 'Target user must be a Field Sales Agent.' });
+    }
+
+    // Sales Managers can only assign shops to agents in their supervised team
+    if (callerRole === 'sales manager') {
+      const teamAgentIds = getAssignedAgentIds(caller.id);
+      if (!teamAgentIds.includes(agentId)) {
+        return res.status(403).json({
+          status: 403,
+          message: `Access Denied: Field Sales Agent #${agentId} (${targetAgent.name}) is not in your assigned team.`
+        });
+      }
+    }
+
+    // Update database
+    await db.query('UPDATE shops SET assigned_agent_id = $1 WHERE shop_id = $2', [agentId, shop.shopid]);
+
+    // Update in-memory state
+    shop.assignedAgentId = agentId;
+    shop.assigned_agent_id = agentId;
+
+    await addAuditLog(
+      req,
+      'SHOP_ASSIGNED',
+      'Shop',
+      shop.shopid,
+      `Assigned shop #${shop.shopid} (${shop.shopName}) to Agent #${agentId} (${targetAgent.name})`
+    );
+
+    res.json({
+      status: 200,
+      message: `Shop #${shop.shopid} successfully assigned to ${targetAgent.name}.`,
+      shop: {
+        ...shop,
+        assignedAgentId: agentId,
+        assignedAgentName: targetAgent.name
+      }
+    });
+  } catch (err) {
+    console.error('Error assigning shop agent:', err);
+    res.status(500).json({ status: 500, message: 'Internal server error while assigning shop.' });
+  }
+};
+
+app.put('/api/shops/:shopId/assign', requireAuth, handleAssignShopAgent);
+app.post('/api/shops/:shopId/assign-agent', requireAuth, handleAssignShopAgent);
+app.post('/api/admin/shops/:shopId/assign', requireAuth, handleAssignShopAgent);
+
+// 6c. GET /api/shops (List shops with role-based scoping)
+app.get('/api/shops', requireAuth, async (req, res) => {
+  await refreshStateFromDb();
+  const caller = getCaller(req);
+  if (!caller) return res.status(401).json({ status: 401, message: 'Authentication required' });
+
+  const callerRole = (caller.role || '').toLowerCase();
+  let scopedShops = shops;
+
+  if (callerRole === 'field sales agent') {
+    scopedShops = shops.filter((s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(caller.id));
+  } else if (callerRole === 'sales manager') {
+    const teamAgentIds = getAssignedAgentIds(caller.id);
+    scopedShops = shops.filter((s) => {
+      const assignedId = Number(s.assignedAgentId || s.assigned_agent_id || 0);
+      const createdId = Number(s.createdby || s.created_by || 0);
+      return teamAgentIds.includes(assignedId) ||
+             teamAgentIds.includes(createdId) ||
+             Number(s.clusterid) === Number(caller.clusterid);
+    });
+  }
+
+  const userMap = new Map(salesPersons.map((u) => [Number(u.id), u.name]));
+  const formatted = scopedShops.map((s) => {
+    const aid = Number(s.assignedAgentId || s.assigned_agent_id || s.createdby || 0);
+    return {
+      ...s,
+      assignedAgentId: aid,
+      assignedAgentName: userMap.get(aid) || (aid ? `Agent #${aid}` : 'Unassigned')
+    };
+  });
+
+  res.json({
+    status: 200,
+    shops: formatted
+  });
+});
 
 // ============================================================================
 // ADMIN API ENDPOINTS (Full System Control & Governance, Persisted in SQL DB)

@@ -20,6 +20,61 @@ export default function CustomersScreen({
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 12;
 
+  const roleLower = (user?.role || '').toLowerCase();
+  const isAdmin = roleLower === 'admin';
+  const isManager = roleLower === 'sales manager';
+  const isAgent = !isAdmin && !isManager;
+  const canAssign = isAdmin || isManager;
+
+  const [assignableAgents, setAssignableAgents] = useState([]);
+  const [localShops, setLocalShops] = useState(shops);
+  const [assigningShopId, setAssigningShopId] = useState(null);
+
+  useEffect(() => {
+    setLocalShops(shops);
+  }, [shops]);
+
+  useEffect(() => {
+    if (!canAssign) return;
+    if (isAdmin) {
+      api.getAdminUsers()
+        .then((res) => {
+          if (res?.users) {
+            setAssignableAgents(res.users.filter((u) => (u.role || '').toLowerCase() === 'field sales agent'));
+          }
+        })
+        .catch(() => {});
+    } else if (isManager && user?.id) {
+      api.getManagerAssignedAgents(user.id)
+        .then((res) => {
+          if (res?.agents) {
+            setAssignableAgents(res.agents);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [canAssign, isAdmin, isManager, user?.id]);
+
+  const handleAssignAgent = async (shopId, agentId) => {
+    if (!canAssign || !agentId) return;
+    setAssigningShopId(shopId);
+    try {
+      const res = await api.assignShopAgent(shopId, Number(agentId));
+      if (res && (res.status === 200 || res.status === 1)) {
+        showToast(res.message || 'Shop assigned successfully!');
+        setLocalShops((prev) =>
+          prev.map((s) => (Number(s.shopid) === Number(shopId) ? { ...s, assignedAgentId: Number(agentId) } : s))
+        );
+      } else {
+        showToast(res?.message || 'Failed to assign shop.');
+      }
+    } catch {
+      showToast('Error connecting to assignment service.');
+    } finally {
+      setAssigningShopId(null);
+    }
+  };
+
   // Form state for adding new customer
   const [formData, setFormData] = useState({
     clusterid: 1,
@@ -200,8 +255,13 @@ export default function CustomersScreen({
     }
   };
 
+  // Filter clusters for agents so only routes containing assigned shops are shown
+  const availableClusters = isAgent
+    ? clusters.filter((c) => localShops.some((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)))
+    : clusters;
+
   // Filter shops for directory view
-  const filteredShops = shops.filter((s) => {
+  const filteredShops = localShops.filter((s) => {
     if (selectedClusterFilter !== 'all' && Number(s.clusterid || s.clusterId) !== Number(selectedClusterFilter)) {
       return false;
     }
@@ -270,9 +330,9 @@ export default function CustomersScreen({
                     setCurrentPage(1);
                   }}
                 >
-                  <option value="all">All clusters ({shops.length})</option>
-                  {clusters.map((c) => {
-                    const count = shops.filter((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)).length;
+                  <option value="all">All clusters ({localShops.length})</option>
+                  {availableClusters.map((c) => {
+                    const count = localShops.filter((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)).length;
                     return (
                       <option key={c.clusterId} value={String(c.clusterId)}>
                         {c.clusterName} ({count})
@@ -305,111 +365,156 @@ export default function CustomersScreen({
             </div>
           </div>
 
-          {/* Customer Cards Grid */}
-          <div className="customer-cards">
-            {paginatedShops.map((c) => (
-              <article key={c.shopid} className="customer-card">
-                <div className="customer-card-top">
-                  <span className="customer-dot">{initials(c.shopName)}</span>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <h3>{c.shopName}</h3>
-                      <span className="shop-code-pill">{formatShopId(c.shopid)}</span>
-                    </div>
-                    <small>ID: {c.shopid} · {c.shopCategory || 'Retail'}</small>
-                  </div>
-                </div>
-
-                <div className="customer-meta">
-                  <span>
-                    Contact{' '}
-                    <b>
-                      {c.contact1 ? (
-                        <a href={`tel:${c.contact1}`} className="text-[#12aee2] hover:underline">
-                          {c.contact1}
-                        </a>
-                      ) : (
-                        '—'
-                      )}
-                    </b>
-                  </span>
-                  <span>
-                    Owner <b>{c.ownerName || '—'}</b>
-                  </span>
-                  <span>
-                    Cluster <b>{clusters.find((cl) => Number(cl.clusterId) === Number(c.clusterid || c.clusterId))?.clusterName || (Number(c.clusterid) === 2 ? 'Thuthukudi' : 'Pollachi and Udumalapet')}</b>
-                  </span>
-                  <span>
-                    Payment <b>{Number(c.paymentmode) === 1 ? 'Cash' : 'Online'}</b>
-                  </span>
-                  <span>
-                    Area <b>{(c.address || '').split(',')[0] || 'Local Cluster'}</b>
-                  </span>
-                </div>
-
-                <div className="customer-card-foot">
-                  <span className="today-label">Pin: {c.pincode || '642100'}</span>
-                  <div className="customer-card-actions">
-                    {getGoogleMapsUrl(c) && (
-                      <a
-                        href={getGoogleMapsUrl(c)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="map-location-link"
-                        title={`View ${c.shopName} on Google Maps`}
-                      >
-                        <span className="map-pin-icon">📍</span>
-                        <span>Maps</span>
-                        <span className="external-arrow">↗</span>
-                      </a>
-                    )}
-                    <button
-                      className="new-order-action-btn"
-                      onClick={() => {
-                        if (onOrderForCustomer) onOrderForCustomer(c.shopName);
-                      }}
-                    >
-                      New order →
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-
-          {/* Pagination */}
-          <div className="table-footer mt-4">
-            <span>
-              Showing {filteredShops.length ? (currentPage - 1) * pageSize + 1 : 0}–
-              {Math.min(currentPage * pageSize, filteredShops.length)} of {filteredShops.length} stores
-            </span>
-            <div className="pagination">
-              <button
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              >
-                ‹
-              </button>
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                const pageNum = i + 1;
-                return (
-                  <button
-                    key={pageNum}
-                    className={currentPage === pageNum ? 'active' : ''}
-                    onClick={() => setCurrentPage(pageNum)}
-                  >
-                    {pageNum}
-                  </button>
-                );
-              })}
-              <button
-                disabled={currentPage >= totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              >
-                ›
-              </button>
+          {localShops.length === 0 ? (
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 m-4 shadow-sm">
+              <div className="text-4xl mb-3">🏪</div>
+              <h3 className="text-lg font-bold text-slate-800 mb-1">
+                {isAgent ? 'No Assigned Shops' : 'No Shops Available'}
+              </h3>
+              <p className="text-sm text-slate-500 max-w-sm mx-auto">
+                {isAgent
+                  ? 'You have no assigned shops yet. Please contact your manager or Admin to have customer stores assigned to your route.'
+                  : 'No customer stores found.'}
+              </p>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* Customer Cards Grid */}
+              <div className="customer-cards">
+                {paginatedShops.map((c) => (
+                  <article key={c.shopid} className="customer-card">
+                    <div className="customer-card-top">
+                      <span className="customer-dot">{initials(c.shopName)}</span>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <h3>{c.shopName}</h3>
+                          <span className="shop-code-pill">{formatShopId(c.shopid)}</span>
+                        </div>
+                        <small>ID: {c.shopid} · {c.shopCategory || 'Retail'}</small>
+                      </div>
+                    </div>
+
+                    <div className="customer-meta">
+                      <span>
+                        Contact{' '}
+                        <b>
+                          {c.contact1 ? (
+                            <a href={`tel:${c.contact1}`} className="text-[#12aee2] hover:underline">
+                              {c.contact1}
+                            </a>
+                          ) : (
+                            '—'
+                          )}
+                        </b>
+                      </span>
+                      <span>
+                        Owner <b>{c.ownerName || '—'}</b>
+                      </span>
+                      <span>
+                        Cluster <b>{clusters.find((cl) => Number(cl.clusterId) === Number(c.clusterid || c.clusterId))?.clusterName || (Number(c.clusterid) === 2 ? 'Thuthukudi' : 'Pollachi and Udumalapet')}</b>
+                      </span>
+                      <span>
+                        Payment <b>{Number(c.paymentmode) === 1 ? 'Cash' : 'Online'}</b>
+                      </span>
+                      <span>
+                        Area <b>{(c.address || '').split(',')[0] || 'Local Cluster'}</b>
+                      </span>
+                      <span>
+                        Assigned Agent{' '}
+                        <b>
+                          {assignableAgents.find((a) => Number(a.id) === Number(c.assignedAgentId || c.assigned_agent_id))?.name ||
+                           (c.assignedAgentId ? `Agent #${c.assignedAgentId}` : 'Unassigned')}
+                        </b>
+                      </span>
+                    </div>
+
+                    {canAssign && (
+                      <div className="customer-card-assignment mt-3 pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <label htmlFor={`assign-${c.shopid}`} className="text-[11px] font-semibold text-slate-500">
+                          Assign Agent:
+                        </label>
+                        <select
+                          id={`assign-${c.shopid}`}
+                          className="select text-xs py-1 px-2 border border-slate-200 rounded-lg max-w-[180px]"
+                          value={c.assignedAgentId || c.assigned_agent_id || ''}
+                          disabled={assigningShopId === c.shopid}
+                          onChange={(e) => handleAssignAgent(c.shopid, e.target.value)}
+                        >
+                          <option value="">Choose Agent</option>
+                          {assignableAgents.map((ag) => (
+                            <option key={ag.id} value={ag.id}>
+                              {ag.name} ({ag.employeeId || `ID: ${ag.id}`})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="customer-card-foot">
+                      <span className="today-label">Pin: {c.pincode || '642100'}</span>
+                      <div className="customer-card-actions">
+                        {getGoogleMapsUrl(c) && (
+                          <a
+                            href={getGoogleMapsUrl(c)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="map-location-link"
+                            title={`View ${c.shopName} on Google Maps`}
+                          >
+                            <span className="map-pin-icon">📍</span>
+                            <span>Maps</span>
+                            <span className="external-arrow">↗</span>
+                          </a>
+                        )}
+                        <button
+                          className="new-order-action-btn"
+                          onClick={() => {
+                            if (onOrderForCustomer) onOrderForCustomer(c.shopName);
+                          }}
+                        >
+                          New order →
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {/* Pagination */}
+              <div className="table-footer mt-4">
+                <span>
+                  Showing {filteredShops.length ? (currentPage - 1) * pageSize + 1 : 0}–
+                  {Math.min(currentPage * pageSize, filteredShops.length)} of {filteredShops.length} stores
+                </span>
+                <div className="pagination">
+                  <button
+                    disabled={currentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    ‹
+                  </button>
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const pageNum = i + 1;
+                    return (
+                      <button
+                        key={pageNum}
+                        className={currentPage === pageNum ? 'active' : ''}
+                        onClick={() => setCurrentPage(pageNum)}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                  <button
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    ›
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       ) : (
         /* --- VIEW B: ADD CUSTOMER FORM --- */

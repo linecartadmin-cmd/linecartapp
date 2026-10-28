@@ -272,14 +272,17 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
         style={{ width: '100%', maxWidth: '420px', marginTop: 'auto', marginBottom: 'auto', boxSizing: 'border-box' }}
       >
         {/* Brand */}
-        <div className="text-center mb-8">
-          <a className="inline-flex items-center gap-2.5 text-2xl font-extrabold text-[#17232c] tracking-tight no-underline font-['Manrope'] mb-2" href="#overview">
-            <img src="/lincart_flashicon.png" alt="Linecart" className="w-9 h-9 rounded-xl object-contain" />
-            <span>linecart<span className="text-[#12aee2]">.</span></span>
+        <div className="text-center mb-8 flex flex-col items-center">
+          <a className="inline-flex flex-col items-center gap-3 no-underline" href="#overview">
+            <img
+              src="/lincart_flashicon.png"
+              alt="LineCart"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-contain shadow-sm"
+            />
+            <span className="text-3xl font-extrabold text-[#17232c] tracking-tight font-['Manrope']">
+              LineCart<span className="text-[#12aee2]">.</span>
+            </span>
           </a>
-          <p className="text-xs text-slate-400 font-medium">
-            Wholesale agricultural route-to-market portal
-          </p>
         </div>
 
         {formError && (

@@ -386,6 +386,34 @@ export default function OrderEntryScreen({
     }
   };
 
+  // Only show clusters that contain shops assigned to this agent
+  const availableClusters = clusters.filter((c) =>
+    shops.some((s) => Number(s.clusterid) === Number(c.clusterId))
+  );
+
+  if (shops.length === 0) {
+    return (
+      <div className="order-entry-page p-6 max-w-xl mx-auto">
+        <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 shadow-sm mt-8">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-50 flex items-center justify-center text-3xl">
+            🏪
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">No Assigned Shops</h2>
+          <p className="text-sm text-slate-600 mb-6">
+            You currently have no customer shops assigned to your account. Please contact your manager or Admin to have customer stores assigned to your route.
+          </p>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => onNavigate ? onNavigate('overview') : window.location.reload()}
+          >
+            ← Return to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       {/* Page Heading */}
@@ -426,8 +454,8 @@ export default function OrderEntryScreen({
                   setSelectedShopId('');
                 }}
               >
-                <option value="all">All clusters ({shops.length} stores)</option>
-                {clusters.map((c) => {
+                <option value="all">All assigned routes ({shops.length} stores)</option>
+                {availableClusters.map((c) => {
                   const cnt = shops.filter((s) => Number(s.clusterid) === Number(c.clusterId)).length;
                   return (
                     <option key={c.clusterId} value={String(c.clusterId)}>

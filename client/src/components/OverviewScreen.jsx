@@ -134,13 +134,6 @@ export default function OverviewScreen({
           <h1>Good morning, {user?.name || 'Field Sales Agent'}</h1>
           <p>Here’s what’s happening with your wholesale produce orders today.</p>
         </div>
-
-        <button
-          className="primary-button"
-          onClick={() => onNavigate('orders')}
-        >
-          ＋ &nbsp;Create order
-        </button>
       </div>
 
       {/* Full-Width Cluster Filter Row Directly Below Introduction */}
@@ -160,19 +153,31 @@ export default function OverviewScreen({
             }}
             aria-label="Filter overview by cluster"
           >
-            <option value="all">All clusters ({shops.length} stores)</option>
-            {clusterOptions.map((c) => {
-              const count = shops.filter((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)).length;
-              return (
-                <option key={c.clusterId} value={String(c.clusterId)}>
-                  {c.clusterName} ({count} stores)
-                </option>
-              );
-            })}
+            <option value="all">All assigned routes ({shops.length} stores)</option>
+            {clusterOptions
+              .filter((c) => shops.some((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)))
+              .map((c) => {
+                const count = shops.filter((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)).length;
+                return (
+                  <option key={c.clusterId} value={String(c.clusterId)}>
+                    {c.clusterName} ({count} stores)
+                  </option>
+                );
+              })}
           </select>
           <span className="cluster-select-chevron">▾</span>
         </div>
       </div>
+
+      {shops.length === 0 && (
+        <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 mb-6 shadow-sm">
+          <div className="text-3xl mb-2">🏪</div>
+          <h2 className="text-base font-bold text-slate-800 mb-1">No Assigned Shops</h2>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            You have no assigned shops yet. Please contact your manager or Admin to have customer stores assigned to your route.
+          </p>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <section className="stats-grid">
@@ -219,77 +224,8 @@ export default function OverviewScreen({
         </article>
       </section>
 
-      {/* Overview Grid: Chart + Delivery Summary */}
-      <section className="overview-grid">
-        {/* Order Activity Trend */}
-        <article className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>Order activity</h2>
-              <p>Orders placed over the last 7 delivery cycles</p>
-            </div>
-            <div className="legend">
-              <span><i></i>Orders</span>
-              <span><i className="legend-two"></i>Delivered</span>
-            </div>
-          </div>
-
-          <div className="chart">
-            <div className="chart-grid">
-              <div className="grid-row"><span>20</span></div>
-              <div className="grid-row"><span>15</span></div>
-              <div className="grid-row"><span>10</span></div>
-              <div className="grid-row"><span>5</span></div>
-              <div className="grid-row"><span>0</span></div>
-            </div>
-            <svg viewBox="0 0 600 145" preserveAspectRatio="none" aria-label="Order activity chart">
-              <defs>
-                <linearGradient id="area-grad" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0" stopColor="#12aee2" stopOpacity="0.18" />
-                  <stop offset="1" stopColor="#12aee2" stopOpacity="0" />
-                </linearGradient>
-                <linearGradient id="area-grad-delivered" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0" stopColor="#526e7f" stopOpacity="0.08" />
-                  <stop offset="1" stopColor="#526e7f" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M0 112 C35 103 48 110 86 88 S142 72 172 84 S223 95 258 59 S309 65 344 51 S391 70 430 45 S489 28 514 46 S560 34 600 13 L600 145 L0 145 Z"
-                fill="url(#area-grad)"
-              />
-              <path
-                d="M0 128 C48 120 62 125 86 113 S143 100 172 107 S223 118 258 91 S309 100 344 80 S391 92 430 74 S489 63 514 78 S560 61 600 50 L600 145 L0 145 Z"
-                fill="url(#area-grad-delivered)"
-              />
-              <path
-                d="M0 112 C35 103 48 110 86 88 S142 72 172 84 S223 95 258 59 S309 65 344 51 S391 70 430 45 S489 28 514 46 S560 34 600 13"
-                fill="none"
-                stroke="#16acd5"
-                strokeWidth="3"
-                vectorEffect="non-scaling-stroke"
-                strokeLinecap="round"
-              />
-              <path
-                d="M0 128 C48 120 62 125 86 113 S143 100 172 107 S223 118 258 91 S309 100 344 80 S391 92 430 74 S489 63 514 78 S560 61 600 50"
-                fill="none"
-                stroke="#526e7f"
-                strokeWidth="2.5"
-                vectorEffect="non-scaling-stroke"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
-          <div className="chart-labels">
-            <span>18 Oct</span>
-            <span>19 Oct</span>
-            <span>20 Oct</span>
-            <span>21 Oct</span>
-            <span>22 Oct</span>
-            <span>23 Oct</span>
-            <span>24 Oct</span>
-          </div>
-        </article>
-
+      {/* Delivery Summary Panel */}
+      <section className="overview-grid" style={{ gridTemplateColumns: '1fr' }}>
         {/* Delivery Summary */}
         <article className="panel">
           <div className="panel-head">

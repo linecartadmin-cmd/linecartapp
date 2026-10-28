@@ -19,7 +19,12 @@ import {
 const ENV_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
   ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
   : '';
-const BASE_URL = ENV_API_URL || (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:3001' : '');
+const isCapacitorNative = typeof window !== 'undefined' && (
+  (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) ||
+  window.location.protocol === 'capacitor:' ||
+  (window.location.hostname === 'localhost' && window.location.port === '')
+);
+const BASE_URL = ENV_API_URL || (isCapacitorNative ? 'https://linecart-staging.onrender.com' : (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:3001' : ''));
 
 export const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
 
@@ -230,6 +235,35 @@ export const api = {
         }
       }
       return { status: 500, message: err.message, orders: [] };
+    }
+  },
+
+  // 4b. GET /api/shops (Scoped shop list with assigned agents)
+  async getShops() {
+    try {
+      const res = await fetch(`${BASE_URL}/api/shops`, {
+        headers: { ...getAuthHeaders() }
+      });
+      return await res.json();
+    } catch (err) {
+      return { status: 500, shops: [], message: err.message };
+    }
+  },
+
+  // 4c. PUT /api/shops/:shopId/assign (Assign shop to Field Sales Agent - Admin & Sales Manager)
+  async assignShopAgent(shopId, agentId) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/assign`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({ agentId })
+      });
+      return await res.json();
+    } catch (err) {
+      return { status: 500, message: err.message };
     }
   },
 

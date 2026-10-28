@@ -13,6 +13,9 @@ export default function SummaryReportScreen({
   const [agentsList, setAgentsList] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('all');
   const [loading, setLoading] = useState(false);
+  const [rawOrders, setRawOrders] = useState([]);
+
+  const money = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
   const todayStr = new Date().toLocaleDateString('en-GB', {
     day: '2-digit',
@@ -56,14 +59,19 @@ export default function SummaryReportScreen({
       toDate: toDate || undefined
     };
 
-    api
-      .getHomeReport(params)
-      .then((res) => {
-        if ((res?.status === 200 || res?.status === 1) && res?.result?.clusterList) {
-          const list = res.result.clusterList;
-          setClustersList(list);
+    Promise.all([
+      api.getHomeReport(params),
+      api.getOrders()
+    ])
+      .then(([reportRes, ordersRes]) => {
+        if ((reportRes?.status === 200 || reportRes?.status === 1) && reportRes?.result?.clusterList) {
+          setClustersList(reportRes.result.clusterList);
         } else {
           showToast('Failed to load cluster reports');
+        }
+
+        if (ordersRes && ordersRes.status === 200 && Array.isArray(ordersRes.orders)) {
+          setRawOrders(ordersRes.orders);
         }
       })
       .catch(() => {
@@ -82,12 +90,32 @@ export default function SummaryReportScreen({
     ? clustersList.find((c) => Number(c.clusterId) === Number(selectedClusterId)) || clustersList[0] || null
     : null;
 
+  // Filter live orders based on toolbar controls
+  const filteredOrders = rawOrders.filter((o) => {
+    if (selectedClusterId !== 'all' && Number(o.clusterId) !== Number(selectedClusterId)) return false;
+    if (selectedAgentId !== 'all' && Number(o.spersonid) !== Number(selectedAgentId)) return false;
+    if (role === 'field sales agent' && Number(o.spersonid) !== Number(user?.id)) return false;
+    if (fromDate && (o.date || '').slice(0, 10) < fromDate) return false;
+    if (toDate && (o.date || '').slice(0, 10) > toDate) return false;
+    return true;
+  });
+
+  // Calculate live order metrics
+  const activeOrders = filteredOrders.filter((o) => {
+    const st = String(o.status || '').toLowerCase();
+    return st !== 'delivered' && st !== 'cancelled';
+  });
+  const activeOrdersCount = activeOrders.length;
+  const deliveredOrdersCount = filteredOrders.filter((o) => String(o.status || '').toLowerCase() === 'delivered').length;
+  const totalRevenue = filteredOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+
   // Compute stats for all clusters or single selected cluster
   let totalShops = 0;
   let totalOrdered = 0;
   let totalNotOrdered = 0;
   let deliveryStatusList = [];
   let orderItemStatusList = [];
+  let shopsByCategoryMap = new Map();
 
   if (isAllClusters) {
     clustersList.forEach((c) => {
@@ -95,6 +123,12 @@ export default function SummaryReportScreen({
       totalShops += Number(s.totalshops ?? c.totalshops ?? 0);
       totalOrdered += Number(s.totalorderedshops ?? c.totalorderedshops ?? 0);
       totalNotOrdered += Number(s.totalnotorderedshops ?? c.totalnotorderedshops ?? 0);
+
+      const cats = c.shopsByCategory || [];
+      cats.forEach((catObj) => {
+        const current = shopsByCategoryMap.get(catObj.category) || 0;
+        shopsByCategoryMap.set(catObj.category, current + Number(catObj.count || 0));
+      });
     });
 
     const delivMap = new Map();
@@ -132,7 +166,76 @@ export default function SummaryReportScreen({
     totalNotOrdered = shopStatus.totalnotorderedshops ?? activeCluster?.totalnotorderedshops ?? 0;
     deliveryStatusList = activeCluster?.deliverystatus || activeCluster?.delivery_status || [];
     orderItemStatusList = activeCluster?.order_item_status || [];
+
+    const cats = activeCluster?.shopsByCategory || [];
+    cats.forEach((catObj) => {
+      shopsByCategoryMap.set(catObj.category, Number(catObj.count || 0));
+    });
   }
+
+  const shopsByCategoryList = Array.from(shopsByCategoryMap.entries()).map(([category, count]) => ({
+    category,
+    count
+  }));
+
+  // Group live orders by shop category/type
+  const ordersByCategoryMap = new Map();
+  filteredOrders.forEach((o) => {
+    const cat = o.shopCategory || 'Retail';
+    if (!ordersByCategoryMap.has(cat)) {
+      ordersByCategoryMap.set(cat, {
+        category: cat,
+        orderCount: 0,
+        totalQtyKg: 0,
+        totalAmount: 0
+      });
+    }
+    const entry = ordersByCategoryMap.get(cat);
+    entry.orderCount += 1;
+    entry.totalAmount += Number(o.total || 0);
+    const lines = Array.isArray(o.orderList) ? o.orderList : [];
+    lines.forEach((it) => {
+      entry.totalQtyKg += parseFloat(it.qty || 0) || 0;
+    });
+  });
+  const ordersByCategoryList = Array.from(ordersByCategoryMap.values());
+
+  // Detailed orders by shop, item, and quantity in kilograms
+  const detailedOrderLines = [];
+  filteredOrders.forEach((o) => {
+    const lines = Array.isArray(o.orderList) ? o.orderList : [];
+    if (lines.length === 0) {
+      detailedOrderLines.push({
+        lineKey: `${o.orderId || o.id}-none`,
+        orderId: o.orderId || o.id,
+        date: o.date || '—',
+        shopName: o.customer || o.shopName || 'Customer Store',
+        shopCategory: o.shopCategory || 'Retail',
+        itemName: 'General Replenishment',
+        qtyKg: 0,
+        unitPrice: 0,
+        lineTotal: Number(o.total || 0),
+        status: o.status || 'Active'
+      });
+    } else {
+      lines.forEach((it, idx) => {
+        const qty = parseFloat(it.qty || 0) || 0;
+        const price = parseFloat(it.price || 0) || 0;
+        detailedOrderLines.push({
+          lineKey: `${o.orderId || o.id}-${it.itemid || idx}`,
+          orderId: o.orderId || o.id,
+          date: o.date || '—',
+          shopName: o.customer || o.shopName || 'Customer Store',
+          shopCategory: o.shopCategory || 'Retail',
+          itemName: it.itemName || it.name || `Item ${it.itemid}`,
+          qtyKg: qty,
+          unitPrice: price,
+          lineTotal: qty * price || Number(o.total || 0),
+          status: o.status || 'Active'
+        });
+      });
+    }
+  });
 
   return (
     <div className="summary-report-page">
@@ -234,7 +337,7 @@ export default function SummaryReportScreen({
         </div>
       </div>
 
-      {/* 4 Shop Status KPI Cards (Reading from order_shop_status) */}
+      {/* 4 Shop & Order Status KPI Cards (Derived strictly from live persisted data) */}
       <section className="stats-grid">
         <article className="stat-card">
           <div className="stat-top">
@@ -247,35 +350,209 @@ export default function SummaryReportScreen({
 
         <article className="stat-card">
           <div className="stat-top">
-            <span>Number Of Ordered Shops</span>
+            <span>Active / Running Orders</span>
+            <span className="stat-icon green">⚡</span>
+          </div>
+          <div className="stat-value">{activeOrdersCount}</div>
+          <div className="stat-foot">
+            <span className="up">In-flight</span> active route orders
+          </div>
+        </article>
+
+        <article className="stat-card">
+          <div className="stat-top">
+            <span>Delivered Orders</span>
             <span className="stat-icon green">✓</span>
           </div>
-          <div className="stat-value">{totalOrdered}</div>
-          <div className="stat-foot">
-            <span className="up">Active</span> replenishment orders placed
-          </div>
+          <div className="stat-value">{deliveredOrdersCount}</div>
+          <div className="stat-foot">Successfully fulfilled orders</div>
         </article>
 
         <article className="stat-card">
           <div className="stat-top">
-            <span>Number Of Not Ordered Shops</span>
-            <span className="stat-icon yellow">◷</span>
+            <span>Live Order Value</span>
+            <span className="stat-icon purple">₹</span>
           </div>
-          <div className="stat-value">{totalNotOrdered}</div>
-          <div className="stat-foot">Visited / pending store order</div>
-        </article>
-
-        <article className="stat-card">
-          <div className="stat-top">
-            <span>Number Of Sops Not Connected</span>
-            <span className="stat-icon purple">♙</span>
-          </div>
-          <div className="stat-value">{totalNotOrdered}</div>
-          <div className="stat-foot">Requires sales officer follow-up</div>
+          <div className="stat-value">{money(totalRevenue)}</div>
+          <div className="stat-foot">Filtered active order total</div>
         </article>
       </section>
 
-      {/* Two Data Panels */}
+      {/* "Shops by Category" Breakdown Section */}
+      <section className="mb-6 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-800">Shops by category</h2>
+            <p className="text-xs text-slate-500">Distribution of registered customer stores across commercial retail formats</p>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full">
+            {totalShops} Total Stores
+          </span>
+        </div>
+
+        {shopsByCategoryList.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            {shopsByCategoryList.map((catItem) => (
+              <div
+                key={catItem.category}
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex flex-col items-start justify-between"
+              >
+                <span className="text-xs font-medium text-slate-600 mb-1">{catItem.category}</span>
+                <div className="flex items-baseline gap-1">
+                  <strong className="text-xl font-extrabold text-[#17232c]">{catItem.count}</strong>
+                  <span className="text-[11px] text-slate-400">
+                    ({totalShops > 0 ? Math.round((catItem.count / totalShops) * 100) : 0}%)
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state text-xs text-slate-400 p-4 text-center">
+            No shop category breakdown available for the selected route.
+          </div>
+        )}
+      </section>
+
+      {/* "Orders by Shop Category / Type" Table */}
+      <section className="table-panel summary-table-card mb-6">
+        <div className="table-heading">
+          <div>
+            <h2>Orders by shop category/type</h2>
+            <span className="recent-count">Aggregated replenishment volume grouped by customer format</span>
+          </div>
+        </div>
+
+        <div className="summary-table-scroll">
+          <table className="data-table summary-orders-table">
+            <thead>
+              <tr>
+                <th>Shop Category / Format</th>
+                <th>Orders Count</th>
+                <th>Total Quantity (Kg)</th>
+                <th>Total Value (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ordersByCategoryList.length > 0 ? (
+                ordersByCategoryList.map((row) => (
+                  <tr key={row.category}>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <span className="stat-icon blue text-xs">🏪</span>
+                        <strong>{row.category}</strong>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="text-sm font-bold text-slate-800">
+                        {row.orderCount} {row.orderCount === 1 ? 'order' : 'orders'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-sm font-semibold text-slate-700">
+                        {row.totalQtyKg.toLocaleString('en-IN')} kg
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-sm font-bold text-[#12aee2]">
+                        {money(row.totalAmount)}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="4">
+                    <div className="empty-state">No orders found for the selected route and period.</div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Orders by Shop, Item, and Quantity in Kilograms Table */}
+      <section className="table-panel summary-table-card mb-6">
+        <div className="table-heading">
+          <div>
+            <h2>Orders by shop, item, and quantity in kilograms</h2>
+            <span className="recent-count">Live itemized line items from persisted order records</span>
+          </div>
+        </div>
+
+        <div className="summary-table-scroll">
+          <table className="data-table summary-delivery-table">
+            <thead>
+              <tr>
+                <th>Order Ref</th>
+                <th>Date</th>
+                <th>Customer / Shop</th>
+                <th>Category</th>
+                <th>Commodity Item</th>
+                <th>Quantity (Kg)</th>
+                <th>Rate / Total</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detailedOrderLines.length > 0 ? (
+                detailedOrderLines.map((line) => {
+                  const statusClass = (line.status || 'active').toLowerCase().replace(/\s+/g, '-');
+                  return (
+                    <tr key={line.lineKey}>
+                      <td>
+                        <strong className="text-xs text-slate-800">{line.orderId}</strong>
+                      </td>
+                      <td className="text-xs text-slate-500 whitespace-nowrap">{line.date}</td>
+                      <td>
+                        <strong>{line.shopName}</strong>
+                      </td>
+                      <td>
+                        <span className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-600 font-medium">
+                          {line.shopCategory}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <span className="stat-icon green text-xs">🥬</span>
+                          <span className="font-semibold text-slate-800">{line.itemName}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="text-sm font-bold text-slate-900">
+                          {line.qtyKg} kg
+                        </span>
+                      </td>
+                      <td>
+                        <div className="flex flex-col">
+                          <strong className="text-xs text-slate-900">{money(line.lineTotal)}</strong>
+                          {line.unitPrice > 0 && (
+                            <small className="text-[10px] text-slate-400">@ {money(line.unitPrice)}/kg</small>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`status ${statusClass}`}>
+                          {line.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan="8">
+                    <div className="empty-state">No order line items match the selected filters.</div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Two Auxiliary Commodity Summary Panels (Fulfillment Progress & Aggregated Commodity Orders) */}
       <div className="summary-tables-grid">
         {/* Panel 1: Delivery Status Summary */}
         <section className="table-panel summary-table-card">
@@ -291,7 +568,7 @@ export default function SummaryReportScreen({
               <thead>
                 <tr>
                   <th>Item Name</th>
-                  <th>Total Units</th>
+                  <th>Total Units (Kg)</th>
                   <th>Delivered</th>
                   <th>Inprogress</th>
                   <th>Fulfillment</th>
@@ -311,12 +588,12 @@ export default function SummaryReportScreen({
                         <td>
                           <strong>{row.name}</strong>
                         </td>
-                        <td><b>{total}</b></td>
+                        <td><b>{total} kg</b></td>
                         <td>
-                          <span className="status delivered">{delivered}</span>
+                          <span className="status delivered">{delivered} kg</span>
                         </td>
                         <td>
-                          <span className="status in-progress">{inprogress}</span>
+                          <span className="status in-progress">{inprogress} kg</span>
                         </td>
                         <td>
                           <div className="flex items-center gap-2">
@@ -358,7 +635,7 @@ export default function SummaryReportScreen({
               <thead>
                 <tr>
                   <th>Commodity Name</th>
-                  <th>Total Order Count</th>
+                  <th>Total Quantity</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -377,7 +654,7 @@ export default function SummaryReportScreen({
                         </td>
                         <td>
                           <span className="text-sm font-bold text-slate-800">
-                            {item.totalcount} units
+                            {item.totalcount} kg
                           </span>
                         </td>
                         <td>

@@ -388,6 +388,48 @@ export async function runMigrationsAndSeed({
     }
   }
 
+  // Ensure shops table has assigned_agent_id column and migration 004
+  if (db.mode === 'postgres') {
+    await db.execRaw(`
+      ALTER TABLE shops ADD COLUMN IF NOT EXISTS assigned_agent_id INTEGER;
+      CREATE INDEX IF NOT EXISTS idx_shops_assigned_agent ON shops(assigned_agent_id);
+    `);
+  } else {
+    try {
+      const shopTableInfo = await db.query("PRAGMA table_info('shops')");
+      const shopCols = new Set(shopTableInfo.rows.map((r) => r.name));
+      if (!shopCols.has('assigned_agent_id')) {
+        await db.execRaw('ALTER TABLE shops ADD COLUMN assigned_agent_id INTEGER;');
+      }
+      await db.execRaw('CREATE INDEX IF NOT EXISTS idx_shops_assigned_agent ON shops(assigned_agent_id);');
+    } catch (shopErr) {
+      console.warn('[DB Migration] Could not verify/add assigned_agent_id column in SQLite:', shopErr.message);
+    }
+  }
+
+  const mig4File = path.join(__dirname, 'migrations', '004_shop_agent_assignments.sql');
+  if (fs.existsSync(mig4File)) {
+    const mig4Check = await db.query(
+      'SELECT version FROM schema_migrations WHERE version = $1',
+      ['004_shop_agent_assignments']
+    );
+    if (mig4Check.rowCount === 0) {
+      await db.query(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)',
+        ['004_shop_agent_assignments', new Date().toISOString()]
+      );
+      console.log('[DB Migration] Applied 004_shop_agent_assignments.sql');
+    }
+  }
+
+  // Preserve existing data: ensure real order S101-24019 shop (shop 101) is assigned to agent 1
+  try {
+    await db.query('UPDATE shops SET assigned_agent_id = 1 WHERE shop_id = 101 AND (assigned_agent_id IS NULL OR assigned_agent_id = 0)');
+    await db.query('UPDATE shops SET assigned_agent_id = created_by WHERE assigned_agent_id IS NULL AND created_by IS NOT NULL');
+  } catch (initErr) {
+    console.warn('[DB Migration] Could not initialize assigned_agent_id default:', initErr.message);
+  }
+
   // Load legacy admin_config.json if present for one-time repeatable migration
   let legacyConfig = {};
   if (legacyAdminConfigPath && fs.existsSync(legacyAdminConfigPath)) {
@@ -854,6 +896,12 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       pincode: r.pincode || '',
       paymentmode: Number(r.payment_mode || 0),
       createdby: Number(r.created_by || 6),
+      assignedAgentId: r.assigned_agent_id !== null && r.assigned_agent_id !== undefined
+        ? Number(r.assigned_agent_id)
+        : (r.created_by ? Number(r.created_by) : null),
+      assigned_agent_id: r.assigned_agent_id !== null && r.assigned_agent_id !== undefined
+        ? Number(r.assigned_agent_id)
+        : (r.created_by ? Number(r.created_by) : null),
       photo: r.photo || 'no_image.jpg',
       active: Number(r.active ?? 1),
       createdon: r.created_on || '2026-04-01 10:00:00',
