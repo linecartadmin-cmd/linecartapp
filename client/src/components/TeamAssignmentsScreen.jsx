@@ -125,7 +125,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
   // Filtered agents (Admins view allAgents with assignment toggles; Managers view assignedAgents read-only)
   const rosterSource = isUserAdmin ? allAgents : assignedAgents;
   const displayedAgents = rosterSource.filter((agent) => {
-    if (filterCluster !== 'all' && Number(agent.clusterid) !== Number(filterCluster)) return false;
+    if (filterCluster !== 'all' && Number(agent.clusterid || agent.clusterId) !== Number(filterCluster)) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       const matchName = (agent.name || '').toLowerCase().includes(q);
@@ -393,7 +393,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
                         <td style={{ padding: '10px', color: '#334155' }}>{agent.phone || '—'}</td>
                         <td style={{ padding: '10px' }}>
                           <span className="cluster-tag" style={{ background: '#f1f5f9', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', color: '#475569' }}>
-                            {getClusterName(agent.clusterid)}
+                            {getClusterName(agent.clusterid || agent.clusterId)}
                           </span>
                         </td>
                         <td style={{ padding: '10px' }}>

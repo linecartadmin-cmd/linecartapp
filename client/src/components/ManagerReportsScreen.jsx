@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../api';
 
 export default function ManagerReportsScreen({
@@ -574,7 +574,7 @@ export default function ManagerReportsScreen({
                   <p style={{ margin: '0 0 10px 0', fontSize: '11px', color: '#78350f', lineHeight: 1.4 }}>
                     {assignedAgents.length > 0
                       ? 'You have team members assigned (Delivery operations), but sales quota targets can only be configured for active Field Sales Agents. Please request an Administrator to assign Field Sales Agents to your team.'
-                      : 'Your sales manager account currently has no Field Sales Agents assigned to your team. Please assign agents to your team first before configuring quotas.'}
+                      : 'Your sales manager account currently has no Field Sales Agents assigned to your team. Please contact a LineCart Administrator to assign Field Sales Agents to your team before configuring quotas.'}
                   </p>
                   <button
                     type="button"
