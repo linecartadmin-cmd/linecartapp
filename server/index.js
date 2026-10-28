@@ -488,23 +488,18 @@ const authorizeManagerAccess = (req, res, requestedManagerId) => {
 
   const callerRole = (caller.role || '').toLowerCase();
   if (callerRole === 'admin') {
-    const effectiveId = requestedManagerId && requestedManagerId !== 'all'
+    let effectiveId = requestedManagerId && requestedManagerId !== 'all'
       ? Number(requestedManagerId)
-      : 100;
+      : null;
+    if (!effectiveId) {
+      const firstManager = salesPersons.find((s) => (s.role || '').toLowerCase() === 'sales manager');
+      effectiveId = firstManager ? Number(firstManager.id) : 100;
+    }
     return { authorized: true, caller, effectiveManagerId: effectiveId };
   }
 
   if (callerRole === 'sales manager') {
-    if (requestedManagerId !== undefined && requestedManagerId !== null && requestedManagerId !== '' && requestedManagerId !== 'all') {
-      const targetId = Number(requestedManagerId);
-      if (targetId !== Number(caller.id)) {
-        res.status(403).json({
-          status: 403,
-          message: `Access Denied: Sales Managers cannot view or modify data for another manager (Caller ID: ${caller.id}, Requested ID: ${targetId}).`
-        });
-        return { authorized: false };
-      }
-    }
+    // Sales Managers always access their own assigned team, irrespective of requestedManagerId
     return { authorized: true, caller, effectiveManagerId: Number(caller.id) };
   }
 
@@ -4247,6 +4242,14 @@ app.post('/api/manager/assignments', requireAdmin, async (req, res) => {
     return res.status(400).json({ status: 400, message: 'Missing target managerId.' });
   }
 
+  const targetManager = salesPersons.find((u) => Number(u.id) === targetManagerId);
+  if (!targetManager || (targetManager.role || '').toLowerCase() !== 'sales manager') {
+    return res.status(400).json({
+      status: 400,
+      message: `Invalid target manager: User #${targetManagerId} is not an active Sales Manager.`
+    });
+  }
+
   const agentIds = Array.isArray(req.body?.agentIds) ? req.body.agentIds.map(Number) : [];
 
   await db.withTransaction(async (tx) => {
@@ -4271,6 +4274,26 @@ app.post('/api/manager/assignments', requireAdmin, async (req, res) => {
     message: 'Assignments updated successfully by Administrator',
     managerId: targetManagerId,
     assignedAgentIds: agentIds,
+    assignedAgents
+  });
+});
+
+app.get(['/api/manager/assigned-agents', '/api/manager/:managerId/assigned-agents'], async (req, res) => {
+  await refreshStateFromDb();
+  const reqManagerId = req.params.managerId || req.query.managerId || req.query.spersonId;
+  const auth = authorizeManagerAccess(req, res, reqManagerId);
+  if (!auth.authorized) return;
+
+  const managerId = auth.effectiveManagerId;
+  const assignedAgentIds = getAssignedAgentIds(managerId);
+  const assignedAgents = salesPersons
+    .filter((s) => assignedAgentIds.includes(Number(s.id)))
+    .map(({ passwordHash, ...rest }) => rest);
+
+  res.json({
+    status: 200,
+    managerId,
+    agents: assignedAgents,
     assignedAgents
   });
 });

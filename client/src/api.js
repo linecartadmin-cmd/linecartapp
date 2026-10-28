@@ -318,10 +318,22 @@ export const api = {
 
   // 7. Sales Manager APIs (Scoped to assigned agents)
   async getManagerAssignments(managerId) {
-    const res = await fetch(`${BASE_URL}/api/manager/assignments?managerId=${encodeURIComponent(managerId || 100)}`, {
+    const q = (managerId !== undefined && managerId !== null && managerId !== '')
+      ? `?managerId=${encodeURIComponent(managerId)}`
+      : '';
+    const res = await fetch(`${BASE_URL}/api/manager/assignments${q}`, {
       headers: { ...getAuthHeaders() }
     });
     return res.json();
+  },
+
+  async getManagerAssignedAgents(managerId) {
+    const res = await this.getManagerAssignments(managerId);
+    return {
+      status: res?.status || 200,
+      agents: res?.assignedAgents || [],
+      assignedAgents: res?.assignedAgents || []
+    };
   },
 
   async updateManagerAssignments(managerId, agentIds) {

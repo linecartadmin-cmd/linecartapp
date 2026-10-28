@@ -12,14 +12,16 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
 
   // Admin controls
   const [allManagers, setAllManagers] = useState([]);
-  const [adminSelectedManagerId, setAdminSelectedManagerId] = useState(user?.id || 100);
-
   const isUserAdmin = (user?.role || '').toLowerCase() === 'admin';
-  const effectiveManagerId = isUserAdmin ? adminSelectedManagerId : (user?.id || 100);
+  const [adminSelectedManagerId, setAdminSelectedManagerId] = useState(null);
+
+  const effectiveManagerId = isUserAdmin
+    ? (adminSelectedManagerId || (allManagers[0]?.id ? Number(allManagers[0].id) : null))
+    : Number(user?.id);
 
   // Load assignments
   const loadAssignments = (targetManagerId = effectiveManagerId) => {
-    if (!user || !user.id) return;
+    if (!targetManagerId) return;
     setLoading(true);
     api.getManagerAssignments(targetManagerId)
       .then((res) => {
@@ -38,10 +40,6 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    loadAssignments(effectiveManagerId);
-  }, [user?.id, effectiveManagerId]);
-
   // Load managers list if admin
   useEffect(() => {
     if (isUserAdmin) {
@@ -50,11 +48,23 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
           if (res && res.users) {
             const managers = res.users.filter((u) => (u.role || '').toLowerCase() === 'sales manager');
             setAllManagers(managers);
+            if (managers.length > 0) {
+              setAdminSelectedManagerId((prev) => {
+                if (prev && managers.some((m) => Number(m.id) === Number(prev))) return prev;
+                return Number(managers[0].id);
+              });
+            }
           }
         })
         .catch(() => {});
     }
   }, [isUserAdmin]);
+
+  useEffect(() => {
+    if (effectiveManagerId) {
+      loadAssignments(effectiveManagerId);
+    }
+  }, [user?.id, effectiveManagerId]);
 
   // Admin-only toggle agent assignment
   const handleToggleAgent = (agentId) => {
@@ -73,6 +83,10 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
   const handleSaveAssignments = () => {
     if (!isUserAdmin) {
       if (showToast) showToast('Forbidden: Only administrators can modify team assignments.');
+      return;
+    }
+    if (!adminSelectedManagerId) {
+      if (showToast) showToast('Please select a manager to configure.');
       return;
     }
     setSaving(true);
@@ -100,6 +114,14 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
     return match ? (match.clusterName || `Cluster ${match.clusterId}`) : `Cluster ${clusterId || 1}`;
   };
 
+  // Currently configured manager profile
+  const currentManager = isUserAdmin
+    ? (allManagers.find((m) => Number(m.id) === Number(effectiveManagerId)) || allManagers[0] || { name: 'Regional Manager', role: 'Sales Manager', phone: '—', id: effectiveManagerId })
+    : user;
+
+  const assignedSalesAgents = assignedAgents.filter((a) => (a.role || '').toLowerCase() === 'field sales agent');
+  const assignedDeliveryAgents = assignedAgents.filter((a) => (a.role || '').toLowerCase() === 'delivery agent');
+
   // Filtered agents (Admins view allAgents with assignment toggles; Managers view assignedAgents read-only)
   const rosterSource = isUserAdmin ? allAgents : assignedAgents;
   const displayedAgents = rosterSource.filter((agent) => {
@@ -109,7 +131,8 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
       const matchName = (agent.name || '').toLowerCase().includes(q);
       const matchPhone = (agent.phone || '').includes(q);
       const matchId = String(agent.id).includes(q);
-      if (!matchName && !matchPhone && !matchId) return false;
+      const matchRole = (agent.role || '').toLowerCase().includes(q);
+      if (!matchName && !matchPhone && !matchId && !matchRole) return false;
     }
     return true;
   });
@@ -181,17 +204,17 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
       <div className="card manager-meta-card" style={{ padding: '1rem', background: '#fff', borderRadius: '12px', border: '1px solid #edf0f2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div className="meta-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div className="avatar-large" style={{ width: '44px', height: '44px', borderRadius: '50%', background: '#dbeafe', color: '#1e40af', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: '1.1rem' }}>
-            {((user?.name) || 'M').charAt(0).toUpperCase()}
+            {((currentManager?.name) || 'M').charAt(0).toUpperCase()}
           </div>
           <div className="meta-info">
             <span className="badge-manager" style={{ fontSize: '11px', background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '6px', fontWeight: 700 }}>
-              {user?.role || 'Sales Manager'}
+              {currentManager?.role || 'Sales Manager'}
             </span>
-            <h2 className="manager-title-name" style={{ margin: '4px 0 2px 0', fontSize: '1.1rem', fontWeight: 700 }}>{user?.name || 'Manager'}</h2>
+            <h2 className="manager-title-name" style={{ margin: '4px 0 2px 0', fontSize: '1.1rem', fontWeight: 700 }}>{currentManager?.name || 'Regional Manager'}</h2>
             <div className="meta-row muted-text" style={{ fontSize: '12px', color: '#64748b' }}>
-              <span>📞 {user?.phone || '—'}</span>
+              <span>📞 {currentManager?.phone || '—'}</span>
               <span style={{ margin: '0 4px' }}>·</span>
-              <span>ID: #{user?.id || 100}</span>
+              <span>ID: #{currentManager?.id || effectiveManagerId}</span>
             </div>
           </div>
         </div>
@@ -199,22 +222,30 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
         <div className="meta-right-stat" style={{ textAlign: 'right' }}>
           <div className="supervision-count">
             <span className="count-number" style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0f172a' }}>{assignedAgentIds.length}</span>
-            <span className="count-label" style={{ fontSize: '12px', color: '#64748b', marginLeft: '6px' }}>Assigned Agents</span>
+            <span className="count-label" style={{ fontSize: '12px', color: '#64748b', marginLeft: '6px' }}>Assigned Members</span>
           </div>
-          <small className="muted-text" style={{ fontSize: '11px', color: '#94a3b8' }}>
-            {assignedAgentIds.length === 0 ? 'No agents currently mapped' : 'Active team members'}
-          </small>
+          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: '4px' }}>
+            <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '4px', background: '#e0f2fe', color: '#0369a1', fontWeight: 600 }}>
+              {assignedSalesAgents.length} Sales
+            </span>
+            {assignedDeliveryAgents.length > 0 && (
+              <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '4px', background: '#fef3c7', color: '#92400e', fontWeight: 600 }}>
+                {assignedDeliveryAgents.length} Delivery
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Empty State Banner if no agents assigned yet */}
+      {/* Empty State Banner if no team members assigned yet */}
       {assignedAgentIds.length === 0 && !loading && (
         <div className="card" style={{ padding: '1.5rem', background: '#eff6ff', borderColor: '#bfdbfe', borderRadius: '12px', textAlign: 'center' }}>
           <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '0.5rem' }}>📋</span>
-          <h3 style={{ margin: '0 0 0.5rem 0', color: '#1e40af', fontSize: '1.1rem' }}>No Sales Agents Assigned Yet</h3>
+          <h3 style={{ margin: '0 0 0.5rem 0', color: '#1e40af', fontSize: '1.1rem' }}>No Team Members Assigned Yet</h3>
           <p style={{ color: '#1e3a8a', maxWidth: '480px', margin: '0 auto', fontSize: '0.875rem', lineHeight: 1.5 }}>
-            Your sales manager account does not currently have any Field Sales Agents mapped to your team.
-            Please contact a <strong>LineCart Administrator</strong> to assign field representatives to your regional supervision.
+            {isUserAdmin
+              ? 'This sales manager currently has no representatives mapped to their regional supervision. Check agents in the roster below and click Save.'
+              : 'Your sales manager account does not currently have any representatives mapped to your team. Please contact a LineCart Administrator to assign field sales or delivery representatives to your regional supervision.'}
           </p>
         </div>
       )}
@@ -225,12 +256,12 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
           <div className="team-list-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>
-                {isUserAdmin ? 'Assign Field Sales Agents' : 'Assigned Sales Team Representatives'}
+                {isUserAdmin ? 'Assign Team Members' : 'Assigned Regional Team'}
               </h3>
               <p className="muted-text" style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.8rem' }}>
                 {isUserAdmin
-                  ? 'Check the boxes to link field sales agents to this manager. Changes take effect across all team reports and quota configurations.'
-                  : 'Performance reports, order pipelines, and monthly sales quota targets are strictly scoped to these assigned representatives.'}
+                  ? 'Check the boxes to map field sales agents and delivery operations to this manager.'
+                  : 'Assigned team members reporting to your regional supervision. Quotas and sales performance apply strictly to Field Sales Agents.'}
               </p>
             </div>
 
@@ -261,7 +292,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
             <input
               type="text"
               className="filter-input"
-              placeholder="Search agent by name, phone, or ID..."
+              placeholder="Search member by name, phone, ID, or role..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ flex: 1, minWidth: '180px', height: '34px', fontSize: '12px', padding: '0 10px', border: '1px solid #cbd5e1', borderRadius: '6px' }}
@@ -288,9 +319,9 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
           ) : displayedAgents.length === 0 ? (
             <div className="empty-state" style={{ padding: '2rem 1rem', textAlign: 'center' }}>
               <span style={{ fontSize: '2rem', display: 'block', marginBottom: '0.5rem' }}>👥</span>
-              <h3 style={{ margin: '0 0 0.5rem 0', color: '#0f172a', fontSize: '1rem' }}>No Agents Match Filter</h3>
+              <h3 style={{ margin: '0 0 0.5rem 0', color: '#0f172a', fontSize: '1rem' }}>No Members Match Filter</h3>
               <p style={{ color: '#64748b', maxWidth: '420px', margin: '0 auto', fontSize: '0.825rem' }}>
-                No sales representatives match your current search or cluster filter.
+                No team representatives match your current search or cluster filter.
               </p>
             </div>
           ) : (
@@ -299,7 +330,8 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
                 <thead>
                   <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#64748b', fontSize: '11px', textTransform: 'uppercase' }}>
                     {isUserAdmin && <th style={{ width: '48px', textAlign: 'center', padding: '8px 4px' }}>Assign</th>}
-                    <th style={{ padding: '8px 10px' }}>Agent Name</th>
+                    <th style={{ padding: '8px 10px' }}>Member Name</th>
+                    <th style={{ padding: '8px 10px' }}>Role</th>
                     <th style={{ padding: '8px 10px' }}>ID</th>
                     <th style={{ padding: '8px 10px' }}>Phone</th>
                     <th style={{ padding: '8px 10px' }}>Cluster Route</th>
@@ -309,6 +341,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
                 <tbody>
                   {displayedAgents.map((agent) => {
                     const isAssigned = assignedAgentIds.includes(Number(agent.id));
+                    const isDeliv = (agent.role || '').toLowerCase() === 'delivery agent';
                     return (
                       <tr
                         key={agent.id}
@@ -317,7 +350,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
                         style={{
                           cursor: isUserAdmin ? 'pointer' : 'default',
                           borderBottom: '1px solid #f1f5f9',
-                          background: isAssigned ? '#f0fdf4' : 'transparent'
+                          background: isAssigned ? (isDeliv ? '#fffbeb' : '#f0fdf4') : 'transparent'
                         }}
                       >
                         {isUserAdmin && (
@@ -333,14 +366,28 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
                         )}
                         <td className="bold-cell" style={{ padding: '10px' }}>
                           <div className="agent-name-cell" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span className="agent-avatar-sm" style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#e2e8f0', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: '11px' }}>
+                            <span className="agent-avatar-sm" style={{ width: '28px', height: '28px', borderRadius: '50%', background: isDeliv ? '#fef3c7' : '#e2e8f0', color: isDeliv ? '#92400e' : '#1e293b', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: '11px' }}>
                               {(agent.name || 'A').charAt(0)}
                             </span>
                             <div>
                               <div style={{ fontWeight: 600, color: '#0f172a' }}>{agent.name}</div>
-                              <small className="muted-text" style={{ color: '#64748b', fontSize: '11px' }}>{agent.role || 'Field Sales Agent'}</small>
+                              <small className="muted-text" style={{ color: '#64748b', fontSize: '11px' }}>ID: #{agent.id}</small>
                             </div>
                           </div>
+                        </td>
+                        <td style={{ padding: '10px' }}>
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              background: isDeliv ? '#fef3c7' : '#e0f2fe',
+                              color: isDeliv ? '#92400e' : '#0369a1'
+                            }}
+                          >
+                            {agent.role || 'Field Sales Agent'}
+                          </span>
                         </td>
                         <td className="font-mono" style={{ padding: '10px', color: '#64748b' }}>#{agent.id}</td>
                         <td style={{ padding: '10px', color: '#334155' }}>{agent.phone || '—'}</td>

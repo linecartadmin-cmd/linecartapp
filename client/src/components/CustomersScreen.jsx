@@ -45,11 +45,10 @@ export default function CustomersScreen({
         })
         .catch(() => {});
     } else if (isManager && user?.id) {
-      api.getManagerAssignedAgents(user.id)
+      api.getManagerAssignments(user.id)
         .then((res) => {
-          if (res?.agents) {
-            setAssignableAgents(res.agents);
-          }
+          const list = res?.assignedAgents || res?.agents || [];
+          setAssignableAgents(list.filter((u) => (u.role || '').toLowerCase() === 'field sales agent'));
         })
         .catch(() => {});
     }
@@ -422,7 +421,8 @@ export default function CustomersScreen({
                       <span>
                         Assigned Agent{' '}
                         <b>
-                          {assignableAgents.find((a) => Number(a.id) === Number(c.assignedAgentId || c.assigned_agent_id))?.name ||
+                          {c.assignedAgentName ||
+                           assignableAgents.find((a) => Number(a.id) === Number(c.assignedAgentId || c.assigned_agent_id))?.name ||
                            (c.assignedAgentId ? `Agent #${c.assignedAgentId}` : 'Unassigned')}
                         </b>
                       </span>

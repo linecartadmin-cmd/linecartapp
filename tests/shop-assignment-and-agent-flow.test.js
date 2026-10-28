@@ -323,4 +323,111 @@ describe('Shop Assignment & Field Sales Agent Scoping Test Suite', async () => {
       assert.strictEqual(o.status, 'Price approval pending');
     });
   });
+
+  describe('6. Sales Manager Team Assignments & Quota Eligibility (No Mismatch)', () => {
+    test('Admin assigns team members (Field Sales Agent #4 and Delivery Agent #50) to Manager 100', async () => {
+      const res = await fetch(`${BASE_URL}/api/manager/assignments`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          managerId: 100,
+          agentIds: [4, 50]
+        })
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.status, 200);
+      assert.deepStrictEqual(json.assignedAgentIds, [4, 50]);
+
+      // Verify persisted in DB
+      const dbRes = await db.query('SELECT agent_id FROM manager_assignments WHERE manager_id = 100 ORDER BY agent_id ASC');
+      assert.deepStrictEqual(dbRes.rows.map((r) => Number(r.agent_id)), [4, 50]);
+    });
+
+    test('Rejects assigning team to a non-sales-manager user ID (e.g. Admin or Agent)', async () => {
+      const res = await fetch(`${BASE_URL}/api/manager/assignments`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          managerId: 900, // Admin, not Sales Manager
+          agentIds: [4]
+        })
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.ok(json.message.includes('not an active Sales Manager'));
+    });
+
+    test('Manager 100 retrieves assigned team: count matches, member roles clearly displayed', async () => {
+      const res = await fetch(`${BASE_URL}/api/manager/assignments`, {
+        headers: { Authorization: `Bearer ${managerToken}` }
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.status, 200);
+      assert.strictEqual(json.assignedAgents.length, 2);
+
+      const salesAgent = json.assignedAgents.find((a) => Number(a.id) === 4);
+      const delivAgent = json.assignedAgents.find((a) => Number(a.id) === 50);
+
+      assert.ok(salesAgent, 'Field Sales Agent #4 must be in assigned team');
+      assert.strictEqual(salesAgent.role, 'Field Sales Agent');
+
+      assert.ok(delivAgent, 'Delivery Agent #50 must be in assigned team');
+      assert.strictEqual(delivAgent.role, 'Delivery Agent');
+
+      // Client filtering for sales targets: Delivery Agent is excluded from sales quotas
+      const eligibleSalesAgents = json.assignedAgents.filter(
+        (a) => (a.role || '').toLowerCase() === 'field sales agent' && Number(a.active ?? 1) === 1
+      );
+      assert.strictEqual(eligibleSalesAgents.length, 1);
+      assert.strictEqual(eligibleSalesAgents[0].id, 4);
+    });
+
+    test('GET /api/manager/assigned-agents endpoint returns team for manager', async () => {
+      const res = await fetch(`${BASE_URL}/api/manager/assigned-agents`, {
+        headers: { Authorization: `Bearer ${managerToken}` }
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.status, 200);
+      assert.strictEqual(json.agents.length, 2);
+    });
+
+    test('Sales Manager cannot modify team assignments (Admin only - HTTP 403)', async () => {
+      const res = await fetch(`${BASE_URL}/api/manager/assignments`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${managerToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          managerId: 100,
+          agentIds: [1, 4]
+        })
+      });
+      assert.strictEqual(res.status, 403);
+    });
+
+    // Cleanup: restore manager 100 team to agents [1, 4, 6]
+    test('Cleanup: restore original assignments for manager 100', async () => {
+      await fetch(`${BASE_URL}/api/manager/assignments`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          managerId: 100,
+          agentIds: [1, 4, 6]
+        })
+      });
+    });
+  });
 });

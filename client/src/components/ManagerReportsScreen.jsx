@@ -39,20 +39,39 @@ export default function ManagerReportsScreen({
 
   const money = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
+  const assignedSalesAgents = useMemo(() => {
+    return (assignedAgents || []).filter(
+      (a) => (a.role || '').toLowerCase() === 'field sales agent' && Number(a.active ?? 1) === 1
+    );
+  }, [assignedAgents]);
+
+  const assignedDeliveryAgents = useMemo(() => {
+    return (assignedAgents || []).filter(
+      (a) => (a.role || '').toLowerCase() === 'delivery agent'
+    );
+  }, [assignedAgents]);
+
   // Load assigned agents for this manager
   const loadAssignments = async () => {
     try {
-      const res = await api.getManagerAssignments(user?.id || 100);
+      const res = await api.getManagerAssignments(user?.id);
       if (res?.status === 200) {
         setAssignedAgents(res.assignedAgents || []);
-        if (res.assignedAgents?.length > 0 && !targetFormAgentId) {
-          setTargetFormAgentId(String(res.assignedAgents[0].id));
-        }
       }
     } catch {
       if (showToast) showToast('Failed to load assigned sales agents');
     }
   };
+
+  useEffect(() => {
+    if (assignedSalesAgents.length > 0) {
+      if (!targetFormAgentId || !assignedSalesAgents.some((a) => String(a.id) === String(targetFormAgentId))) {
+        setTargetFormAgentId(String(assignedSalesAgents[0].id));
+      }
+    } else {
+      setTargetFormAgentId('');
+    }
+  }, [assignedSalesAgents, targetFormAgentId]);
 
   // Load report data from backend with strict manager scoping
   const loadReport = async () => {
@@ -143,8 +162,8 @@ export default function ManagerReportsScreen({
         <div className="heading-actions">
           <button
             className="secondary-button"
-            onClick={() => onNavigate && onNavigate('team-assignments')}
-            title="Manage which field sales agents report to you"
+            onClick={() => onNavigate && onNavigate('team')}
+            title="Inspect assigned team members"
           >
             👥 Manage Team ({assignedAgents.length} assigned)
           </button>
@@ -177,9 +196,9 @@ export default function ManagerReportsScreen({
           </select>
         </div>
 
-        {/* Assigned Agent Filter (Strictly limited to assigned agents) */}
+        {/* Assigned Agent Filter (Strictly limited to assigned Field Sales Agents for sales metrics) */}
         <div className="reports-filter-group">
-          <label htmlFor="mgrAgent" className="reports-filter-label">ASSIGNED AGENT</label>
+          <label htmlFor="mgrAgent" className="reports-filter-label">SALES AGENT</label>
           <select
             id="mgrAgent"
             className="select reports-cluster-select"
@@ -187,9 +206,9 @@ export default function ManagerReportsScreen({
             onChange={(e) => setSelectedAgentId(e.target.value)}
           >
             <option value="all">
-              All assigned agents ({assignedAgents.length})
+              All assigned sales agents ({assignedSalesAgents.length})
             </option>
-            {assignedAgents.map((a) => (
+            {assignedSalesAgents.map((a) => (
               <option key={a.id} value={String(a.id)}>
                 {a.name} ({a.phone})
               </option>
@@ -232,18 +251,35 @@ export default function ManagerReportsScreen({
         </button>
       </div>
 
-      {/* Warning Notice if Manager has no agents assigned */}
-      {assignedAgents.length === 0 && (
+      {/* Delivery Agents Display (Separated with role) */}
+      {assignedDeliveryAgents.length > 0 && (
+        <div className="mb-4 p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-amber-900 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span>🚚</span>
+            <span>
+              <strong>Assigned Delivery Operations:</strong> {assignedDeliveryAgents.map((d) => `${d.name} (#${d.id})`).join(', ')}
+            </span>
+          </div>
+          <span className="text-[11px] font-semibold text-amber-700 uppercase bg-amber-100/70 px-2 py-0.5 rounded">
+            Delivery Operations ({assignedDeliveryAgents.length})
+          </span>
+        </div>
+      )}
+
+      {/* Warning Notice if Manager has no sales agents assigned */}
+      {assignedSalesAgents.length === 0 && (
         <div className="target-info-notice mb-5" style={{ background: '#fffbeb', borderColor: '#fde68a' }}>
           <span className="target-notice-icon">⚠️</span>
           <div>
-            <strong>No Sales Agents Assigned:</strong> You do not currently have any Field Sales Agents assigned to your manager view.
-            Backend access is strictly scoped to assigned team members.
+            <strong>No Field Sales Agents Assigned:</strong> {assignedAgents.length > 0
+              ? `You currently have ${assignedAgents.length} team member(s) assigned (${assignedDeliveryAgents.length} Delivery Agent), but no active Field Sales Agents.`
+              : 'You do not currently have any Field Sales Agents assigned to your manager view.'}
+            {' '}Sales performance metrics and quota targets apply to assigned Field Sales Agents.
             <button
               className="text-blue-600 font-bold ml-2 underline cursor-pointer"
-              onClick={() => onNavigate && onNavigate('team-assignments')}
+              onClick={() => onNavigate && onNavigate('team')}
             >
-              Click here to assign agents now →
+              View Team Console →
             </button>
           </div>
         </div>
@@ -530,13 +566,15 @@ export default function ManagerReportsScreen({
             </p>
 
             <form onSubmit={handleSaveTarget} className="space-y-4">
-              {assignedAgents.length === 0 ? (
+              {assignedSalesAgents.length === 0 ? (
                 <div style={{ padding: '12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '14px' }}>
                   <div style={{ fontWeight: 700, color: '#92400e', fontSize: '12px', marginBottom: '4px' }}>
                     ⚠️ No Field Sales Agents Assigned
                   </div>
                   <p style={{ margin: '0 0 10px 0', fontSize: '11px', color: '#78350f', lineHeight: 1.4 }}>
-                    Your manager account currently has no Field Sales Agents assigned to your team. Please assign agents to your team first before configuring quotas.
+                    {assignedAgents.length > 0
+                      ? 'You have team members assigned (Delivery operations), but sales quota targets can only be configured for active Field Sales Agents. Please request an Administrator to assign Field Sales Agents to your team.'
+                      : 'Your sales manager account currently has no Field Sales Agents assigned to your team. Please assign agents to your team first before configuring quotas.'}
                   </p>
                   <button
                     type="button"
@@ -559,7 +597,7 @@ export default function ManagerReportsScreen({
                     onChange={(e) => setTargetFormAgentId(e.target.value)}
                     required
                   >
-                    {assignedAgents.map((a) => (
+                    {assignedSalesAgents.map((a) => (
                       <option key={a.id} value={String(a.id)}>
                         {a.name} ({a.phone})
                       </option>
@@ -574,7 +612,7 @@ export default function ManagerReportsScreen({
                   type="number"
                   className="field w-full"
                   required
-                  disabled={assignedAgents.length === 0}
+                  disabled={assignedSalesAgents.length === 0}
                   value={targetFormAmount}
                   onChange={(e) => setTargetFormAmount(e.target.value)}
                   placeholder="e.g. 50000"
@@ -587,7 +625,7 @@ export default function ManagerReportsScreen({
                   <input
                     type="number"
                     className="field w-full"
-                    disabled={assignedAgents.length === 0}
+                    disabled={assignedSalesAgents.length === 0}
                     value={targetFormItem1Qty}
                     onChange={(e) => setTargetFormItem1Qty(e.target.value)}
                     placeholder="e.g. 500"
@@ -598,7 +636,7 @@ export default function ManagerReportsScreen({
                   <input
                     type="number"
                     className="field w-full"
-                    disabled={assignedAgents.length === 0}
+                    disabled={assignedSalesAgents.length === 0}
                     value={targetFormItem2Qty}
                     onChange={(e) => setTargetFormItem2Qty(e.target.value)}
                     placeholder="e.g. 400"
@@ -616,7 +654,7 @@ export default function ManagerReportsScreen({
                 </button>
                 <button
                   type="submit"
-                  disabled={savingTarget || assignedAgents.length === 0}
+                  disabled={savingTarget || assignedSalesAgents.length === 0}
                   className="primary-button"
                 >
                   {savingTarget ? 'Saving...' : 'Save Target'}

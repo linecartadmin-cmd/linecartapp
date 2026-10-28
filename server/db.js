@@ -424,9 +424,8 @@ export async function runMigrationsAndSeed({
     }
   }
 
-  // Preserve existing data: ensure real order S101-24019 shop (shop 101) is assigned to agent 1
+  // Preserve existing data: safely backfill assigned_agent_id from created_by for any unassigned shops
   try {
-    await db.query('UPDATE shops SET assigned_agent_id = 1 WHERE shop_id = 101 AND (assigned_agent_id IS NULL OR assigned_agent_id = 0)');
     await db.query('UPDATE shops SET assigned_agent_id = created_by WHERE assigned_agent_id IS NULL AND created_by IS NOT NULL');
   } catch (initErr) {
     console.warn('[DB Migration] Could not initialize assigned_agent_id default:', initErr.message);
