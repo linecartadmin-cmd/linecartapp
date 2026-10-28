@@ -393,6 +393,8 @@ export async function runMigrationsAndSeed({
     await db.execRaw(`
       ALTER TABLE shops ADD COLUMN IF NOT EXISTS assigned_agent_id INTEGER;
       CREATE INDEX IF NOT EXISTS idx_shops_assigned_agent ON shops(assigned_agent_id);
+      CREATE SEQUENCE IF NOT EXISTS login_attempts_id_seq;
+      ALTER TABLE login_attempts ALTER COLUMN id SET DEFAULT nextval('login_attempts_id_seq');
     `);
   } else {
     try {

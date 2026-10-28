@@ -354,36 +354,57 @@ function getCaller(req) {
 }
 
 async function isLoginRateLimited(ipAddress, phoneKey) {
-  const cutoffMs = Date.now() - LOGIN_RATE_WINDOW_MS;
-  const phoneRes = await db.query(
-    `SELECT COUNT(*) AS cnt
-     FROM login_attempts
-     WHERE attempted_at >= $1 AND identifier = $2 AND success = 0`,
-    [cutoffMs, String(phoneKey || 'unknown')]
-  );
-  if (Number(phoneRes.rows[0]?.cnt || 0) >= LOGIN_MAX_ATTEMPTS) {
-    return true;
-  }
+  try {
+    const cutoffMs = Date.now() - LOGIN_RATE_WINDOW_MS;
+    const phoneRes = await db.query(
+      `SELECT COUNT(*) AS cnt
+       FROM login_attempts
+       WHERE attempted_at >= $1 AND identifier = $2 AND success = 0`,
+      [cutoffMs, String(phoneKey || 'unknown')]
+    );
+    if (Number(phoneRes.rows[0]?.cnt || 0) >= LOGIN_MAX_ATTEMPTS) {
+      return true;
+    }
 
-  const ipRes = await db.query(
-    `SELECT COUNT(*) AS cnt
-     FROM login_attempts
-     WHERE attempted_at >= $1 AND ip_address = $2 AND success = 0`,
-    [cutoffMs, String(ipAddress || 'unknown')]
-  );
-  return Number(ipRes.rows[0]?.cnt || 0) >= LOGIN_MAX_IP_ATTEMPTS;
+    const ipRes = await db.query(
+      `SELECT COUNT(*) AS cnt
+       FROM login_attempts
+       WHERE attempted_at >= $1 AND ip_address = $2 AND success = 0`,
+      [cutoffMs, String(ipAddress || 'unknown')]
+    );
+    return Number(ipRes.rows[0]?.cnt || 0) >= LOGIN_MAX_IP_ATTEMPTS;
+  } catch (err) {
+    console.warn('[RateLimit Check Error]', err?.message || err);
+    return false;
+  }
 }
 
 async function recordFailedLoginAttempt(ipAddress, phoneKey) {
-  await db.query(
-    'INSERT INTO login_attempts (identifier, ip_address, attempted_at, success) VALUES ($1, $2, $3, 0)',
-    [String(phoneKey || 'unknown').slice(0, 32), String(ipAddress || 'unknown'), Date.now()]
-  );
+  try {
+    if (db.mode === 'postgres') {
+      await db.query(
+        `INSERT INTO login_attempts (id, identifier, ip_address, attempted_at, success)
+         VALUES (COALESCE((SELECT MAX(id) FROM login_attempts), 0) + 1, $1, $2, $3, 0)`,
+        [String(phoneKey || 'unknown').slice(0, 32), String(ipAddress || 'unknown'), Date.now()]
+      );
+    } else {
+      await db.query(
+        'INSERT INTO login_attempts (identifier, ip_address, attempted_at, success) VALUES ($1, $2, $3, 0)',
+        [String(phoneKey || 'unknown').slice(0, 32), String(ipAddress || 'unknown'), Date.now()]
+      );
+    }
+  } catch (err) {
+    console.warn('[RateLimit Record Error]', err?.message || err);
+  }
 }
 
 async function clearLoginAttempts(phoneKey) {
   if (!phoneKey) return;
-  await db.query('DELETE FROM login_attempts WHERE identifier = $1', [String(phoneKey)]);
+  try {
+    await db.query('DELETE FROM login_attempts WHERE identifier = $1', [String(phoneKey)]);
+  } catch (err) {
+    console.warn('[RateLimit Clear Error]', err?.message || err);
+  }
 }
 
 // Audit Trail Logger (Persisted to SQL Database)
