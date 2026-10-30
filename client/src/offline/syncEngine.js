@@ -82,7 +82,7 @@ export function initSyncEngine(getUserId) {
 /**
  * Enqueue an order creation mutation for local-first storage and eventual cloud sync
  */
-export async function queueOrderCreation(userId, orderList, currentShop, activeItems) {
+export async function queueOrderCreation(userId, orderList, currentShop, activeItems, extraMeta = {}) {
   const deviceEventTime = new Date().toISOString();
   const idempotencyKey = `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const tempRef = `TEMP-${Date.now().toString().slice(-6)}`;
@@ -98,10 +98,11 @@ export async function queueOrderCreation(userId, orderList, currentShop, activeI
       shopName: currentShop?.shopName || 'Customer Store',
       shopId: currentShop?.shopid,
       total: activeItems.reduce(
-        (sum, item) => sum + (Number(item.qty) || 0) * (Number(item.custprice || item.price) || 0),
+        (sum, item) => sum + (Number(item.qty) || 0) * (Number(item.price || item.catalogPrice || item.custprice) || 0),
         0
       ),
-      itemsCount: activeItems.length
+      itemsCount: activeItems.length,
+      extraMeta: extraMeta || {}
     }
   });
 
@@ -244,7 +245,8 @@ export async function triggerSync(userId) {
           const res = await api.createOrder(
             item.payload.orderList,
             item.idempotencyKey,
-            item.deviceEventTime
+            item.deviceEventTime,
+            item.payload.extraMeta || {}
           );
 
           if (res && (res.status === 200 || res.status === 1)) {
@@ -255,6 +257,8 @@ export async function triggerSync(userId) {
               syncedResult: {
                 orderId: res.orderId,
                 serialNo: res.id,
+                expectedDeliveryDate: res.expectedDeliveryDate || null,
+                visitPhotoStatus: res.visitPhotoStatus || null,
                 idempotentReplay: Boolean(res.idempotentReplay)
               }
             });
@@ -273,6 +277,8 @@ export async function triggerSync(userId) {
                         ...ord,
                         id: res.orderId || ord.id,
                         orderId: res.orderId || ord.orderId,
+                        expectedDeliveryDate: res.expectedDeliveryDate || ord.expectedDeliveryDate,
+                        visitPhotoStatus: ord.visitPhoto ? 'synced' : (res.visitPhotoStatus || ord.visitPhotoStatus),
                         syncStatus: 'synced'
                       };
                     }

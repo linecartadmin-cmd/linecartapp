@@ -1,5 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { api } from '../api';
 import { formatShopId, getPaymentSummary } from '../utils';
+
+function getIstDateStr(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function addDaysToDateStr(dateStr, days) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '';
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+const DEFAULT_PERF_SCALE = [
+  { band: 'Exceeded', range: '≥ 100%', minPct: 100, maxPct: null, color: 'green', description: 'Target fully achieved or exceeded' },
+  { band: 'On Track', range: '80% – 99%', minPct: 80, maxPct: 99.99, color: 'blue', description: 'Strong progress toward target' },
+  { band: 'Needs Attention', range: '50% – 79%', minPct: 50, maxPct: 79.99, color: 'amber', description: 'Moderate progress; requires follow-up' },
+  { band: 'Critical / Below 50%', range: '< 50%', minPct: 0, maxPct: 49.99, color: 'red', description: 'Significant gap against target' }
+];
+
+function computePerfIndicator(pct, hasTarget = true) {
+  if (!hasTarget) return { label: 'No Target Set', code: 'no_target', color: 'neutral' };
+  const n = Number(pct || 0);
+  if (n >= 100) return { label: 'Exceeded (≥100%)', code: 'exceeded', color: 'green' };
+  if (n >= 80) return { label: 'On Track (80–99%)', code: 'on_track', color: 'blue' };
+  if (n >= 50) return { label: 'Needs Attention (50–79%)', code: 'needs_attention', color: 'amber' };
+  return { label: 'Critical (<50%)', code: 'critical', color: 'red' };
+}
 
 export default function ReportsScreen({
   user,
@@ -9,15 +47,60 @@ export default function ReportsScreen({
   onNavigate,
   showToast
 }) {
-  const [reportRange, setReportRange] = useState('This week');
+  const [reportPeriod, setReportPeriod] = useState('7d'); // 'today' | '7d' | '30d'
   const [statusFilter, setStatusFilter] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedClusterFilter, setSelectedClusterFilter] = useState('all');
+
+  // Field Sales Agent sees only assigned clusters
+  const assignedClusters = clusters.filter((c) =>
+    shops.some((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId))
+  );
+  const effectiveClusters = assignedClusters.length > 0 ? assignedClusters : clusters;
+  const hasSingleCluster = effectiveClusters.length <= 1;
+  const defaultClusterFilter = hasSingleCluster && effectiveClusters[0]
+    ? String(effectiveClusters[0].clusterId)
+    : 'all';
+
+  const [selectedClusterFilter, setSelectedClusterFilter] = useState(defaultClusterFilter);
+  const [serverReport, setServerReport] = useState(null);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [selectedDayDrilldown, setSelectedDayDrilldown] = useState(null); // { date, expectedDeliveryDate, orders }
+  const [selectedOrderDetail, setSelectedOrderDetail] = useState(null);
+
+  useEffect(() => {
+    if (hasSingleCluster && effectiveClusters[0] && selectedClusterFilter !== String(effectiveClusters[0].clusterId)) {
+      setSelectedClusterFilter(String(effectiveClusters[0].clusterId));
+    }
+  }, [hasSingleCluster, effectiveClusters, selectedClusterFilter]);
+
+  useEffect(() => {
+    let mounted = true;
+    const spersonId = user?.id || localStorage.getItem('LineCartPref_userid') || 6;
+    setLoadingReport(true);
+    api.getHomeReport({
+      spersonId,
+      clusterId: selectedClusterFilter,
+      period: reportPeriod
+    })
+      .then((res) => {
+        if (mounted && res && res.status === 200 && res.result) {
+          setServerReport(res.result);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (mounted) setLoadingReport(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [user?.id, selectedClusterFilter, reportPeriod, orders.length]);
 
   const money = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
   const dateLabel = (val) => {
-    if (!val) return 'Today';
-    const d = new Date(val);
+    if (!val) return '—';
+    const dStr = String(val).slice(0, 10);
+    const d = new Date(`${dStr}T00:00:00`);
     return isNaN(d.getTime())
       ? val
       : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -30,62 +113,186 @@ export default function ReportsScreen({
       .join('')
       .toUpperCase();
 
-  // Filter orders by cluster if selected
-  const clusterShopNames = selectedClusterFilter === 'all'
-    ? null
-    : new Set(
-        shops
-          .filter((s) => Number(s.clusterid || s.clusterId) === Number(selectedClusterFilter))
-          .map((s) => (s.shopName || '').toLowerCase())
-      );
+  // Compute local timezone (Asia/Kolkata) date window for Today, Last 7 days, Last 30 days
+  const todayIST = getIstDateStr();
+  const yestIST = addDaysToDateStr(todayIST, -1);
+  const periodDays = reportPeriod === 'today' ? 1 : reportPeriod === '7d' ? 7 : 30;
+  const fromDateIST = addDaysToDateStr(todayIST, -(periodDays - 1));
+  const periodLabel = reportPeriod === 'today' ? 'Today' : reportPeriod === '7d' ? 'Last 7 days' : 'Last 30 days';
 
-  const clusterFilteredOrders = selectedClusterFilter === 'all'
-    ? orders
-    : orders.filter((o) => {
-        if (o.clusterId) return Number(o.clusterId) === Number(selectedClusterFilter);
-        return clusterShopNames ? clusterShopNames.has((o.customer || '').toLowerCase()) : true;
-      });
+  // Scoped shops for this agent & cluster
+  const scopedShops = selectedClusterFilter === 'all'
+    ? shops
+    : shops.filter((s) => Number(s.clusterid || s.clusterId) === Number(selectedClusterFilter));
 
-  const deliveredCount = clusterFilteredOrders.filter((o) => (o.status || '').toLowerCase() === 'delivered').length;
-  const inProgressCount = clusterFilteredOrders.filter((o) => (o.status || '').toLowerCase() === 'in progress').length;
-  const pendingCount = clusterFilteredOrders.filter((o) => (o.status || '').toLowerCase() === 'pending').length;
-  const totalValue = clusterFilteredOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+  const allowedClusterIds = new Set(effectiveClusters.map((c) => Number(c.clusterId)));
 
-  const shownOrders = clusterFilteredOrders.filter((o) => {
-    if (statusFilter !== 'All' && (o.status || 'Pending').toLowerCase() !== statusFilter.toLowerCase()) return false;
-    if (searchQuery && !(`${o.id} ${o.customer}`).toLowerCase().includes(searchQuery.toLowerCase())) return false;
+  // Filter orders by assigned cluster scope (all dates first, for previous-day In Progress drilldown)
+  const clusterScopedOrdersAllDates = orders.filter((o) => {
+    const cid = Number(o.clusterId || o.clusterid || 0);
+    if (cid > 0 && allowedClusterIds.size > 0 && !allowedClusterIds.has(cid)) return false;
+    if (selectedClusterFilter !== 'all' && cid > 0 && cid !== Number(selectedClusterFilter)) return false;
     return true;
   });
 
-  // Target vs Achieved Sales calculation for Today vs Yesterday
-  const now = new Date();
-  const todayISO = now.toISOString().slice(0, 10);
-  const yestDate = new Date(now);
-  yestDate.setDate(yestDate.getDate() - 1);
-  const yestISO = yestDate.toISOString().slice(0, 10);
+  // Filter orders by selected period (Today, Last 7 days, Last 30 days in Asia/Kolkata)
+  const clusterFilteredOrders = clusterScopedOrdersAllDates.filter((o) => {
+    const dStr = String(o.date || o.orderDate || '').slice(0, 10);
+    if (!dStr) return true;
+    return dStr >= fromDateIST && dStr <= todayIST;
+  });
 
-  const todayLabelStr = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-  const yestLabelStr = yestDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const deliveredCount = clusterFilteredOrders.filter((o) => (o.status || '').toLowerCase() === 'delivered').length;
+  const inProgressCount = clusterFilteredOrders.filter((o) => {
+    const st = (o.status || '').toLowerCase();
+    return st === 'in progress' || st === 'price approval pending' || st === 'pending';
+  }).length;
+  const pendingApprovalCount = clusterFilteredOrders.filter((o) => (o.status || '').toLowerCase() === 'price approval pending').length;
+  const totalValue = clusterFilteredOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
 
-  // Real achieved sales from backend orders
-  const todayOrders = clusterFilteredOrders.filter((o) => o.date === todayISO);
-  const yestOrders = clusterFilteredOrders.filter((o) => o.date === yestISO);
+  // Shop counts with explicit definitions (Assigned Shops, Visited Shops, Shops with Orders)
+  const orderedShopIds = new Set(
+    clusterFilteredOrders
+      .filter((o) => (o.status || '').toLowerCase() !== 'cancelled')
+      .map((o) => String(o.shopid || o.customerId || o.shopId || o.customer || ''))
+      .filter(Boolean)
+  );
+  const assignedShopsCount = serverReport?.shopCounts?.assignedShopsCount ?? scopedShops.length;
+  const orderedShopsCount = serverReport?.shopCounts?.orderedShopsCount ?? orderedShopIds.size;
+  const visitedShopsCount = serverReport?.shopCounts?.visitedShopsCount ?? orderedShopIds.size;
 
-  const todayAchieved = todayOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
-  const yestAchieved = yestOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+  const shownOrders = clusterFilteredOrders.filter((o) => {
+    const st = (o.status || 'In progress').toLowerCase();
+    if (statusFilter === 'Delivered' && st !== 'delivered') return false;
+    if (statusFilter === 'In progress' && st !== 'in progress' && st !== 'price approval pending') return false;
+    if (statusFilter === 'Pending approval' && st !== 'price approval pending') return false;
+    if (searchQuery && !(`${o.id} ${o.customer || o.shopName}`).toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    return true;
+  });
 
-  // Check backend for target data (not configured in existing schema)
-  const targetConfigured = user?.dailyTarget || user?.target || null;
-  const maxSales = Math.max(todayAchieved, yestAchieved, 1000);
+  // Daily delivery status list (including previous days) so selecting an In Progress count for a previous day opens matching orders
+  const dailyDeliveryStatus = (() => {
+    const serverDays = serverReport?.clusterList?.flatMap((c) => c.dailyDeliveryStatus || []) || [];
+    if (serverDays.length > 0 && selectedClusterFilter !== 'all') {
+      return serverDays;
+    }
+    const byDate = new Map();
+    for (const o of clusterScopedOrdersAllDates) {
+      const st = String(o.status || '').toLowerCase();
+      if (st === 'cancelled') continue;
+      const dStr = String(o.date || o.orderDate || '').slice(0, 10);
+      if (!dStr) continue;
+      const expDeliv = o.expectedDeliveryDate || addDaysToDateStr(dStr, 1);
+      if (!byDate.has(dStr)) {
+        byDate.set(dStr, {
+          date: dStr,
+          expectedDeliveryDate: expDeliv,
+          totalOrders: 0,
+          deliveredCount: 0,
+          inProgressCount: 0,
+          inProgressOrders: []
+        });
+      }
+      const entry = byDate.get(dStr);
+      entry.totalOrders += 1;
+      const lines = Array.isArray(o.orderList || o.itemsList) ? (o.orderList || o.itemsList) : [];
+      if (st === 'delivered') {
+        entry.deliveredCount += 1;
+      } else {
+        entry.inProgressCount += 1;
+        entry.inProgressOrders.push({
+          orderId: o.orderId || o.id,
+          id: o.id || o.orderId,
+          shopName: o.shopName || o.customer || 'Shop',
+          shopId: o.shopId || formatShopId(o.shopid || o.customerId),
+          date: dStr,
+          expectedDeliveryDate: expDeliv,
+          status: o.status || 'In progress',
+          total: Number(o.total || 0),
+          locationText: o.locationText || null,
+          visitPhotoStatus: o.visitPhotoStatus || null,
+          orderList: lines.map((l) => ({
+            itemName: l.itemName || l.name || `Item #${l.itemid || l.itemId}`,
+            qty: Number(l.qty || 0),
+            unit: String(l.unitType || l.unit || 'kg').toLowerCase().startsWith('kg') ? 'kg' : String(l.unitType || l.unit || 'kg'),
+            price: Number(l.price || l.custprice || 0),
+            requestedPrice: l.requestedPrice ?? null,
+            priceRequestStatus: l.priceRequestStatus || null
+          }))
+        });
+      }
+    }
+    return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
+  })();
+
+  // Target vs Actual data
+  const tva = serverReport?.targetVsActual || {
+    hasTarget: false,
+    targetAmount: 0,
+    actualAmount: totalValue,
+    differenceAmount: totalValue,
+    achievementPct: 0,
+    performanceIndicator: computePerfIndicator(0, false),
+    items: []
+  };
+  const perfScale = serverReport?.performanceIndicatorScale || DEFAULT_PERF_SCALE;
+
+  // Compute real ordered commodities from saved orders (never hardcoded demo items)
+  const orderedCommodities = (() => {
+    const map = new Map();
+    for (const o of clusterFilteredOrders) {
+      const lines = Array.isArray(o.orderList || o.itemsList) ? (o.orderList || o.itemsList) : [];
+      for (const l of lines) {
+        const qty = parseFloat(l.qty) || 0;
+        if (qty <= 0) continue;
+        const name = l.itemName || l.name || `Item #${l.itemid || l.itemId}`;
+        const unit = String(l.unitType || l.unit || 'kg').toLowerCase().startsWith('kg') ? 'kg' : String(l.unitType || l.unit || 'kg');
+        const prev = map.get(name) || { name, qty: 0, unit };
+        prev.qty += qty;
+        map.set(name, prev);
+      }
+    }
+    if (map.size === 0 && serverReport?.clusterList) {
+      for (const c of serverReport.clusterList) {
+        for (const ds of c.deliverystatus || []) {
+          const prev = map.get(ds.name) || { name: ds.name, qty: 0, unit: ds.unit || 'kg' };
+          prev.qty += Number(ds.totalcount || 0);
+          map.set(ds.name, prev);
+        }
+      }
+    }
+    const arr = Array.from(map.values()).sort((a, b) => b.qty - a.qty);
+    const maxQ = arr.length > 0 ? Math.max(...arr.map((x) => x.qty), 1) : 1;
+    return arr.map((x, idx) => ({
+      ...x,
+      pct: Math.min(100, Math.max(10, Math.round((x.qty / maxQ) * 100))),
+      color: idx % 3 === 1 ? 'green' : idx % 3 === 2 ? 'yellow' : ''
+    }));
+  })();
 
   const handleExportCSV = () => {
-    const headers = ['Order ID', 'Customer', 'Date', 'Items', 'Total', 'Delivery Status', 'Payment Status', 'Amount Collected', 'Balance Remaining', 'Payment Summary'];
+    const headers = [
+      'Order ID',
+      'Customer',
+      'Order Date',
+      'Expected Delivery Date',
+      'Items',
+      'Total',
+      'Delivery Status',
+      'Payment Status',
+      'Amount Collected',
+      'Balance Remaining',
+      'Payment Summary'
+    ];
     const rows = clusterFilteredOrders.map((o) => {
       const pay = getPaymentSummary(o);
+      const dStr = String(o.date || o.orderDate || '').slice(0, 10);
+      const expDeliv = o.expectedDeliveryDate || addDaysToDateStr(dStr, 1);
       return [
         o.id,
-        o.customer,
-        o.date,
+        o.customer || o.shopName,
+        dStr,
+        expDeliv,
         o.itemsCount || o.items || 1,
         o.total,
         pay.deliveryStatus,
@@ -103,72 +310,77 @@ export default function ReportsScreen({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `linecart-orders-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `linecart-orders-report-${todayIST}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     showToast('Orders report downloaded successfully.');
   };
-
-  const topItems = [
-    { name: 'Onio Medium', qty: '450 kgs', pct: 95, color: '' },
-    { name: 'Onion Big', qty: '100 kgs', pct: 72, color: 'green' },
-    { name: 'Agra Potato', qty: '85 kgs', pct: 54, color: 'yellow' },
-    { name: 'Tomato Hybrid', qty: '65 kgs', pct: 40, color: '' }
-  ];
 
   return (
     <div className="reports-page">
       {/* Page Heading */}
       <div className="page-heading reports-heading">
         <div>
-          <p className="eyebrow">INSIGHTS</p>
+          <p className="eyebrow">FIELD SALES INSIGHTS · IST ({todayIST})</p>
           <h1>Reports</h1>
-          <p>A clear view of wholesale order fulfillment and route performance.</p>
+          <p>
+            Wholesale order fulfillment, shop coverage, expected delivery dates, and Target vs Actual performance ({periodLabel}: {fromDateIST} to {todayIST}).
+          </p>
         </div>
-        <button
-          className="secondary-button"
-          onClick={handleExportCSV}
-        >
+        <button className="secondary-button" onClick={handleExportCSV}>
           ↧ &nbsp;Download report
         </button>
       </div>
 
-      {/* Responsive Filter Toolbar */}
-      <div className="reports-toolbar">
+      {/* Period Selector (Today, Last 7 days, Last 30 days) + Assigned Cluster Filter */}
+      <div className="reports-toolbar" style={{ flexWrap: 'wrap', gap: '12px' }}>
         <div className="reports-filter-group">
-          <label htmlFor="reportPeriodSelect" className="reports-filter-label">PERIOD</label>
-          <select
-            id="reportPeriodSelect"
-            className="select reports-period-select"
-            value={reportRange}
-            onChange={(e) => {
-              setReportRange(e.target.value);
-              showToast(`Showing ${e.target.value.toLowerCase()} report`);
-            }}
-          >
-            <option value="This week">This week</option>
-            <option value="This month">This month</option>
-            <option value="All time">All time</option>
-          </select>
+          <span className="reports-filter-label">REPORT PERIOD (IST)</span>
+          <div className="report-period-pills" role="group" aria-label="Report period">
+            {[
+              { key: 'today', label: 'Today' },
+              { key: '7d', label: 'Last 7 days' },
+              { key: '30d', label: 'Last 30 days' }
+            ].map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                className={`report-period-btn ${reportPeriod === p.key ? 'active' : ''}`}
+                onClick={() => setReportPeriod(p.key)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {clusters.length > 0 && (
+        {/* Show cluster selector only if agent has more than 1 assigned cluster; otherwise show assigned cluster badge */}
+        {effectiveClusters.length > 1 ? (
           <div className="reports-filter-group">
-            <label htmlFor="reportClusterSelect" className="reports-filter-label">CLUSTER</label>
+            <label htmlFor="reportClusterSelect" className="reports-filter-label">ASSIGNED CLUSTER</label>
             <select
               id="reportClusterSelect"
               className="select reports-cluster-select"
               value={selectedClusterFilter}
               onChange={(e) => setSelectedClusterFilter(e.target.value)}
             >
-              <option value="all">All clusters</option>
-              {clusters.map((c) => (
+              <option value="all">All assigned clusters ({effectiveClusters.length})</option>
+              {effectiveClusters.map((c) => (
                 <option key={c.clusterId} value={String(c.clusterId)}>
                   {c.clusterName}
                 </option>
               ))}
             </select>
           </div>
+        ) : (
+          effectiveClusters[0] && (
+            <div className="reports-filter-group">
+              <span className="reports-filter-label">ASSIGNED CLUSTER</span>
+              <span className="cluster-filter-pill" style={{ height: '38px', fontWeight: 700, fontSize: '12.5px' }}>
+                📍 {effectiveClusters[0].clusterName}
+              </span>
+            </div>
+          )
         )}
 
         <div className="reports-search-wrap">
@@ -182,9 +394,10 @@ export default function ReportsScreen({
 
         <div className="reports-tabs-wrap">
           <div className="tabs reports-tabs">
-            {['All', 'Delivered', 'In progress', 'Pending'].map((st) => (
+            {['All', 'Delivered', 'In progress', 'Pending approval'].map((st) => (
               <button
                 key={st}
+                type="button"
                 className={`tab ${statusFilter === st ? 'selected' : ''}`}
                 onClick={() => setStatusFilter(st)}
               >
@@ -195,197 +408,325 @@ export default function ReportsScreen({
         </div>
       </div>
 
-      {/* Target vs Achieved Sales Section */}
-      <section className="panel target-achieved-panel" style={{ marginBottom: '20px' }}>
-        <div className="panel-head">
+      {/* Explicit Shop Coverage & Order KPIs */}
+      <div className="stats-grid" style={{ marginBottom: '20px' }}>
+        <div className="stat-card">
+          <div className="stat-top">
+            <span>Assigned Shops (Route Scope)</span>
+            <span className="stat-icon blue">🏪</span>
+          </div>
+          <div className="stat-value">{assignedShopsCount}</div>
+          <div className="stat-foot">Total customer shops assigned to you</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-top">
+            <span>Visited Shops ({periodLabel})</span>
+            <span className="stat-icon purple">📍</span>
+          </div>
+          <div className="stat-value">{visitedShopsCount}</div>
+          <div className="stat-foot">Assigned shops visited in {periodLabel.toLowerCase()}</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-top">
+            <span>Shops with Orders ({periodLabel})</span>
+            <span className="stat-icon green">✓</span>
+          </div>
+          <div className="stat-value">{orderedShopsCount}</div>
+          <div className="stat-foot">
+            {Math.max(0, assignedShopsCount - orderedShopsCount)} assigned shops without orders
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-top">
+            <span>Order Value ({periodLabel})</span>
+            <span className="stat-icon yellow">₹</span>
+          </div>
+          <div className="stat-value">{money(totalValue)}</div>
+          <div className="stat-foot">
+            {clusterFilteredOrders.length} orders · {deliveredCount} delivered · {inProgressCount} in progress
+          </div>
+        </div>
+      </div>
+
+      {/* Tabular Target vs Actual Section */}
+      <section className="table-panel" style={{ marginBottom: '20px' }}>
+        <div className="table-heading" style={{ flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <h2>Target vs Achieved Sales</h2>
-            <p>Comparing wholesale sales performance: Today ({todayLabelStr}) vs Yesterday ({yestLabelStr})</p>
+            <h2>Target vs Actual ({periodLabel})</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
+              Tabular comparison of sales target, actual achieved sales, difference, achievement %, and performance indicator.
+            </p>
           </div>
-          <div className="legend">
-            <span><i style={{ background: '#12aee2' }}></i>Achieved sales (₹)</span>
-            <span><i style={{ background: '#64748b' }}></i>Target (₹)</span>
-          </div>
+          <span className={`perf-indicator-badge ${tva.performanceIndicator?.color || 'neutral'}`}>
+            {tva.performanceIndicator?.label || 'No Target Set'}
+          </span>
         </div>
 
-        {/* Comparison Cards Grid */}
-        <div className="target-cards-grid">
-          {/* Today Card */}
-          <div className="target-day-card">
-            <div className="target-day-head">
-              <div>
-                <span className="target-day-badge today">TODAY</span>
-                <h3>{todayLabelStr}</h3>
-              </div>
-              <span className="target-count-pill">{todayOrders.length} {todayOrders.length === 1 ? 'order' : 'orders'}</span>
-            </div>
-
-            <div className="target-values-row">
-              <div className="target-val-block">
-                <small>Achieved sales</small>
-                <b className="achieved-text">{money(todayAchieved)}</b>
-              </div>
-
-              <div className="target-val-block">
-                <small>Target sales</small>
-                {targetConfigured ? (
-                  <b className="target-text">{money(targetConfigured)}</b>
-                ) : (
-                  <span className="target-unconfigured-pill" title="Target not configured in backend database">
-                    Target not configured
+        <div className="table-scroll-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Scope / Commodity</th>
+                <th>Target</th>
+                <th>Actual</th>
+                <th>Difference (Actual − Target)</th>
+                <th>Achievement %</th>
+                <th>Performance Indicator</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
+                <td>
+                  <strong>Overall Route Sales ({periodLabel})</strong>
+                </td>
+                <td>{tva.hasTarget ? money(tva.targetAmount) : '₹0 (Not set)'}</td>
+                <td><strong>{money(tva.actualAmount ?? totalValue)}</strong></td>
+                <td style={{ color: (tva.differenceAmount || 0) >= 0 ? '#15803d' : '#b91c1c', fontWeight: 700 }}>
+                  {(tva.differenceAmount || 0) >= 0 ? '+' : ''}
+                  {money(tva.differenceAmount ?? totalValue)}
+                </td>
+                <td>
+                  <strong>{tva.hasTarget ? `${tva.achievementPct}%` : '—'}</strong>
+                </td>
+                <td>
+                  <span className={`perf-indicator-badge ${tva.performanceIndicator?.color || 'neutral'}`}>
+                    {tva.performanceIndicator?.label || 'No Target Set'}
                   </span>
-                )}
-              </div>
-            </div>
+                </td>
+              </tr>
 
-            {/* Visual Bar Comparison */}
-            <div className="target-bar-container">
-              <div className="target-bar-track">
-                <div
-                  className="target-bar-fill today-fill"
-                  style={{ width: `${maxSales ? Math.min(100, Math.max(10, Math.round((todayAchieved / maxSales) * 100))) : 0}%` }}
-                />
-              </div>
-              <div className="target-bar-meta">
-                <span>Achieved: <b>{money(todayAchieved)}</b></span>
-                <span className="target-meta-right">
-                  {targetConfigured ? `Target: ${money(targetConfigured)}` : 'Target: —'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Yesterday Card */}
-          <div className="target-day-card">
-            <div className="target-day-head">
-              <div>
-                <span className="target-day-badge yesterday">YESTERDAY</span>
-                <h3>{yestLabelStr}</h3>
-              </div>
-              <span className="target-count-pill">{yestOrders.length} {yestOrders.length === 1 ? 'order' : 'orders'}</span>
-            </div>
-
-            <div className="target-values-row">
-              <div className="target-val-block">
-                <small>Achieved sales</small>
-                <b className="achieved-text">{money(yestAchieved)}</b>
-              </div>
-
-              <div className="target-val-block">
-                <small>Target sales</small>
-                {targetConfigured ? (
-                  <b className="target-text">{money(targetConfigured)}</b>
-                ) : (
-                  <span className="target-unconfigured-pill" title="Target not configured in backend database">
-                    Target not configured
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Visual Bar Comparison */}
-            <div className="target-bar-container">
-              <div className="target-bar-track">
-                <div
-                  className="target-bar-fill yest-fill"
-                  style={{ width: `${maxSales ? Math.min(100, Math.max(10, Math.round((yestAchieved / maxSales) * 100))) : 0}%` }}
-                />
-              </div>
-              <div className="target-bar-meta">
-                <span>Achieved: <b>{money(yestAchieved)}</b></span>
-                <span className="target-meta-right">
-                  {targetConfigured ? `Target: ${money(targetConfigured)}` : 'Target: —'}
-                </span>
-              </div>
-            </div>
-          </div>
+              {(tva.items || []).map((row) => (
+                <tr key={row.itemId}>
+                  <td>
+                    <strong>{row.itemName}</strong>
+                  </td>
+                  <td>
+                    {row.targetAmount > 0 ? money(row.targetAmount) : '—'}{' '}
+                    {row.targetQty > 0 ? `(${row.targetQty} ${row.unit || 'kg'})` : ''}
+                  </td>
+                  <td>
+                    <strong>{money(row.actualAmount)}</strong> ({row.actualQty} {row.unit || 'kg'})
+                  </td>
+                  <td style={{ color: row.differenceAmount >= 0 ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                    {row.differenceAmount >= 0 ? '+' : ''}
+                    {money(row.differenceAmount)} ({row.differenceQty >= 0 ? '+' : ''}{row.differenceQty} {row.unit || 'kg'})
+                  </td>
+                  <td>
+                    <strong>{row.targetAmount > 0 || row.targetQty > 0 ? `${row.achievementPct}%` : '—'}</strong>
+                  </td>
+                  <td>
+                    <span className={`perf-indicator-badge ${row.performanceIndicator?.color || 'neutral'}`}>
+                      {row.performanceIndicator?.label || 'No Target Set'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-
-        {/* Clear Notice when Target Data is Unconfigured */}
-        {!targetConfigured && (
-          <div className="target-info-notice">
-            <span className="target-notice-icon">ℹ</span>
-            <div className="target-notice-text">
-              <strong>Target data not configured:</strong> Sales targets are not currently set in the database schema. To display real target comparisons, add a <code>daily_target</code> field to the salesperson or cluster route records. Achieved sales above reflect real order values.
-            </div>
-          </div>
-        )}
       </section>
 
-      {/* Main Reports Layout: Multi-column on wide, stacked on mobile */}
-      <div className="report-layout">
-        {/* Left Column */}
+      {/* Delivery Status by Day (Selecting an In Progress count for a previous day opens matching orders & details) */}
+      <section className="table-panel" style={{ marginBottom: '20px' }}>
+        <div className="table-heading" style={{ flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <h2>Delivery Status by Order Date & Expected Delivery Date</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
+              Orders placed today default to tomorrow as their expected delivery date; yesterday’s orders are due today. Select any <b>In Progress</b> count (including previous days) to view the matching orders and item details.
+            </p>
+          </div>
+        </div>
+
+        <div className="table-scroll-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Order Date</th>
+                <th>Expected Delivery Date</th>
+                <th>Total Orders</th>
+                <th>Delivered</th>
+                <th>In Progress (Click to inspect)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dailyDeliveryStatus.length > 0 ? (
+                dailyDeliveryStatus.map((day) => {
+                  const isYesterday = day.date === yestIST;
+                  const isToday = day.date === todayIST;
+                  return (
+                    <tr key={day.date}>
+                      <td>
+                        <strong>{dateLabel(day.date)}</strong>
+                        {isToday && (
+                          <span className="shop-code-pill" style={{ marginLeft: '6px' }}>Today</span>
+                        )}
+                        {isYesterday && (
+                          <span className="shop-code-pill" style={{ marginLeft: '6px', background: '#fef3c7', color: '#92400e', borderColor: '#fde68a' }}>
+                            Yesterday
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <strong style={{ color: '#0369a1' }}>{dateLabel(day.expectedDeliveryDate)}</strong>
+                        {day.expectedDeliveryDate === todayIST && (
+                          <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: '#0369a1' }}>
+                            (Due Today)
+                          </span>
+                        )}
+                      </td>
+                      <td>{day.totalOrders}</td>
+                      <td>
+                        <span className="status delivered">{day.deliveredCount} Delivered</span>
+                      </td>
+                      <td>
+                        {day.inProgressCount > 0 ? (
+                          <button
+                            type="button"
+                            className="inprogress-drilldown-btn"
+                            onClick={() =>
+                              setSelectedDayDrilldown({
+                                date: day.date,
+                                expectedDeliveryDate: day.expectedDeliveryDate,
+                                orders: day.inProgressOrders || []
+                              })
+                            }
+                            title={`View ${day.inProgressCount} In Progress orders for ${day.date}`}
+                          >
+                            ⏳ {day.inProgressCount} In Progress — View orders →
+                          </button>
+                        ) : (
+                          <span style={{ color: '#64748b', fontSize: '12px' }}>0 In Progress</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan="5">
+                    <div className="empty-state">No delivery records found for your assigned cluster scope.</div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Drill-down Modal/Panel for Previous-Day (or Selected-Day) In Progress Orders */}
+      {selectedDayDrilldown && (
+        <section
+          className="panel"
+          role="region"
+          aria-label={`In Progress orders for ${selectedDayDrilldown.date}`}
+          style={{
+            marginBottom: '20px',
+            border: '2px solid #f59e0b',
+            background: '#fffdf7'
+          }}
+        >
+          <div className="panel-head" style={{ borderBottom: '1px solid #fde68a', paddingBottom: '10px' }}>
+            <div>
+              <h2 style={{ color: '#92400e' }}>
+                ⏳ In Progress Orders for {dateLabel(selectedDayDrilldown.date)} ({selectedDayDrilldown.orders.length})
+              </h2>
+              <p style={{ color: '#78350f', fontSize: '12px' }}>
+                Expected delivery date: <b>{dateLabel(selectedDayDrilldown.expectedDeliveryDate)}</b> · Showing full order & line-item details.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setSelectedDayDrilldown(null)}
+            >
+              ✕ Close details
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {selectedDayDrilldown.orders.map((ord) => (
+              <div
+                key={ord.orderId || ord.id}
+                style={{
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  padding: '12px 14px'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                  <div>
+                    <strong style={{ fontSize: '13.5px', color: '#0f172a' }}>
+                      Order #{ord.orderId || ord.id} · {ord.shopName}
+                    </strong>
+                    {ord.shopId && <span className="shop-code-pill" style={{ marginLeft: '8px' }}>{ord.shopId}</span>}
+                    <div style={{ fontSize: '12px', color: '#475569', marginTop: '2px' }}>
+                      Order Date: <b>{dateLabel(ord.date)}</b> · Expected Delivery: <b style={{ color: '#0369a1' }}>{dateLabel(ord.expectedDeliveryDate)}</b>
+                      {ord.locationText && ` · 📍 ${ord.locationText}`}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span className="status in-progress">{ord.status}</span>
+                    <div style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a', marginTop: '4px' }}>
+                      {money(ord.total)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="table-scroll-container">
+                  <table className="history-items-table">
+                    <thead>
+                      <tr>
+                        <th>Item Description</th>
+                        <th>Ordered Quantity</th>
+                        <th>Catalog Price</th>
+                        <th style={{ textAlign: 'right' }}>Line Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(ord.orderList || []).map((it, idx) => {
+                        const unit = it.unit || 'kg';
+                        const lineTot = Number(it.qty || 0) * Number(it.price || 0);
+                        return (
+                          <tr key={idx}>
+                            <td><b>{it.itemName}</b></td>
+                            <td>
+                              <span className="qty-highlight">
+                                {it.qty} {unit}
+                              </span>
+                            </td>
+                            <td>
+                              {money(it.price)}/{unit}
+                              {it.requestedPrice !== null && it.requestedPrice !== undefined && (
+                                <span style={{ display: 'block', fontSize: '11px', color: '#92400e' }}>
+                                  Requested: {money(it.requestedPrice)}/{unit} ({it.priceRequestStatus || 'pending'})
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right' }}><b>{money(lineTot)}</b></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Main Reports Layout */}
+      <div className="report-layout" style={{ marginBottom: '20px' }}>
         <div className="report-main-col">
-          {/* Order Performance Panel */}
-          <section className="panel" style={{ marginBottom: '16px' }}>
-            <div className="panel-head">
-              <div>
-                <h2>Order performance</h2>
-                <p>Volume and fulfillment at a glance across routes</p>
-              </div>
-            </div>
-
-            <div className="report-kpis">
-              <div className="report-kpi">
-                <span>Total orders</span>
-                <b>{clusterFilteredOrders.length}</b>
-              </div>
-              <div className="report-kpi">
-                <span>Delivered</span>
-                <b>{deliveredCount}</b>
-              </div>
-              <div className="report-kpi">
-                <span>Order value</span>
-                <b>{money(totalValue)}</b>
-              </div>
-            </div>
-
-            <div className="chart">
-              <div className="chart-grid">
-                <div className="grid-row"><span>20</span></div>
-                <div className="grid-row"><span>15</span></div>
-                <div className="grid-row"><span>10</span></div>
-                <div className="grid-row"><span>5</span></div>
-                <div className="grid-row"><span>0</span></div>
-              </div>
-              <svg viewBox="0 0 600 145" preserveAspectRatio="none" aria-label="Order trend chart">
-                <path
-                  d="M0 112 C35 103 48 110 86 88 S142 72 172 84 S223 95 258 59 S309 65 344 51 S391 70 430 45 S489 28 514 46 S560 34 600 13"
-                  fill="none"
-                  stroke="#16acd5"
-                  strokeWidth="3"
-                  vectorEffect="non-scaling-stroke"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M0 128 C48 120 62 125 86 113 S143 100 172 107 S223 118 258 91 S309 100 344 80 S391 92 430 74 S489 63 514 78 S560 61 600 50"
-                  fill="none"
-                  stroke="#526e7f"
-                  strokeWidth="2.5"
-                  vectorEffect="non-scaling-stroke"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-            <div className="chart-labels">
-              <span>18 Oct</span>
-              <span>19 Oct</span>
-              <span>20 Oct</span>
-              <span>21 Oct</span>
-              <span>22 Oct</span>
-              <span>23 Oct</span>
-              <span>24 Oct</span>
-            </div>
-          </section>
-
           {/* Order Status Summary Table Panel */}
           <section className="table-panel">
             <div className="table-heading">
               <h2>Order status log <span className="muted-count">({shownOrders.length})</span></h2>
-              <button
-                className="view-all"
-                onClick={() => onNavigate('orders')}
-              >
+              <button className="view-all" onClick={() => onNavigate('orders')}>
                 ＋ New order →
               </button>
             </div>
@@ -397,6 +738,7 @@ export default function ReportsScreen({
                     <th>Order ID</th>
                     <th>Customer</th>
                     <th>Order date</th>
+                    <th>Expected delivery</th>
                     <th>Items</th>
                     <th>Total</th>
                     <th>Status</th>
@@ -404,76 +746,73 @@ export default function ReportsScreen({
                 </thead>
                 <tbody>
                   {shownOrders.length > 0 ? (
-                    shownOrders.map((o) => (
-                      <tr key={o.id}>
-                        <td>
-                          <strong className="order-id-tag">{o.id}</strong>
-                          {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
-                            <span style={{ display: 'block', fontSize: '10px', color: '#ed6c02', fontWeight: 600 }}>
-                              ⏳ Waiting to sync
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <div className="customer-cell">
-                            <span className="customer-dot">{initials(o.customer)}</span>
-                            <div>
-                              <strong>{o.customer}</strong>
-                              {o.shopId && <small className="order-shop-badge">{o.shopId}</small>}
-                            </div>
-                          </div>
-                        </td>
-                        <td>{dateLabel(o.date)}</td>
-                        <td>{o.itemsCount || o.items || 1} items</td>
-                        <td><strong>{money(o.total)}</strong></td>
-                        <td>
-                          {(() => {
-                            const pay = getPaymentSummary(o);
-                            return (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                                  <span
-                                    className={`status ${(o.status || 'pending').toLowerCase().replace(/\s/g, '-')}`}
-                                  >
-                                    {o.status || 'Pending'}
-                                  </span>
-                                  <span style={{
-                                    fontSize: '10px',
-                                    fontWeight: 700,
-                                    padding: '1px 6px',
-                                    borderRadius: '999px',
-                                    background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
-                                    color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
-                                  }}>
-                                    {pay.paymentStatus}
-                                  </span>
-                                  {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
-                                    <span style={{
-                                      fontSize: '10px',
-                                      color: '#ed6c02',
-                                      background: '#fff7ed',
-                                      border: '1px solid #fed7aa',
-                                      padding: '1px 5px',
-                                      borderRadius: '8px',
-                                      fontWeight: 600
-                                    }}>
-                                      Offline
-                                    </span>
-                                  )}
-                                </div>
-                                <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
-                                  {pay.summaryText}
-                                </span>
+                    shownOrders.map((o) => {
+                      const dStr = String(o.date || o.orderDate || '').slice(0, 10);
+                      const expDeliv = o.expectedDeliveryDate || addDaysToDateStr(dStr, 1);
+                      return (
+                        <tr
+                          key={o.id}
+                          onClick={() => setSelectedOrderDetail(selectedOrderDetail?.id === o.id ? null : o)}
+                          style={{ cursor: 'pointer' }}
+                          title="Click to view ordered item details"
+                        >
+                          <td>
+                            <strong className="order-id-tag">{o.id}</strong>
+                            {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
+                              <span style={{ display: 'block', fontSize: '11px', color: '#ed6c02', fontWeight: 600 }}>
+                                ⏳ Waiting to sync
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="customer-cell">
+                              <span className="customer-dot">{initials(o.customer || o.shopName)}</span>
+                              <div>
+                                <strong>{o.customer || o.shopName}</strong>
+                                {o.shopId && <small className="order-shop-badge">{o.shopId}</small>}
                               </div>
-                            );
-                          })()}
-                        </td>
-                      </tr>
-                    ))
+                            </div>
+                          </td>
+                          <td>{dateLabel(dStr)}</td>
+                          <td>
+                            <strong style={{ color: '#0369a1' }}>{dateLabel(expDeliv)}</strong>
+                          </td>
+                          <td>{o.itemsCount || o.items || (o.orderList || []).length || 1} items</td>
+                          <td><strong>{money(o.total)}</strong></td>
+                          <td>
+                            {(() => {
+                              const pay = getPaymentSummary(o);
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                    <span className={`status ${(o.status || 'pending').toLowerCase().replace(/\s/g, '-')}`}>
+                                      {o.status || 'In progress'}
+                                    </span>
+                                    <span style={{
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      padding: '1px 6px',
+                                      borderRadius: '999px',
+                                      background: pay.paymentStatus === 'Collected' ? '#dcfce7' : (pay.paymentStatus === 'Partially collected' ? '#fef3c7' : '#f1f5f9'),
+                                      color: pay.paymentStatus === 'Collected' ? '#15803d' : (pay.paymentStatus === 'Partially collected' ? '#b45309' : '#475569')
+                                    }}>
+                                      {pay.paymentStatus}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: 600 }}>
+                                    {pay.summaryText}
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
-                      <td colSpan="6">
-                        <div className="empty-state">No orders match this view.</div>
+                      <td colSpan="7">
+                        <div className="empty-state">No orders match this period and filter.</div>
                       </td>
                     </tr>
                   )}
@@ -481,6 +820,49 @@ export default function ReportsScreen({
               </table>
             </div>
           </section>
+
+          {selectedOrderDetail && (
+            <section className="panel" style={{ marginTop: '14px', border: '1px solid #bae6fd', background: '#f0f9ff' }}>
+              <div className="panel-head">
+                <div>
+                  <h2>Order Summary · #{selectedOrderDetail.id} ({selectedOrderDetail.customer || selectedOrderDetail.shopName})</h2>
+                  <p>
+                    Order Date: {dateLabel(selectedOrderDetail.date)} · Expected Delivery: {dateLabel(selectedOrderDetail.expectedDeliveryDate || addDaysToDateStr(String(selectedOrderDetail.date || '').slice(0, 10), 1))}
+                  </p>
+                </div>
+                <button type="button" className="quiet-button" onClick={() => setSelectedOrderDetail(null)}>
+                  ✕ Close
+                </button>
+              </div>
+              <div className="table-scroll-container">
+                <table className="history-items-table" style={{ background: '#fff' }}>
+                  <thead>
+                    <tr>
+                      <th>Item Description</th>
+                      <th>Ordered Quantity</th>
+                      <th>Catalog Price</th>
+                      <th style={{ textAlign: 'right' }}>Line Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {((selectedOrderDetail.orderList || selectedOrderDetail.itemsList) || []).map((it, idx) => {
+                      const unit = String(it.unitType || it.unit || 'kg').toLowerCase().startsWith('kg') ? 'kg' : String(it.unitType || it.unit || 'kg');
+                      const p = Number(it.price || it.custprice || 0);
+                      const q = Number(it.qty || 0);
+                      return (
+                        <tr key={idx}>
+                          <td><b>{it.itemName || it.name || `Item #${it.itemid}`}</b></td>
+                          <td><span className="qty-highlight">{q} {unit}</span></td>
+                          <td>{money(p)}/{unit}</td>
+                          <td style={{ textAlign: 'right' }}><b>{money(q * p)}</b></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
 
         {/* Right Aside Column */}
@@ -489,7 +871,7 @@ export default function ReportsScreen({
           <section className="panel" style={{ marginBottom: '16px' }}>
             <div className="panel-head">
               <div>
-                <h2>Delivery status</h2>
+                <h2>Delivery status ({periodLabel})</h2>
                 <p>Status breakdown in selected period</p>
               </div>
             </div>
@@ -501,7 +883,7 @@ export default function ReportsScreen({
                 <div className="progress-track">
                   <div
                     className="progress-fill green"
-                    style={{ width: `${clusterFilteredOrders.length ? (deliveredCount / clusterFilteredOrders.length) * 100 : 70}%` }}
+                    style={{ width: `${clusterFilteredOrders.length ? (deliveredCount / clusterFilteredOrders.length) * 100 : 0}%` }}
                   />
                 </div>
               </div>
@@ -512,50 +894,92 @@ export default function ReportsScreen({
                 <div className="progress-track">
                   <div
                     className="progress-fill yellow"
-                    style={{ width: `${clusterFilteredOrders.length ? (inProgressCount / clusterFilteredOrders.length) * 100 : 25}%` }}
+                    style={{ width: `${clusterFilteredOrders.length ? (inProgressCount / clusterFilteredOrders.length) * 100 : 0}%` }}
                   />
                 </div>
               </div>
 
               <div className="summary-item">
-                <span className="summary-title">Pending</span>
-                <span className="summary-value">{pendingCount}</span>
+                <span className="summary-title">Price approval pending</span>
+                <span className="summary-value">{pendingApprovalCount}</span>
                 <div className="progress-track">
                   <div
                     className="progress-fill"
-                    style={{ width: `${clusterFilteredOrders.length ? (pendingCount / clusterFilteredOrders.length) * 100 : 15}%` }}
+                    style={{ width: `${clusterFilteredOrders.length ? (pendingApprovalCount / clusterFilteredOrders.length) * 100 : 0}%` }}
                   />
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Most Ordered Items */}
+          {/* Ordered Commodities (From Saved Order Data Only) */}
           <section className="panel">
             <div className="panel-head">
               <div>
-                <h2>Most ordered produce</h2>
-                <p>By total volume delivered this week</p>
+                <h2>Ordered commodities ({periodLabel})</h2>
+                <p>Actual quantities from saved orders (in kg)</p>
               </div>
             </div>
 
-            <div className="summary-list">
-              {topItems.map((x, i) => (
-                <div key={x.name} className="summary-item">
-                  <span className="summary-title">{i + 1}. {x.name}</span>
-                  <span className="summary-value">{x.qty}</span>
-                  <div className="progress-track">
-                    <div
-                      className={`progress-fill ${x.color}`}
-                      style={{ width: `${x.pct}%` }}
-                    />
+            {orderedCommodities.length === 0 ? (
+              <div style={{ fontSize: '12.5px', color: '#64748b', padding: '12px 0' }}>
+                No commodities ordered in the selected period.
+              </div>
+            ) : (
+              <div className="summary-list">
+                {orderedCommodities.map((x, i) => (
+                  <div key={x.name} className="summary-item">
+                    <span className="summary-title">{i + 1}. {x.name}</span>
+                    <span className="summary-value">{x.qty} {x.unit}</span>
+                    <div className="progress-track">
+                      <div
+                        className={`progress-fill ${x.color}`}
+                        style={{ width: `${x.pct}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         </aside>
       </div>
+
+      {/* Bottom Performance Indicator Reference Table (Placed at the bottom of the report page) */}
+      <section className="table-panel" style={{ marginTop: '24px' }}>
+        <div className="table-heading">
+          <div>
+            <h2>Performance Indicator Reference Table</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
+              Standard achievement bands used to evaluate Target vs Actual sales performance across periods.
+            </p>
+          </div>
+        </div>
+        <div className="table-scroll-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Performance Indicator</th>
+                <th>Achievement % Range</th>
+                <th>Interpretation & Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perfScale.map((row) => (
+                <tr key={row.band}>
+                  <td>
+                    <span className={`perf-indicator-badge ${row.color}`}>
+                      {row.band}
+                    </span>
+                  </td>
+                  <td><strong>{row.range}</strong></td>
+                  <td>{row.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

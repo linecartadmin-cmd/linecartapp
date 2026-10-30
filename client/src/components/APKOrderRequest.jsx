@@ -200,7 +200,7 @@ export default function APKOrderRequest({ user }) {
         price: Number(it.price),
         catalogPrice: Number(it.price),
         actprice: Number(it.price),
-        custprice: hasReq ? Number(it.cprice) : Number(it.price),
+        custprice: Number(it.price),
         requestedPrice: hasReq ? Number(it.cprice) : undefined,
         spersonid,
         clusterid: oselectedCluster,

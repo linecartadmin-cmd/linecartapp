@@ -513,8 +513,8 @@ const authorizeManagerAccess = (req, res, requestedManagerId) => {
 /**
  * Determine authorized wholesale cluster IDs for a given caller.
  * - Admin: all clusters.
- * - Sales Manager: their cluster plus clusters of their assigned field agents.
- * - Field Sales Agent / Delivery Agent: their assigned cluster.
+ * - Sales Manager: their cluster plus clusters of their assigned field agents and their shops.
+ * - Field Sales Agent: strictly clusters containing shops assigned to them (fallback to user cluster_id if none).
  */
 function getAuthorizedClusterIds(caller) {
   if (!caller) return [];
@@ -527,10 +527,230 @@ function getAuthorizedClusterIds(caller) {
     const assignedClusters = salesPersons
       .filter((s) => assignedAgentIds.includes(Number(s.id)))
       .map((s) => Number(s.clusterid || 1));
+    const teamShopClusters = shops
+      .filter((sh) => assignedAgentIds.includes(Number(sh.assignedAgentId || sh.assigned_agent_id || sh.createdby || 0)))
+      .map((sh) => Number(sh.clusterid || 1));
     const ownCluster = Number(caller.clusterid || 1);
-    return Array.from(new Set([ownCluster, ...assignedClusters]));
+    return Array.from(new Set([ownCluster, ...assignedClusters, ...teamShopClusters]));
+  }
+  if (callerRole === 'field sales agent') {
+    const agentShops = shops.filter(
+      (sh) => Number(sh.assignedAgentId || sh.assigned_agent_id) === Number(caller.id)
+    );
+    if (agentShops.length > 0) {
+      return Array.from(new Set(agentShops.map((sh) => Number(sh.clusterid || 1))));
+    }
   }
   return [Number(caller.clusterid || 1)];
+}
+
+/**
+ * Return YYYY-MM-DD in the app's local timezone (Asia/Kolkata).
+ */
+function getIstDateString(dateObj = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(dateObj);
+}
+
+/**
+ * Add or subtract days from a YYYY-MM-DD date string safely.
+ */
+function addDaysToDateStr(dateStr, days) {
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))
+    ? String(dateStr)
+    : getIstDateString();
+  const dt = new Date(`${base}T00:00:00Z`);
+  if (isNaN(dt.getTime())) return base;
+  return new Date(dt.getTime() + Number(days) * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * Resolve report period (today, 7d / last_7_days, 30d / last_30_days, or custom fromDate/toDate)
+ * consistently in Asia/Kolkata local timezone.
+ */
+function resolveReportPeriodRange(query = {}) {
+  const todayStr = (query.today && /^\d{4}-\d{2}-\d{2}$/.test(String(query.today)))
+    ? String(query.today)
+    : getIstDateString();
+  const rawPeriod = String(query.period || query.range || '').trim().toLowerCase();
+
+  let fromDate = query.fromDate || query.startDate || '';
+  let toDate = query.toDate || query.endDate || '';
+  let periodKey = 'custom';
+  let periodLabel = 'Selected Period';
+
+  if (rawPeriod === 'today' || rawPeriod === '1d') {
+    fromDate = todayStr;
+    toDate = todayStr;
+    periodKey = 'today';
+    periodLabel = 'Today';
+  } else if (['7d', 'last7days', 'last_7_days', '7days', 'week', 'this_week'].includes(rawPeriod)) {
+    fromDate = addDaysToDateStr(todayStr, -6);
+    toDate = todayStr;
+    periodKey = '7d';
+    periodLabel = 'Last 7 days';
+  } else if (['30d', 'last30days', 'last_30_days', '30days', 'month', 'this_month'].includes(rawPeriod)) {
+    fromDate = addDaysToDateStr(todayStr, -29);
+    toDate = todayStr;
+    periodKey = '30d';
+    periodLabel = 'Last 30 days';
+  } else if (rawPeriod === 'all' || rawPeriod === 'all_time') {
+    periodKey = 'all';
+    periodLabel = 'All time';
+  }
+
+  let periodDays = 1;
+  if (fromDate && toDate && /^\d{4}-\d{2}-\d{2}$/.test(fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    const d1 = new Date(`${fromDate}T00:00:00Z`);
+    const d2 = new Date(`${toDate}T00:00:00Z`);
+    if (!isNaN(d1.getTime()) && !isNaN(d2.getTime()) && d2 >= d1) {
+      periodDays = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1);
+    }
+    if (periodKey === 'custom') {
+      if (fromDate === todayStr && toDate === todayStr) {
+        periodKey = 'today';
+        periodLabel = 'Today';
+      } else if (periodDays === 7 && toDate === todayStr) {
+        periodKey = '7d';
+        periodLabel = 'Last 7 days';
+      } else if (periodDays === 30 && toDate === todayStr) {
+        periodKey = '30d';
+        periodLabel = 'Last 30 days';
+      } else {
+        periodLabel = `${fromDate} to ${toDate}`;
+      }
+    }
+  } else if (!fromDate && !toDate && periodKey !== 'all') {
+    // When no dates or period are specified, keep unfiltered or default metadata to 7d for frequency calculation
+    periodDays = 7;
+  }
+
+  return {
+    todayStr,
+    fromDate: fromDate || null,
+    toDate: toDate || null,
+    periodKey,
+    periodLabel,
+    periodDays,
+    timezone: 'Asia/Kolkata'
+  };
+}
+
+const PERFORMANCE_INDICATOR_SCALE = [
+  { tier: 'excellent', label: 'Excellent (Target Met)', range: '≥ 100%', minPct: 100, maxPct: null, color: '#15803d', bg: '#dcfce7', description: 'Quota achieved or exceeded for the period' },
+  { tier: 'good', label: 'Good (On Track)', range: '80% – 99%', minPct: 80, maxPct: 99.99, color: '#0369a1', bg: '#e0f2fe', description: 'Strong progress; nearing target quota' },
+  { tier: 'fair', label: 'Needs Improvement', range: '50% – 79%', minPct: 50, maxPct: 79.99, color: '#b45309', bg: '#fef3c7', description: 'Moderate progress; requires follow-up visits' },
+  { tier: 'critical', label: 'Below Target (< 50%)', range: '< 50%', minPct: 0, maxPct: 49.99, color: '#b91c1c', bg: '#fee2e2', description: 'Significant gap against target; immediate attention needed' }
+];
+
+function getPerformanceIndicator(achievementPct, hasTarget = true) {
+  if (!hasTarget) {
+    return {
+      tier: 'unconfigured',
+      label: 'Target Not Set',
+      range: 'N/A',
+      color: '#475569',
+      bg: '#f1f5f9',
+      description: 'No target quota configured for this scope'
+    };
+  }
+  const pct = Number(achievementPct || 0);
+  if (pct >= 100) return PERFORMANCE_INDICATOR_SCALE[0];
+  if (pct >= 80) return PERFORMANCE_INDICATOR_SCALE[1];
+  if (pct >= 50) return PERFORMANCE_INDICATOR_SCALE[2];
+  return PERFORMANCE_INDICATOR_SCALE[3];
+}
+
+/**
+ * Compute Frequently Ordered Customers (Sales Manager / Admin ONLY).
+ * Frequency definition: an order at least once every two days within the selected period.
+ */
+function computeFrequentlyOrderedCustomers(ordersInScope = [], shopsInScope = [], periodInfo = {}) {
+  const periodDays = Math.max(1, Number(periodInfo.periodDays || 7));
+  const minOrdersRequired = periodDays <= 2 ? 1 : Math.max(1, Math.floor(periodDays / 2));
+  const startLabel = periodInfo.fromDate || addDaysToDateStr(periodInfo.todayStr || getIstDateString(), -(periodDays - 1));
+  const endLabel = periodInfo.toDate || periodInfo.todayStr || getIstDateString();
+  const calculationPeriodText = `${startLabel} to ${endLabel} (${periodDays} ${periodDays === 1 ? 'day' : 'days'})`;
+
+  const shopLookup = new Map();
+  for (const s of (shopsInScope || [])) {
+    shopLookup.set(Number(s.shopid), s);
+  }
+
+  const byShop = new Map();
+  for (const o of (ordersInScope || [])) {
+    const st = String(o.status || '').toLowerCase();
+    if (st === 'cancelled') continue;
+    const sid = Number(o.customerId || o.shopid || 0);
+    if (!sid) continue;
+    if (!byShop.has(sid)) {
+      const sh = shopLookup.get(sid);
+      byShop.set(sid, {
+        shopId: sid,
+        shopShortId: o.shopId || `S${String(sid).padStart(3, '0')}`,
+        shopName: o.customer || o.shopName || sh?.shopName || `Shop #${sid}`,
+        shopCategory: o.shopCategory || sh?.shopCategory || 'Retail',
+        clusterId: Number(o.clusterId || sh?.clusterid || 1),
+        orderCount: 0,
+        orderDates: new Set(),
+        totalAmount: 0,
+        totalQtyKg: 0,
+        latestOrderDate: ''
+      });
+    }
+    const rec = byShop.get(sid);
+    rec.orderCount += 1;
+    const dStr = String(o.date || '').slice(0, 10);
+    if (dStr) {
+      rec.orderDates.add(dStr);
+      if (!rec.latestOrderDate || dStr > rec.latestOrderDate) {
+        rec.latestOrderDate = dStr;
+      }
+    }
+    rec.totalAmount += Number(o.total || 0);
+    const itemsQty = (o.orderList || []).reduce((s, it) => s + (parseFloat(it.qty) || 0), 0);
+    rec.totalQtyKg += itemsQty;
+  }
+
+  const customers = Array.from(byShop.values())
+    .filter((c) => c.orderCount >= minOrdersRequired)
+    .map((c) => {
+      const avgDaysPerOrder = Number((periodDays / Math.max(1, c.orderCount)).toFixed(1));
+      return {
+        shopId: c.shopId,
+        shopShortId: c.shopShortId,
+        shopName: c.shopName,
+        shopCategory: c.shopCategory,
+        clusterId: c.clusterId,
+        orderCount: c.orderCount,
+        distinctOrderDays: c.orderDates.size,
+        totalAmount: Number(c.totalAmount.toFixed(2)),
+        totalQtyKg: Number(c.totalQtyKg.toFixed(2)),
+        latestOrderDate: c.latestOrderDate,
+        averageDaysBetweenOrders: avgDaysPerOrder,
+        frequencyLabel: `1 order every ${avgDaysPerOrder} ${avgDaysPerOrder === 1 ? 'day' : 'days'}`,
+        calculationPeriod: calculationPeriodText,
+        periodDays,
+        minOrdersRequired
+      };
+    })
+    .sort((a, b) => b.orderCount - a.orderCount || b.totalAmount - a.totalAmount);
+
+  return {
+    rule: 'At least 1 order every 2 days within the selected period',
+    periodLabel: periodInfo.periodLabel || 'Selected Period',
+    calculationPeriod: calculationPeriodText,
+    fromDate: startLabel,
+    toDate: endLabel,
+    periodDays,
+    minOrdersRequired,
+    count: customers.length,
+    customers
+  };
 }
 
 /**
@@ -687,8 +907,8 @@ app.use((req, res, next) => {
   });
 });
 
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Safe Request Logger (NEVER logs passwords, tokens, or sensitive query parameters)
 app.use((req, res, next) => {
@@ -739,6 +959,11 @@ app.get(['/health', '/api/health'], async (req, res) => {
     const ordersCount = Number(ordersRes.rows[0]?.cnt || 0);
     const usersRes = await db.query('SELECT COUNT(*) AS cnt FROM users');
     const usersCount = Number(usersRes.rows[0]?.cnt || 0);
+    let migrations = [];
+    try {
+      const migRes = await db.query('SELECT version FROM schema_migrations ORDER BY version ASC');
+      migrations = (migRes.rows || []).map((r) => r.version);
+    } catch {}
 
     res.json({
       status: 'healthy',
@@ -749,7 +974,8 @@ app.get(['/health', '/api/health'], async (req, res) => {
         connected: true,
         shopsCount,
         usersCount,
-        ordersCount
+        ordersCount,
+        migrations
       },
       storage: {
         provider: useSupabaseStorage ? 'supabase-storage' : 'local-disk'
@@ -1354,29 +1580,41 @@ function canCallerAccessShop(caller, shop) {
 }
 
 // Compute live cluster statistics from real persisted database shops & orders
-function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops = null) {
+function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops = null, allDateScopedOrders = null) {
   const cId = Number(clusterId);
   const clusterShops = (scopedShops !== null ? scopedShops : shops).filter(
     (s) => Number(s.clusterid || s.cluster_id) === cId
   );
   const allOrders = scopedOrders !== null ? scopedOrders : submittedOrders;
+  const fullClusterOrders = (allDateScopedOrders !== null ? allDateScopedOrders : allOrders).filter((o) => {
+    if (Number(o.clusterId || o.cluster_id) !== cId) return false;
+    const st = String(o.status || '').toLowerCase();
+    return st !== 'cancelled';
+  });
 
-  // Non-cancelled orders for this cluster
+  // Non-cancelled orders for this cluster within current date filter
   const clusterOrders = allOrders.filter((o) => {
     if (Number(o.clusterId || o.cluster_id) !== cId) return false;
     const st = String(o.status || '').toLowerCase();
     return st !== 'cancelled';
   });
 
-  // Unique shops with at least one active order in this cluster
+  // Unique shops with at least one active order or visit in this cluster
   const orderedShopIds = new Set();
+  const visitedShopIds = new Set();
   clusterOrders.forEach((o) => {
     const sId = Number(o.customerId || o.shopid || o.shopId || 0);
-    if (sId > 0) orderedShopIds.add(sId);
+    if (sId > 0) {
+      orderedShopIds.add(sId);
+      visitedShopIds.add(sId);
+    }
   });
 
-  const totalshops = clusterShops.length;
-  const totalorderedshops = Math.min(totalshops, orderedShopIds.size);
+  const assignedShopsCount = clusterShops.length;
+  const orderedShopsCount = orderedShopIds.size;
+  const visitedShopsCount = visitedShopIds.size;
+  const totalshops = assignedShopsCount;
+  const totalorderedshops = Math.min(totalshops, orderedShopsCount);
   const totalnotorderedshops = Math.max(0, totalshops - totalorderedshops);
 
   // Group items by itemid from real persisted orderList lines
@@ -1386,6 +1624,8 @@ function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops
     const orderStatus = String(o.status || '').toLowerCase();
     const isDelivered = orderStatus === 'delivered';
     const isPendingApproval = orderStatus === 'price approval pending';
+    const orderDateStr = String(o.date || o.orderDate || '').slice(0, 10);
+    const expDeliveryDate = o.expectedDeliveryDate || (orderDateStr ? addDaysToDateStr(orderDateStr, 1) : '');
 
     const lines = Array.isArray(o.orderList) ? o.orderList : [];
     for (const item of lines) {
@@ -1394,15 +1634,18 @@ function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops
       const itemName = String(item.itemName || item.name || `Item ${itemId}`);
       const qty = parseFloat(item.qty || 0) || 0;
       if (qty <= 0) continue;
+      const unitType = String(item.unitType || item.unit || 'kg');
 
       if (!itemMap.has(itemId)) {
         itemMap.set(itemId, {
           id: itemId,
           name: itemName,
+          unit: unitType.toLowerCase().startsWith('kg') ? 'kg' : unitType,
           totalcount: 0,
           delivered: 0,
           inprogress: 0,
-          pendingApproval: 0
+          pendingApproval: 0,
+          inProgressOrders: []
         });
       }
 
@@ -1414,18 +1657,122 @@ function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops
         entry.pendingApproval += qty;
       } else {
         entry.inprogress += qty;
+        entry.inProgressOrders.push({
+          orderId: o.orderId || o.id,
+          id: o.id || o.orderId,
+          shopId: o.shopId || o.customerId,
+          shopName: o.shopName || o.customer || 'Shop',
+          shopCategory: o.shopCategory || 'Retail',
+          agentName: o.agentName || '',
+          date: orderDateStr,
+          expectedDeliveryDate: expDeliveryDate,
+          status: o.status || 'In progress',
+          itemQty: qty,
+          unit: entry.unit,
+          total: Number(o.total || 0),
+          orderList: lines.filter((l) => (parseFloat(l.qty) || 0) > 0).map((l) => ({
+            itemid: l.itemid || l.itemId,
+            itemName: l.itemName || l.name || `Item ${l.itemid || l.itemId}`,
+            qty: parseFloat(l.qty) || 0,
+            unit: (l.unitType || l.unit || 'kg').toLowerCase().startsWith('kg') ? 'kg' : (l.unitType || l.unit || 'kg'),
+            price: parseFloat(l.price || l.custprice || l.actprice || 0),
+            requestedPrice: l.requestedPrice !== undefined && l.requestedPrice !== null ? parseFloat(l.requestedPrice) : null,
+            priceRequestStatus: l.priceRequestStatus || null
+          }))
+        });
       }
     }
   }
+
+  // Build dailyDeliveryStatus (including previous days so selecting an In Progress count for a previous day opens matching orders)
+  const byDateMap = new Map();
+  for (const o of fullClusterOrders) {
+    const dStr = String(o.date || o.orderDate || '').slice(0, 10);
+    if (!dStr) continue;
+    const expDeliv = o.expectedDeliveryDate || addDaysToDateStr(dStr, 1);
+    if (!byDateMap.has(dStr)) {
+      byDateMap.set(dStr, {
+        date: dStr,
+        expectedDeliveryDate: expDeliv,
+        totalOrders: 0,
+        deliveredCount: 0,
+        inProgressCount: 0,
+        pendingApprovalCount: 0,
+        totalQty: 0,
+        deliveredQty: 0,
+        inProgressQty: 0,
+        inProgressOrders: [],
+        allOrders: []
+      });
+    }
+    const dayEntry = byDateMap.get(dStr);
+    dayEntry.totalOrders += 1;
+    const st = String(o.status || '').toLowerCase();
+    const isDeliv = st === 'delivered';
+    const isPend = st === 'price approval pending';
+    const activeLines = (Array.isArray(o.orderList) ? o.orderList : [])
+      .filter((l) => (parseFloat(l.qty) || 0) > 0)
+      .map((l) => ({
+        itemid: l.itemid || l.itemId,
+        itemName: l.itemName || l.description || l.name || `Item ${l.itemid || l.itemId}`,
+        description: l.itemName || l.description || l.name || `Item ${l.itemid || l.itemId}`,
+        qty: parseFloat(l.qty) || 0,
+        unit: String(l.unitType || l.unit || 'kg').toLowerCase().startsWith('kg') ? 'kg' : String(l.unitType || l.unit || 'kg'),
+        price: parseFloat(l.price || l.custprice || l.actprice || 0),
+        requestedPrice: l.requestedPrice !== undefined && l.requestedPrice !== null ? parseFloat(l.requestedPrice) : null,
+        priceRequestStatus: l.priceRequestStatus || null
+      }));
+    const orderQty = activeLines.reduce((s, l) => s + l.qty, 0);
+    dayEntry.totalQty = Number((dayEntry.totalQty + orderQty).toFixed(2));
+
+    const orderSummaryObj = {
+      orderId: o.orderId || o.id,
+      id: o.id || o.orderId,
+      shopId: o.shopId || `S${String(o.customerId || '').padStart(3, '0')}`,
+      customerId: o.customerId || o.shopid,
+      shopName: o.shopName || o.customer || 'Shop',
+      shopCategory: o.shopCategory || 'Retail',
+      agentName: o.agentName || '',
+      spersonid: o.spersonid,
+      date: dStr,
+      expectedDeliveryDate: expDeliv,
+      status: o.status || 'In progress',
+      total: Number(o.total || 0),
+      totalQty: Number(orderQty.toFixed(2)),
+      itemsCount: activeLines.length,
+      locationText: o.locationText || null,
+      visitPhotoStatus: o.visitPhotoStatus || null,
+      orderList: activeLines
+    };
+    dayEntry.allOrders.push(orderSummaryObj);
+
+    if (isDeliv) {
+      dayEntry.deliveredCount += 1;
+      dayEntry.deliveredQty = Number((dayEntry.deliveredQty + orderQty).toFixed(2));
+    } else if (isPend) {
+      dayEntry.pendingApprovalCount += 1;
+      dayEntry.inProgressCount += 1;
+      dayEntry.inProgressQty = Number((dayEntry.inProgressQty + orderQty).toFixed(2));
+      dayEntry.inProgressOrders.push(orderSummaryObj);
+    } else {
+      dayEntry.inProgressCount += 1;
+      dayEntry.inProgressQty = Number((dayEntry.inProgressQty + orderQty).toFixed(2));
+      dayEntry.inProgressOrders.push(orderSummaryObj);
+    }
+  }
+
+  const dailyDeliveryStatus = Array.from(byDateMap.values()).sort((a, b) => b.date.localeCompare(a.date));
 
   // deliverystatus: only commodities actually ordered
   const deliverystatus = Array.from(itemMap.values()).map((rec) => ({
     id: rec.id,
     name: rec.name,
+    unit: rec.unit || 'kg',
     totalcount: rec.totalcount,
     delivered: rec.delivered,
     inprogress: rec.inprogress,
     pendingApproval: rec.pendingApproval,
+    inProgressOrders: rec.inProgressOrders,
     fulfillment: rec.totalcount > 0 ? Math.min(100, Math.round((rec.delivered / rec.totalcount) * 100)) : 0
   }));
 
@@ -1433,10 +1780,12 @@ function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops
   const order_item_status = Array.from(itemMap.values()).map((rec) => ({
     id: rec.id,
     name: rec.name,
+    unit: rec.unit || 'kg',
     totalcount: rec.totalcount,
     delivered: rec.delivered,
     inprogress: rec.inprogress,
     pendingApproval: rec.pendingApproval,
+    inProgressOrders: rec.inProgressOrders,
     status: rec.pendingApproval > 0 && rec.delivered === 0 && rec.inprogress === 0
       ? 'Pending approval'
       : rec.delivered === rec.totalcount
@@ -1456,8 +1805,12 @@ function computeClusterStatsForScope(clusterId, scopedOrders = null, scopedShops
     totalshops,
     totalorderedshops,
     totalnotorderedshops,
+    assignedShopsCount,
+    visitedShopsCount,
+    orderedShopsCount,
     deliverystatus,
     order_item_status,
+    dailyDeliveryStatus,
     shopsByCategory
   };
 }
@@ -1482,11 +1835,23 @@ const handleGetHomeReport = async (req, res) => {
     });
   }
 
-  // Scoped orders
-  let baseOrders = submittedOrders;
+  const authorizedClusterIds = getAuthorizedClusterIds(caller);
+  const filterClusterId = req.query.clusterId || req.query.clusterid;
+  if (filterClusterId && filterClusterId !== 'all') {
+    const requestedCid = Number(filterClusterId);
+    if (callerRole !== 'admin' && !authorizedClusterIds.includes(requestedCid)) {
+      return res.status(403).json({
+        status: 403,
+        message: `Access Denied: Cluster #${requestedCid} is outside your assigned scope.`
+      });
+    }
+  }
+
+  // Scoped orders (before date filter, so dailyDeliveryStatus can show previous days' In Progress orders too)
+  let roleScopedOrders = submittedOrders;
   if (callerRole === 'admin') {
     if (reqSpersonId && reqSpersonId !== 'all') {
-      baseOrders = baseOrders.filter((o) => Number(o.spersonid) === Number(reqSpersonId));
+      roleScopedOrders = roleScopedOrders.filter((o) => Number(o.spersonid) === Number(reqSpersonId));
     }
   } else if (callerRole === 'sales manager') {
     const assigned = getAssignedAgentIds(caller.id);
@@ -1494,18 +1859,26 @@ const handleGetHomeReport = async (req, res) => {
       if (!assigned.includes(Number(reqSpersonId))) {
         return res.status(403).json({ status: 403, message: 'Access Denied: Agent is not in your team.' });
       }
-      baseOrders = baseOrders.filter((o) => Number(o.spersonid) === Number(reqSpersonId));
+      roleScopedOrders = roleScopedOrders.filter((o) => Number(o.spersonid) === Number(reqSpersonId));
     } else {
-      baseOrders = baseOrders.filter((o) => assigned.includes(Number(o.spersonid)));
+      roleScopedOrders = roleScopedOrders.filter(
+        (o) => assigned.includes(Number(o.spersonid)) || authorizedClusterIds.includes(Number(o.clusterId))
+      );
     }
   } else {
-    // Field Sales Agent: only their own orders
-    baseOrders = baseOrders.filter((o) => Number(o.spersonid) === Number(effectiveSpersonId));
+    // Field Sales Agent: strictly only their own orders in their assigned clusters
+    roleScopedOrders = roleScopedOrders.filter(
+      (o) => Number(o.spersonid) === Number(effectiveSpersonId) && authorizedClusterIds.includes(Number(o.clusterId))
+    );
   }
 
-  // Filter by date range if provided
-  const fromDate = req.query.fromDate || req.query.startDate;
-  const toDate = req.query.toDate || req.query.endDate;
+  // Resolve report period (today, 7d, 30d or custom fromDate/toDate in Asia/Kolkata)
+  const hasPeriodOrDates = Boolean(req.query.period || req.query.range || req.query.fromDate || req.query.startDate || req.query.toDate || req.query.endDate);
+  const periodInfo = resolveReportPeriodRange(req.query);
+  const fromDate = hasPeriodOrDates ? periodInfo.fromDate : null;
+  const toDate = hasPeriodOrDates ? periodInfo.toDate : null;
+
+  let baseOrders = roleScopedOrders;
   if (fromDate) {
     baseOrders = baseOrders.filter((o) => (o.date || '').slice(0, 10) >= fromDate);
   }
@@ -1526,38 +1899,136 @@ const handleGetHomeReport = async (req, res) => {
     });
   }
 
-  // Filter clusters if clusterId query parameter is provided
-  const filterClusterId = req.query.clusterId || req.query.clusterid;
+  // Filter clusters
   let relevantClusters = clusters;
-  if (filterClusterId && filterClusterId !== 'all') {
-    const matched = clusters.filter((c) => Number(c.clusterId) === Number(filterClusterId));
-    if (matched.length > 0) {
-      relevantClusters = matched;
-    }
+  if (callerRole !== 'admin') {
+    relevantClusters = relevantClusters.filter((c) => authorizedClusterIds.includes(Number(c.clusterId)));
   }
-
-  // For Field Sales Agent: only show clusters containing shops assigned to this agent
-  if (callerRole === 'field sales agent') {
-    relevantClusters = relevantClusters.filter((c) =>
-      scopedShops.some((s) => Number(s.clusterid || s.cluster_id) === Number(c.clusterId))
-    );
+  if (filterClusterId && filterClusterId !== 'all') {
+    const matched = relevantClusters.filter((c) => Number(c.clusterId) === Number(filterClusterId));
+    relevantClusters = matched;
   }
 
   const clusterList = relevantClusters.map((cluster) => {
-    const stats = computeClusterStatsForScope(cluster.clusterId, baseOrders, scopedShops);
+    const stats = computeClusterStatsForScope(cluster.clusterId, baseOrders, scopedShops, roleScopedOrders);
     return {
       clusterId: cluster.clusterId,
       clusterName: cluster.clusterName,
       deliverystatus: stats.deliverystatus,
+      dailyDeliveryStatus: stats.dailyDeliveryStatus,
       order_shop_status: {
         totalshops: stats.totalshops,
         totalorderedshops: stats.totalorderedshops,
-        totalnotorderedshops: stats.totalnotorderedshops
+        totalnotorderedshops: stats.totalnotorderedshops,
+        assignedShopsCount: stats.assignedShopsCount,
+        visitedShopsCount: stats.visitedShopsCount,
+        orderedShopsCount: stats.orderedShopsCount
       },
       order_item_status: stats.order_item_status,
       shopsByCategory: stats.shopsByCategory
     };
   });
+
+  // Compute Target vs Actual summary for the caller/scope
+  let matchedTargets = salesTargets;
+  if (callerRole === 'field sales agent') {
+    matchedTargets = salesTargets.filter((t) => Number(t.agentId) === Number(effectiveSpersonId));
+  } else if (callerRole === 'sales manager') {
+    const assignedFsaIds = getAssignedAgentIds(caller.id).filter((aid) => {
+      const u = salesPersons.find((s) => Number(s.id) === Number(aid));
+      return u && (u.role || '').toLowerCase() === 'field sales agent' && Number(u.active) === 1;
+    });
+    matchedTargets = salesTargets.filter((t) => assignedFsaIds.includes(Number(t.agentId)));
+  } else if (reqSpersonId && reqSpersonId !== 'all') {
+    matchedTargets = salesTargets.filter((t) => Number(t.agentId) === Number(reqSpersonId));
+  }
+  if (filterClusterId && filterClusterId !== 'all') {
+    matchedTargets = matchedTargets.filter((t) => Number(t.clusterId) === Number(filterClusterId));
+  }
+
+  const targetAmount = matchedTargets.reduce((sum, t) => sum + Number(t.targetAmount || 0), 0);
+  const actualAmount = baseOrders
+    .filter((o) => String(o.status || '').toLowerCase() !== 'cancelled')
+    .reduce((sum, o) => sum + Number(o.total || 0), 0);
+  const differenceAmount = Number((actualAmount - targetAmount).toFixed(2));
+  const achievementPct = targetAmount > 0 ? Number(((actualAmount / targetAmount) * 100).toFixed(1)) : 0;
+  const perfIndicator = getPerformanceIndicator(achievementPct, targetAmount > 0);
+
+  // Item-level Target vs Actual rows
+  const itemTargetMap = new Map();
+  matchedTargets.forEach((t) => {
+    (t.itemTargets || []).forEach((it) => {
+      const id = Number(it.itemId);
+      if (!itemTargetMap.has(id)) {
+        itemTargetMap.set(id, {
+          itemId: id,
+          itemName: it.itemName || `Item ${id}`,
+          targetQty: 0,
+          targetAmount: 0
+        });
+      }
+      const cur = itemTargetMap.get(id);
+      cur.targetQty += Number(it.targetQty || 0);
+      cur.targetAmount += Number(it.targetAmount || 0);
+    });
+  });
+
+  const itemActualMap = new Map();
+  baseOrders
+    .filter((o) => String(o.status || '').toLowerCase() !== 'cancelled')
+    .forEach((o) => {
+      (o.orderList || []).forEach((line) => {
+        const id = Number(line.itemid || line.itemId || 0);
+        const qty = parseFloat(line.qty) || 0;
+        if (id <= 0 || qty <= 0) return;
+        const price = parseFloat(line.price || line.custprice || line.actprice || 0);
+        if (!itemActualMap.has(id)) {
+          itemActualMap.set(id, {
+            itemId: id,
+            itemName: line.itemName || `Item ${id}`,
+            actualQty: 0,
+            actualAmount: 0
+          });
+        }
+        const cur = itemActualMap.get(id);
+        cur.actualQty += qty;
+        cur.actualAmount += qty * price;
+      });
+    });
+
+  const allItemIds = new Set([...itemTargetMap.keys(), ...itemActualMap.keys()]);
+  const targetVsActualItems = Array.from(allItemIds).map((id) => {
+    const t = itemTargetMap.get(id) || { itemId: id, itemName: `Item ${id}`, targetQty: 0, targetAmount: 0 };
+    const a = itemActualMap.get(id) || { itemId: id, itemName: t.itemName, actualQty: 0, actualAmount: 0 };
+    const hasTgt = t.targetAmount > 0 || t.targetQty > 0;
+    const achPct = t.targetAmount > 0
+      ? Number(((a.actualAmount / t.targetAmount) * 100).toFixed(1))
+      : (t.targetQty > 0 ? Number(((a.actualQty / t.targetQty) * 100).toFixed(1)) : 0);
+    return {
+      itemId: id,
+      itemName: a.itemName || t.itemName,
+      unit: 'kg',
+      targetQty: Number(t.targetQty.toFixed(2)),
+      actualQty: Number(a.actualQty.toFixed(2)),
+      differenceQty: Number((a.actualQty - t.targetQty).toFixed(2)),
+      targetAmount: Number(t.targetAmount.toFixed(2)),
+      actualAmount: Number(a.actualAmount.toFixed(2)),
+      differenceAmount: Number((a.actualAmount - t.targetAmount).toFixed(2)),
+      achievementPct: achPct,
+      performanceIndicator: getPerformanceIndicator(achPct, hasTgt)
+    };
+  });
+
+  // Total shop counts across relevantClusters
+  const totalAssignedShops = clusterList.reduce((s, c) => s + (c.order_shop_status?.assignedShopsCount || 0), 0);
+  const totalVisitedShops = clusterList.reduce((s, c) => s + (c.order_shop_status?.visitedShopsCount || 0), 0);
+  const totalOrderedShops = clusterList.reduce((s, c) => s + (c.order_shop_status?.orderedShopsCount || 0), 0);
+
+  // Frequently ordered customers: STRICTLY for Sales Manager / Admin only, never sent to Field Sales Agent
+  const includeFreqCustomers = callerRole === 'sales manager' || callerRole === 'admin';
+  const frequentlyOrderedCustomers = includeFreqCustomers
+    ? computeFrequentlyOrderedCustomers(baseOrders, scopedShops, periodInfo)
+    : undefined;
 
   res.json({
     status: 200,
@@ -1566,6 +2037,26 @@ const handleGetHomeReport = async (req, res) => {
       status: 200,
       message: 'Details',
       salesPersonId: String(effectiveSpersonId),
+      timezone: 'Asia/Kolkata',
+      periodInfo,
+      shopCounts: {
+        assignedShopsCount: totalAssignedShops,
+        visitedShopsCount: totalVisitedShops,
+        orderedShopsCount: totalOrderedShops,
+        notOrderedShopsCount: Math.max(0, totalAssignedShops - totalOrderedShops)
+      },
+      targetVsActual: {
+        hasTarget: targetAmount > 0,
+        targetAmount: Number(targetAmount.toFixed(2)),
+        actualAmount: Number(actualAmount.toFixed(2)),
+        differenceAmount,
+        gapAmount: Math.max(0, Number((targetAmount - actualAmount).toFixed(2))),
+        achievementPct,
+        performanceIndicator: perfIndicator,
+        items: targetVsActualItems
+      },
+      performanceIndicatorScale: PERFORMANCE_INDICATOR_SCALE,
+      ...(includeFreqCustomers ? { frequentlyOrderedCustomers } : {}),
       clusterList
     }
   });
@@ -1602,6 +2093,9 @@ const handleClusterInfo = async (req, res) => {
     );
     const assignedClusterIds = new Set(assignedShops.map((s) => Number(s.clusterid || s.cluster_id)));
     scopedClusters = clusters.filter((c) => assignedClusterIds.has(Number(c.clusterId)));
+  } else if (callerRole === 'sales manager') {
+    const authCids = new Set(getAuthorizedClusterIds(caller));
+    scopedClusters = clusters.filter((c) => authCids.has(Number(c.clusterId)));
   }
 
   res.json({
@@ -1809,6 +2303,17 @@ const handleGetItemsOrder = async (req, res) => {
     });
   }
 
+  const reqClusterId = req.query.clusterid || req.query.clusterId;
+  if (reqClusterId && reqClusterId !== 'all' && callerRole !== 'admin') {
+    const authCids = getAuthorizedClusterIds(caller);
+    if (!authCids.includes(Number(reqClusterId))) {
+      return res.status(403).json({
+        status: 403,
+        message: `Access Denied: Cluster #${reqClusterId} is outside your assigned scope.`
+      });
+    }
+  }
+
   const activeCatalog = orderItemsCatalog.length > 0
     ? orderItemsCatalog.filter((item) => Number(item.active ?? 1) === 1)
     : defaultOrderItems;
@@ -1963,7 +2468,20 @@ const handleCreateOrder = async (req, res) => {
       });
     }
     const shopShortId = `S${String(shop.shopid).padStart(3, '0')}`;
-    const clusterid = parseInt(orderList[0]?.clusterid, 10) || (shop?.clusterid || Number(caller.clusterid || 1));
+    const explicitClusterId = orderList[0]?.clusterid !== undefined && orderList[0]?.clusterid !== null && orderList[0]?.clusterid !== ''
+      ? parseInt(orderList[0].clusterid, 10)
+      : null;
+    if ((callerRole || '').toLowerCase() === 'field sales agent' && explicitClusterId !== null) {
+      const authorizedClusters = getAuthorizedClusterIds(caller);
+      if (!authorizedClusters.includes(explicitClusterId) || explicitClusterId !== Number(shop.clusterid)) {
+        return res.status(403).json({
+          status: 403,
+          message: `Access Denied: You cannot submit orders for unassigned cluster #${explicitClusterId}.`,
+          id: '0'
+        });
+      }
+    }
+    const clusterid = Number(shop?.clusterid || explicitClusterId || caller.clusterid || 1);
     const spersonid = requestedSpersonId;
     const agent = salesPersons.find((s) => Number(s.id) === Number(spersonid));
 
@@ -2029,10 +2547,28 @@ const handleCreateOrder = async (req, res) => {
 
     const initialOrderStatus = hasPriceRequest ? 'Price approval pending' : 'In progress';
 
-    const orderTotal = activeItems.reduce(
-      (sum, item) => sum + ((parseFloat(item.qty) || 0) * (parseFloat(item.custprice || item.price || item.actprice) || 0)),
-      0
+    // Order total strictly uses catalog prices when placing the order (customer-requested price does not change catalog price, line totals, or order total until approved)
+    const orderTotal = Number(
+      activeItems.reduce(
+        (sum, item) => sum + ((parseFloat(item.qty) || 0) * resolveCatalogPrice(item, clusterid)),
+        0
+      ).toFixed(2)
     );
+
+    // Extract optional location and visit photo metadata from request body or first line item
+    const firstItem = orderList[0] || {};
+    const rawLat = req.body?.locationLat ?? req.body?.latitude ?? firstItem.locationLat ?? firstItem.latitude;
+    const rawLng = req.body?.locationLng ?? req.body?.longitude ?? firstItem.locationLng ?? firstItem.longitude;
+    const rawAcc = req.body?.locationAccuracy ?? firstItem.locationAccuracy;
+    const locationLat = rawLat !== undefined && rawLat !== null && rawLat !== '' && !isNaN(Number(rawLat)) ? Number(rawLat) : null;
+    const locationLng = rawLng !== undefined && rawLng !== null && rawLng !== '' && !isNaN(Number(rawLng)) ? Number(rawLng) : null;
+    const locationAccuracy = rawAcc !== undefined && rawAcc !== null && rawAcc !== '' && !isNaN(Number(rawAcc)) ? Number(rawAcc) : null;
+    const rawLocText = String(req.body?.locationText || firstItem.locationText || '').trim();
+    const locationText = rawLocText || (locationLat !== null && locationLng !== null ? `${locationLat.toFixed(6)}, ${locationLng.toFixed(6)}` : null);
+
+    const rawVisitPhoto = req.body?.visitPhoto ?? firstItem.visitPhoto ?? null;
+    const visitPhoto = typeof rawVisitPhoto === 'string' && rawVisitPhoto.trim().length > 0 ? rawVisitPhoto.trim() : null;
+    const visitPhotoStatus = visitPhoto ? 'synced' : null;
 
     const idempotencyKey = String(
       req.headers['x-idempotency-key'] || req.body?.idempotencyKey || ''
@@ -2045,7 +2581,7 @@ const handleCreateOrder = async (req, res) => {
       // 1. Check explicit idempotency key
       if (idempotencyKey) {
         const existingIdemp = await tx.query(
-          'SELECT order_id, serial_no, shop_short_id, status FROM orders WHERE idempotency_key = $1',
+          'SELECT order_id, serial_no, shop_short_id, status, expected_delivery_date, visit_photo_status, location_text, total FROM orders WHERE idempotency_key = $1',
           [idempotencyKey]
         );
         if (existingIdemp.rowCount > 0) {
@@ -2057,6 +2593,10 @@ const handleCreateOrder = async (req, res) => {
             orderId: row.order_id,
             shopId: row.shop_short_id,
             statusName: row.status,
+            expectedDeliveryDate: row.expected_delivery_date || null,
+            visitPhotoStatus: row.visit_photo_status || null,
+            locationText: row.location_text || null,
+            orderTotal: Number(row.total || orderTotal),
             priceApprovalPending: row.status === 'Price approval pending',
             idempotentReplay: true,
             deviceEventTime
@@ -2068,7 +2608,7 @@ const handleCreateOrder = async (req, res) => {
       // 2. Check rapid duplicate submission within 5 seconds (same customer, agent, total, items_count)
       const fiveSecAgoIso = new Date(Date.now() - 5000).toISOString();
       const recentDup = await tx.query(
-        `SELECT order_id, serial_no, shop_short_id, status
+        `SELECT order_id, serial_no, shop_short_id, status, expected_delivery_date, visit_photo_status, location_text, total
          FROM orders
          WHERE customer_id = $1 AND sperson_id = $2 AND total = $3 AND items_count = $4 AND created_at >= $5
          ORDER BY serial_no DESC LIMIT 1`,
@@ -2083,6 +2623,10 @@ const handleCreateOrder = async (req, res) => {
           orderId: row.order_id,
           shopId: row.shop_short_id,
           statusName: row.status,
+          expectedDeliveryDate: row.expected_delivery_date || null,
+          visitPhotoStatus: row.visit_photo_status || null,
+          locationText: row.location_text || null,
+          orderTotal: Number(row.total || orderTotal),
           priceApprovalPending: row.status === 'Price approval pending',
           idempotentReplay: true
         };
@@ -2095,7 +2639,11 @@ const handleCreateOrder = async (req, res) => {
       const newOrderId = `${shopShortId}-${nextSerial}`;
       const nowIso = new Date().toISOString();
       const customDate = String(req.body?.orderDate || orderList[0]?.date || '').trim();
-      const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(customDate) ? customDate : nowIso.slice(0, 10);
+      const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(customDate) ? customDate : getIstDateString();
+      const explicitExpectedDate = String(req.body?.expectedDeliveryDate || firstItem.expectedDeliveryDate || '').trim();
+      const expectedDeliveryDate = /^\d{4}-\d{2}-\d{2}$/.test(explicitExpectedDate)
+        ? explicitExpectedDate
+        : addDaysToDateStr(todayDate, 1);
 
       // Assign default delivery agent in cluster if one exists
       const clusterDeliveryAgent = salesPersons.find(
@@ -2104,8 +2652,8 @@ const handleCreateOrder = async (req, res) => {
       const deliveryAgentId = clusterDeliveryAgent ? Number(clusterDeliveryAgent.id) : 50;
 
       await tx.query(
-        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, delivery_agent_id, idempotency_key, payment_status, payment_amount_collected, payment_balance_due)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, expected_delivery_date, created_at, status, items_count, total, delivery_agent_id, idempotency_key, payment_status, payment_amount_collected, payment_balance_due, location_lat, location_lng, location_accuracy, location_text, visit_photo, visit_photo_status, visit_photo_updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
         [
           newOrderId,
           nextSerial,
@@ -2117,6 +2665,7 @@ const handleCreateOrder = async (req, res) => {
           agent?.name || `Agent ${spersonid}`,
           clusterid,
           todayDate,
+          expectedDeliveryDate,
           nowIso,
           initialOrderStatus,
           activeItems.length,
@@ -2125,7 +2674,14 @@ const handleCreateOrder = async (req, res) => {
           idempotencyKey,
           'Not collected',
           0,
-          orderTotal
+          orderTotal,
+          locationLat,
+          locationLng,
+          locationAccuracy,
+          locationText,
+          visitPhoto,
+          visitPhotoStatus,
+          visitPhoto ? nowIso : null
         ]
       );
 
@@ -2140,14 +2696,18 @@ const handleCreateOrder = async (req, res) => {
         const isReq = hasReq && reqPrice !== null && !isNaN(reqPrice) && Math.abs(reqPrice - catPrice) > 0.001;
         const itemPriceStatus = isReq ? 'pending' : null;
 
-        const itemName =
-          item.itemName ||
-          orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === Number(item.itemid))?.itemName ||
-          defaultOrderItems.find((d) => Number(d.itemid) === Number(item.itemid))?.itemName ||
-          `Item ${item.itemid}`;
+        const catalogItemRef =
+          orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === Number(item.itemid)) ||
+          defaultOrderItems.find((d) => Number(d.itemid) === Number(item.itemid));
+        const itemName = item.itemName || catalogItemRef?.itemName || `Item ${item.itemid}`;
+        const unitType = item.unitType || item.unit || catalogItemRef?.unitType || 'kg';
         const enrichedLine = {
           ...item,
           itemName,
+          unitType,
+          price: catPrice,
+          custprice: catPrice,
+          actprice: catPrice,
           catalogPrice: catPrice,
           requestedPrice: isReq ? reqPrice : undefined,
           priceRequestStatus: itemPriceStatus
@@ -2163,7 +2723,7 @@ const handleCreateOrder = async (req, res) => {
             String(itemName),
             Number(item.qty || 0),
             catPrice,
-            isReq ? reqPrice : catPrice,
+            catPrice,
             catPrice,
             isReq ? reqPrice : null,
             itemPriceStatus,
@@ -2200,6 +2760,14 @@ const handleCreateOrder = async (req, res) => {
         id: String(nextSerial),
         orderId: newOrderId,
         shopId: shopShortId,
+        orderDate: todayDate,
+        expectedDeliveryDate,
+        orderTotal,
+        locationLat,
+        locationLng,
+        locationAccuracy,
+        locationText,
+        visitPhotoStatus,
         statusName: initialOrderStatus,
         priceApprovalPending: hasPriceRequest
       };
@@ -2281,8 +2849,8 @@ const handleGetShopOrderHistory = async (req, res) => {
 
     const ordersRes = await db.query(
       `SELECT order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category,
-              sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total,
-              payment_status, payment_amount_collected, payment_balance_due
+              sperson_id, agent_name, cluster_id, order_date, expected_delivery_date, created_at, status, items_count, total,
+              payment_status, payment_amount_collected, payment_balance_due, location_text, visit_photo_status
        FROM orders
        WHERE (customer_id = $1 OR shop_short_id = $2)
          AND SUBSTR(order_date, 1, 10) >= $3
@@ -2298,7 +2866,7 @@ const handleGetShopOrderHistory = async (req, res) => {
       const orderIds = orderRows.map((r) => String(r.order_id));
       const placeholders = orderIds.map((_, i) => `$${i + 1}`).join(', ');
       const itemsRes = await db.query(
-        `SELECT id, order_id, item_id, item_name, qty, price, cust_price, act_price, item_json
+        `SELECT id, order_id, item_id, item_name, qty, price, cust_price, act_price, requested_price, price_request_status, item_json
          FROM order_items
          WHERE order_id IN (${placeholders})
          ORDER BY id ASC`,
@@ -2315,11 +2883,16 @@ const handleGetShopOrderHistory = async (req, res) => {
         } catch {}
 
         const qty = Number(itemRow.qty || 0);
-        const custPrice = Number(itemRow.cust_price);
         const listPrice = Number(itemRow.price);
-        const unitPrice = (custPrice > 0) ? custPrice : (listPrice > 0 ? listPrice : 0);
+        const custPrice = Number(itemRow.cust_price);
+        const unitPrice = (listPrice > 0) ? listPrice : (custPrice > 0 ? custPrice : 0);
         const lineTotal = Number((qty * unitPrice).toFixed(2));
-        const unit = parsedJson.unitType || parsedJson.unit || 'Kgs';
+        const rawUnit = parsedJson.unitType || parsedJson.unit || 'kg';
+        const unit = String(rawUnit).toLowerCase().startsWith('kg') ? 'kg' : rawUnit;
+        const reqPrice = itemRow.requested_price !== null && itemRow.requested_price !== undefined
+          ? Number(itemRow.requested_price)
+          : (parsedJson.requestedPrice !== undefined ? Number(parsedJson.requestedPrice) : null);
+        const reqStatus = itemRow.price_request_status || parsedJson.priceRequestStatus || null;
 
         itemsByOrderId.get(oid).push({
           id: itemRow.id,
@@ -2328,6 +2901,9 @@ const handleGetShopOrderHistory = async (req, res) => {
           qty,
           unit,
           unitPrice,
+          catalogPrice: Number(parsedJson.catalogPrice || listPrice || unitPrice),
+          requestedPrice: reqPrice,
+          priceRequestStatus: reqStatus,
           lineTotal
         });
       }
@@ -2338,16 +2914,21 @@ const handleGetShopOrderHistory = async (req, res) => {
       const items = itemsByOrderId.get(oid) || [];
       const computedTotal = items.reduce((sum, it) => sum + it.lineTotal, 0);
       const orderTotal = Number(o.total || computedTotal);
+      const dStr = String(o.order_date || '').slice(0, 10);
+      const expDeliv = o.expected_delivery_date || (dStr ? addDaysToDateStr(dStr, 1) : null);
 
       return {
         orderId: o.order_id,
         serialNo: Number(o.serial_no || 0),
         orderNumber: String(o.serial_no || o.order_id),
         date: o.order_date,
+        expectedDeliveryDate: expDeliv,
         createdAt: o.created_at,
         status: o.status || 'In progress',
         agentName: o.agent_name,
         total: orderTotal,
+        locationText: o.location_text || null,
+        visitPhotoStatus: o.visit_photo_status || null,
         paymentStatus: o.payment_status || 'Not collected',
         paymentAmountCollected: Number(o.payment_amount_collected || 0),
         paymentBalanceDue: Number(o.payment_balance_due !== undefined && o.payment_balance_due !== null ? o.payment_balance_due : orderTotal),
@@ -3301,11 +3882,18 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
 // 5. Admin Organization-Wide Executive Reports
 app.get('/api/admin/reports', requireAdmin, async (req, res) => {
   await refreshStateFromDb();
-  const { clusterId, managerId, agentId, fromDate, toDate } = req.query;
+  const { clusterId, managerId, agentId } = req.query;
+  const hasPeriodOrDates = Boolean(req.query.period || req.query.range || req.query.fromDate || req.query.startDate || req.query.toDate || req.query.endDate);
+  const periodInfo = resolveReportPeriodRange(req.query);
+  const fromDate = hasPeriodOrDates ? periodInfo.fromDate : null;
+  const toDate = hasPeriodOrDates ? periodInfo.toDate : null;
 
   let allowedAgentIds = null;
   if (managerId && managerId !== 'all') {
-    allowedAgentIds = getAssignedAgentIds(managerId);
+    allowedAgentIds = getAssignedAgentIds(managerId).filter((aid) => {
+      const u = salesPersons.find((s) => Number(s.id) === Number(aid));
+      return u && (u.role || '').toLowerCase() === 'field sales agent' && Number(u.active) === 1;
+    });
   }
   if (agentId && agentId !== 'all') {
     allowedAgentIds = [Number(agentId)];
@@ -3313,8 +3901,9 @@ app.get('/api/admin/reports', requireAdmin, async (req, res) => {
 
   const orders = submittedOrders.filter((o) => {
     if (allowedAgentIds && !allowedAgentIds.includes(Number(o.spersonid))) return false;
-    if (fromDate && o.date < fromDate) return false;
-    if (toDate && o.date > toDate) return false;
+    const dStr = String(o.date || '').slice(0, 10);
+    if (fromDate && dStr < fromDate) return false;
+    if (toDate && dStr > toDate) return false;
     if (clusterId && clusterId !== 'all' && Number(o.clusterId) !== Number(clusterId)) return false;
     return true;
   });
@@ -3329,16 +3918,39 @@ app.get('/api/admin/reports', requireAdmin, async (req, res) => {
 
   const targetAmount = matchedTargets.reduce((sum, t) => sum + Number(t.targetAmount || 0), 0);
   const targetGap = Math.max(0, targetAmount - achievedAmount);
+  const differenceAmount = Number((achievedAmount - targetAmount).toFixed(2));
   const achievementRate = targetAmount > 0 ? Math.min(100, Math.round((achievedAmount / targetAmount) * 100)) : 0;
+  const achievementPct = targetAmount > 0 ? Number(((achievedAmount / targetAmount) * 100).toFixed(1)) : 0;
+  const performanceIndicator = getPerformanceIndicator(achievementPct, targetAmount > 0);
+
+  const scopedShops = shops.filter((s) => {
+    if (clusterId && clusterId !== 'all' && Number(s.clusterid) !== Number(clusterId)) return false;
+    if (allowedAgentIds && !allowedAgentIds.includes(Number(s.assignedAgentId || s.assigned_agent_id))) return false;
+    return true;
+  });
+  const orderedShopIds = new Set(orders.map((o) => Number(o.customerId || o.shopid || 0)).filter((id) => id > 0));
 
   res.json({
     status: 200,
     report: {
+      timezone: 'Asia/Kolkata',
+      periodInfo,
       hasTarget: targetAmount > 0,
       targetAmount,
       achievedAmount,
+      differenceAmount,
       targetGap,
       achievementRate,
+      achievementPct,
+      performanceIndicator,
+      performanceIndicatorScale: PERFORMANCE_INDICATOR_SCALE,
+      shopCounts: {
+        assignedShopsCount: scopedShops.length,
+        visitedShopsCount: orderedShopIds.size,
+        orderedShopsCount: orderedShopIds.size,
+        notOrderedShopsCount: Math.max(0, scopedShops.length - orderedShopIds.size)
+      },
+      frequentlyOrderedCustomers: computeFrequentlyOrderedCustomers(orders, scopedShops, periodInfo),
       ordersCount: orders.length
     }
   });
@@ -4111,10 +4723,10 @@ function canCallerAccessPriceRequest(caller, pr) {
   if (role === 'sales manager') {
     const assignedAgentIds = getAssignedAgentIds(caller.id);
     if (assignedAgentIds.includes(Number(pr.agentId))) return true;
-    const callerClusterId = Number(caller.cluster_id || caller.clusterid || 0);
-    if (callerClusterId === 0 || callerClusterId === Number(pr.clusterId)) return true;
     const shop = shops.find((s) => Number(s.shopid) === Number(pr.shopId));
     if (shop && canCallerAccessShop(caller, shop)) return true;
+    const callerClusterId = Number(caller.cluster_id || caller.clusterid || 0);
+    if (callerClusterId > 0 && callerClusterId === Number(pr.clusterId)) return true;
     return false;
   }
   if (role === 'field sales agent') {
@@ -4154,17 +4766,21 @@ app.get('/api/price-requests', async (req, res) => {
                  defaultOrderItems.find((i) => Number(i.itemId || i.itemid) === Number(pr.itemId));
       const ag = salesPersons.find((u) => Number(u.id) === Number(pr.agentId));
       const cl = clusters.find((c) => Number(c.clusterId || c.clusterid) === Number(pr.clusterId));
+      const decider = pr.decisionBy ? salesPersons.find((u) => Number(u.id) === Number(pr.decisionBy)) : null;
       return {
         ...pr,
         shopName: sh?.shopName || `Shop #${pr.shopId}`,
         itemName: it?.itemName || `Item #${pr.itemId}`,
         agentName: ag?.name || `Agent #${pr.agentId}`,
-        clusterName: cl?.clusterName || `Cluster #${pr.clusterId}`
+        clusterName: cl?.clusterName || `Cluster #${pr.clusterId}`,
+        decisionByRole: decider?.role || null,
+        approvalRule: 'single'
       };
     });
 
     res.json({
       status: 200,
+      approvalRule: 'single',
       priceRequests: enriched,
       pendingCount: enriched.filter((pr) => pr.status === 'pending').length
     });
@@ -4174,7 +4790,7 @@ app.get('/api/price-requests', async (req, res) => {
   }
 });
 
-// 2. POST /api/price-requests/:id/decision (Admin & Sales Manager decision workflow)
+// 2. POST /api/price-requests/:id/decision (Single-step resolution by either Admin or authorized Sales Manager)
 const handlePriceRequestDecision = async (req, res) => {
   try {
     await refreshStateFromDb();
@@ -4208,7 +4824,7 @@ const handlePriceRequestDecision = async (req, res) => {
       });
     }
 
-    // Enforce manager assignment scope
+    // Enforce manager assignment scope (agent/shop/cluster scope)
     if (isManager) {
       if (!canCallerAccessPriceRequest(caller, pr)) {
         return res.status(403).json({
@@ -4232,11 +4848,38 @@ const handlePriceRequestDecision = async (req, res) => {
 
     const isApprove = decisionAction === 'approve' || decisionAction === 'approved';
     const finalStatus = isApprove ? 'approved' : 'rejected';
+
+    // Single approval rule: if already resolved, do not require or allow a second conflicting step
+    if (pr.status === 'approved' || pr.status === 'rejected') {
+      const decider = pr.decisionBy ? salesPersons.find((u) => Number(u.id) === Number(pr.decisionBy)) : null;
+      if (pr.status === finalStatus) {
+        return res.status(200).json({
+          status: 200,
+          message: `Price request is already ${pr.status}.`,
+          idempotentReplay: true,
+          requestId,
+          orderId: pr.orderId,
+          decision: pr.status,
+          approvalRule: 'single',
+          decidedBy: pr.decisionByName || decider?.name || `User #${pr.decisionBy}`,
+          decidedByRole: decider?.role || null,
+          decidedAt: pr.decisionAt
+        });
+      }
+      return res.status(409).json({
+        status: 409,
+        message: `Price request '${requestId}' was already ${pr.status} by ${pr.decisionByName || 'an authorized reviewer'}. One approval or rejection resolves the request.`
+      });
+    }
+
     const nowIso = new Date().toISOString();
     const decComment = comment ? String(comment).trim() : '';
 
+    let recalculatedTotal = 0;
+    let remainingPending = 0;
+
     await db.withTransaction(async (tx) => {
-      // 1. Update price_requests table
+      // 1. Update price_requests table (single decision immediately resolves request)
       await tx.query(
         `UPDATE price_requests
          SET status = $1, decision_by = $2, decision_by_name = $3, decision_at = $4, decision_comment = $5, apply_to_catalog = $6
@@ -4244,21 +4887,44 @@ const handlePriceRequestDecision = async (req, res) => {
         [finalStatus, Number(caller.id), caller.name || `User ${caller.id}`, nowIso, decComment, applyToCatalog ? 1 : 0, requestId]
       );
 
-      // 2. Update order_items table for this order and item
-      if (isApprove) {
-        await tx.query(
-          `UPDATE order_items
-           SET price = $1, cust_price = $1, act_price = $1, price_request_status = 'approved'
-           WHERE order_id = $2 AND item_id = $3`,
-          [pr.requestedPrice, pr.orderId, pr.itemId]
-        );
-      } else {
-        await tx.query(
-          `UPDATE order_items
-           SET price_request_status = 'rejected'
-           WHERE order_id = $1 AND item_id = $2`,
-          [pr.orderId, pr.itemId]
-        );
+      // 2. Update order_items table (columns + item_json) for this order and item
+      const existingItemRows = await tx.query(
+        'SELECT id, item_json FROM order_items WHERE order_id = $1 AND item_id = $2',
+        [pr.orderId, pr.itemId]
+      );
+      for (const itemRow of (existingItemRows.rows || [])) {
+        let parsedJson = {};
+        try {
+          parsedJson = JSON.parse(itemRow.item_json || '{}');
+        } catch {}
+        const updatedJson = {
+          ...parsedJson,
+          catalogPrice: Number(parsedJson.catalogPrice || pr.catalogPrice || parsedJson.price || 0),
+          price: isApprove ? Number(pr.requestedPrice) : Number(pr.catalogPrice || parsedJson.catalogPrice || parsedJson.price || 0),
+          custprice: isApprove ? Number(pr.requestedPrice) : Number(pr.catalogPrice || parsedJson.catalogPrice || parsedJson.price || 0),
+          actprice: isApprove ? Number(pr.requestedPrice) : Number(pr.catalogPrice || parsedJson.catalogPrice || parsedJson.price || 0),
+          requestedPrice: Number(pr.requestedPrice),
+          priceRequestStatus: finalStatus,
+          decisionBy: Number(caller.id),
+          decisionByName: caller.name || `User ${caller.id}`,
+          decisionByRole: caller.role || (isAdmin ? 'Admin' : 'Sales Manager'),
+          decisionAt: nowIso
+        };
+        if (isApprove) {
+          await tx.query(
+            `UPDATE order_items
+             SET price = $1, cust_price = $1, act_price = $1, price_request_status = 'approved', item_json = $2
+             WHERE id = $3`,
+            [pr.requestedPrice, JSON.stringify(updatedJson), itemRow.id]
+          );
+        } else {
+          await tx.query(
+            `UPDATE order_items
+             SET price_request_status = 'rejected', item_json = $1
+             WHERE id = $2`,
+            [JSON.stringify(updatedJson), itemRow.id]
+          );
+        }
       }
 
       // 3. Recalculate total of order_items for this order
@@ -4266,17 +4932,19 @@ const handlePriceRequestDecision = async (req, res) => {
         'SELECT qty, price FROM order_items WHERE order_id = $1',
         [pr.orderId]
       );
-      const recalculatedTotal = orderItemsRows.rows.reduce(
-        (sum, row) => sum + (Number(row.qty) || 0) * (Number(row.price) || 0),
-        0
+      recalculatedTotal = Number(
+        orderItemsRows.rows.reduce(
+          (sum, row) => sum + (Number(row.qty) || 0) * (Number(row.price) || 0),
+          0
+        ).toFixed(2)
       );
 
-      // 4. Check if there are any remaining pending price requests for this order
+      // 4. Check if there are any remaining pending price requests for other items on this order
       const pendingCheck = await tx.query(
         "SELECT COUNT(*) AS cnt FROM price_requests WHERE order_id = $1 AND status = 'pending' AND id != $2",
         [pr.orderId, requestId]
       );
-      const remainingPending = Number(pendingCheck.rows[0]?.cnt || 0);
+      remainingPending = Number(pendingCheck.rows[0]?.cnt || 0);
 
       // If no more pending requests for this order, transition order status to 'In progress'
       if (remainingPending === 0) {
@@ -4293,9 +4961,10 @@ const handlePriceRequestDecision = async (req, res) => {
         );
       }
 
-      // 5. If applyToCatalog requested and authorized, update cluster item price or catalog price
+      // 5. If applyToCatalog requested and authorized, update cluster item price
       if (applyToCatalog && isApprove) {
-        if (isAdmin || (isManager && Number(pr.clusterId) === Number(caller.clusterid))) {
+        const authClusters = getAuthorizedClusterIds(caller);
+        if (isAdmin || (isManager && authClusters.includes(Number(pr.clusterId)))) {
           const clusterPriceId = `cp-${pr.clusterId}-${pr.itemId}`;
           const effDate = nowIso.slice(0, 10);
           await tx.query(
@@ -4315,15 +4984,20 @@ const handlePriceRequestDecision = async (req, res) => {
       'PRICE_REQUEST_DECISION',
       'PriceRequest',
       requestId,
-      `${isApprove ? 'Approved' : 'Rejected'} price request ${requestId} for order ${pr.orderId} (Item: ${pr.itemId}, Req: ₹${pr.requestedPrice}, Cat: ₹${pr.catalogPrice}) by ${caller.name}${decComment ? ` [Note: ${decComment}]` : ''}`
+      `${isApprove ? 'Approved' : 'Rejected'} price request ${requestId} for order ${pr.orderId} (Item: ${pr.itemId}, Req: ₹${pr.requestedPrice}, Cat: ₹${pr.catalogPrice}) by ${caller.name} (${caller.role})${decComment ? ` [Note: ${decComment}]` : ''}`
     );
 
     res.json({
       status: 200,
       message: `Price request ${finalStatus} successfully.`,
       requestId,
+      orderId: pr.orderId,
+      orderStatus: remainingPending === 0 ? 'In progress' : 'Price approval pending',
+      orderTotal: recalculatedTotal,
       decision: finalStatus,
+      approvalRule: 'single',
       decidedBy: caller.name,
+      decidedByRole: caller.role,
       decidedAt: nowIso
     });
   } catch (err) {
@@ -4461,30 +5135,43 @@ app.get('/api/orders', requireAuth, async (req, res) => {
     filtered = filtered.slice(0, Number(limit));
   }
 
-  const formatted = filtered.map((o) => ({
-    id: o.orderId || o.id,
-    orderId: o.orderId || o.id,
-    customer: o.shopName || o.customer || 'Shop',
-    shopName: o.shopName || o.customer || 'Shop',
-    shopid: o.shopid || o.customerId || o.shopId,
-    customerId: o.shopid || o.customerId || o.shopId,
-    date: o.date || o.orderDate,
-    itemsCount: (o.orderList || []).length || o.itemsCount || 0,
-    total: Number(o.total || 0),
-    status: o.status || 'In progress',
-    clusterId: o.clusterId,
-    spersonid: o.spersonid,
-    deliveryAgentId: o.deliveryAgentId,
-    paymentStatus: o.paymentStatus || 'Not collected',
-    paymentAmountCollected: Number(o.paymentAmountCollected || 0),
-    paymentBalanceDue: o.paymentBalanceDue !== undefined && o.paymentBalanceDue !== null
-      ? Number(o.paymentBalanceDue)
-      : Math.max(0, Number(o.total || 0) - Number(o.paymentAmountCollected || 0)),
-    paymentCollectedAt: o.paymentCollectedAt || null,
-    paymentCollectedBy: o.paymentCollectedBy || null,
-    paymentCollectedByName: o.paymentCollectedByName || null,
-    orderList: o.orderList || []
-  }));
+  const formatted = filtered.map((o) => {
+    const dStr = String(o.date || o.orderDate || '').slice(0, 10);
+    return {
+      id: o.orderId || o.id,
+      orderId: o.orderId || o.id,
+      customer: o.shopName || o.customer || 'Shop',
+      shopName: o.shopName || o.customer || 'Shop',
+      shopCategory: o.shopCategory || 'Retail',
+      shopid: o.shopid || o.customerId || o.shopId,
+      customerId: o.shopid || o.customerId || o.shopId,
+      date: o.date || o.orderDate,
+      expectedDeliveryDate: o.expectedDeliveryDate || (dStr ? addDaysToDateStr(dStr, 1) : null),
+      itemsCount: (o.orderList || []).length || o.itemsCount || 0,
+      total: Number(o.total || 0),
+      status: o.status || 'In progress',
+      clusterId: o.clusterId,
+      spersonid: o.spersonid,
+      agentName: o.agentName || '',
+      deliveryAgentId: o.deliveryAgentId,
+      locationLat: o.locationLat ?? null,
+      locationLng: o.locationLng ?? null,
+      locationAccuracy: o.locationAccuracy ?? null,
+      locationText: o.locationText || null,
+      visitPhoto: o.visitPhoto || null,
+      visitPhotoStatus: o.visitPhotoStatus || null,
+      visitPhotoUpdatedAt: o.visitPhotoUpdatedAt || null,
+      paymentStatus: o.paymentStatus || 'Not collected',
+      paymentAmountCollected: Number(o.paymentAmountCollected || 0),
+      paymentBalanceDue: o.paymentBalanceDue !== undefined && o.paymentBalanceDue !== null
+        ? Number(o.paymentBalanceDue)
+        : Math.max(0, Number(o.total || 0) - Number(o.paymentAmountCollected || 0)),
+      paymentCollectedAt: o.paymentCollectedAt || null,
+      paymentCollectedBy: o.paymentCollectedBy || null,
+      paymentCollectedByName: o.paymentCollectedByName || null,
+      orderList: o.orderList || []
+    };
+  });
 
   res.json({
     status: 200,
@@ -4515,7 +5202,10 @@ app.post('/api/admin/orders', requireAdmin, async (req, res) => {
 
     const agent = salesPersons.find((u) => Number(u.id) === Number(spersonId)) || caller;
     const finalClusterId = Number(clusterId || shop.clusterid || 1);
-    const dateStr = orderDate && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) ? orderDate : new Date().toISOString().slice(0, 10);
+    const dateStr = orderDate && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) ? orderDate : getIstDateString();
+    const expectedDeliveryDate = req.body?.expectedDeliveryDate && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)
+      ? req.body.expectedDeliveryDate
+      : addDaysToDateStr(dateStr, 1);
     const nowIso = new Date().toISOString();
 
     let newOrderId = '';
@@ -4547,8 +5237,8 @@ app.post('/api/admin/orders', requireAdmin, async (req, res) => {
 
       // 2. Insert parent order first (to satisfy foreign key constraints)
       await tx.query(
-        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, created_at, status, items_count, total, payment_status, payment_amount_collected, payment_balance_due)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'In progress', $12, $13, 'Not collected', 0, $13)`,
+        `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name, cluster_id, order_date, expected_delivery_date, created_at, status, items_count, total, payment_status, payment_amount_collected, payment_balance_due)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'In progress', $13, $14, 'Not collected', 0, $14)`,
         [
           newOrderId,
           newSerial,
@@ -4560,6 +5250,7 @@ app.post('/api/admin/orders', requireAdmin, async (req, res) => {
           agent.name || `User ${agent.id}`,
           finalClusterId,
           dateStr,
+          expectedDeliveryDate,
           nowIso,
           preparedLines.length,
           orderTotal
@@ -4863,6 +5554,7 @@ app.get('/api/manager/reports', async (req, res) => {
   if (!auth.authorized) return;
 
   const callerRole = auth.caller?.role || 'Sales Manager';
+  const isAdmin = (callerRole || '').toLowerCase() === 'admin';
   if (!checkActionPermission(callerRole, 'view_team_reports')) {
     return res.status(403).json({
       status: 403,
@@ -4871,24 +5563,68 @@ app.get('/api/manager/reports', async (req, res) => {
   }
 
   const managerId = auth.effectiveManagerId;
+  const managerUser = salesPersons.find((s) => Number(s.id) === Number(managerId)) || auth.caller;
   const assignedAgentIds = getAssignedAgentIds(managerId);
+  const authorizedClusterIds = isAdmin
+    ? clusters.map((c) => Number(c.clusterId))
+    : getAuthorizedClusterIds(managerUser);
+
+  // Filter to active Field Sales Agents for sales performance and targets
+  const fieldSalesAgentIds = assignedAgentIds.filter((aid) => {
+    const u = salesPersons.find((s) => Number(s.id) === Number(aid));
+    return u && (u.role || '').toLowerCase() === 'field sales agent' && Number(u.active) === 1;
+  });
 
   const reqAgentId = req.query.agentId;
   const clusterId = req.query.clusterId;
-  const fromDate = req.query.fromDate;
-  const toDate = req.query.toDate;
+  const hasPeriodOrDates = Boolean(req.query.period || req.query.range || req.query.fromDate || req.query.startDate || req.query.toDate || req.query.endDate);
+  const periodInfo = resolveReportPeriodRange(req.query);
+  const fromDate = hasPeriodOrDates ? periodInfo.fromDate : null;
+  const toDate = hasPeriodOrDates ? periodInfo.toDate : null;
 
-  if (assignedAgentIds.length === 0) {
+  if (clusterId && clusterId !== 'all' && !isAdmin) {
+    if (!authorizedClusterIds.includes(Number(clusterId))) {
+      return res.status(403).json({
+        status: 403,
+        message: `Access Denied: Cluster #${clusterId} is outside your assigned supervision scope.`
+      });
+    }
+  }
+
+  const authorizedClusters = clusters.filter((c) => authorizedClusterIds.includes(Number(c.clusterId)));
+
+  if (fieldSalesAgentIds.length === 0 && assignedAgentIds.length === 0) {
     return res.json({
       status: 200,
       report: {
+        timezone: 'Asia/Kolkata',
+        periodInfo,
         hasTarget: false,
         targetAmount: 0,
         achievedAmount: 0,
+        differenceAmount: 0,
         targetGap: 0,
         achievementRate: 0,
+        achievementPct: 0,
+        performanceIndicator: getPerformanceIndicator(0, false),
+        performanceIndicatorScale: PERFORMANCE_INDICATOR_SCALE,
+        shopCounts: { assignedShopsCount: 0, visitedShopsCount: 0, orderedShopsCount: 0, notOrderedShopsCount: 0 },
+        frequentlyOrderedCustomers: {
+          rule: 'At least 1 order every 2 days within the selected period',
+          periodLabel: periodInfo.periodLabel,
+          calculationPeriod: `${periodInfo.fromDate} to ${periodInfo.toDate} (${periodInfo.periodDays} days)`,
+          fromDate: periodInfo.fromDate,
+          toDate: periodInfo.toDate,
+          periodDays: periodInfo.periodDays,
+          minOrdersRequired: Math.max(1, Math.ceil(periodInfo.periodDays / 2)),
+          count: 0,
+          customers: []
+        },
         itemBreakdown: [],
+        agentBreakdown: [],
         dailyComparison: [],
+        dailyDeliveryStatus: [],
+        authorizedClusters,
         unassigned: true
       }
     });
@@ -4906,24 +5642,58 @@ app.get('/api/manager/reports', async (req, res) => {
 
   const targetAgentIds = (reqAgentId && reqAgentId !== 'all')
     ? [Number(reqAgentId)]
-    : assignedAgentIds;
+    : (fieldSalesAgentIds.length > 0 ? fieldSalesAgentIds : assignedAgentIds);
 
-  const orders = submittedOrders.filter((o) => {
+  // All orders in agent/cluster scope (used for dailyDeliveryStatus drill-down across previous days)
+  const scopeOrdersAllDates = submittedOrders.filter((o) => {
     if (!targetAgentIds.includes(Number(o.spersonid))) return false;
-    if (fromDate && o.date < fromDate) return false;
-    if (toDate && o.date > toDate) return false;
     if (clusterId && clusterId !== 'all' && Number(o.clusterId) !== Number(clusterId)) return false;
+    if (!isAdmin && !authorizedClusterIds.includes(Number(o.clusterId))) return false;
+    return String(o.status || '').toLowerCase() !== 'cancelled';
+  });
+
+  // Orders filtered by selected period / date range
+  const orders = scopeOrdersAllDates.filter((o) => {
+    const dStr = String(o.date || '').slice(0, 10);
+    if (fromDate && dStr < fromDate) return false;
+    if (toDate && dStr > toDate) return false;
     return true;
   });
 
-  const achievedAmount = orders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+  // Scoped shops for this manager / filter
+  const scopedShops = shops.filter((s) => {
+    const sCid = Number(s.clusterid || s.cluster_id);
+    if (clusterId && clusterId !== 'all' && sCid !== Number(clusterId)) return false;
+    if (!isAdmin && !authorizedClusterIds.includes(sCid)) return false;
+    const assignedId = Number(s.assignedAgentId || s.assigned_agent_id || 0);
+    const createdId = Number(s.createdby || s.created_by || 0);
+    if (reqAgentId && reqAgentId !== 'all') {
+      return assignedId === Number(reqAgentId);
+    }
+    return targetAgentIds.includes(assignedId) || targetAgentIds.includes(createdId) || authorizedClusterIds.includes(sCid);
+  });
 
+  const orderedShopIds = new Set(
+    orders.map((o) => Number(o.customerId || o.shopid || 0)).filter((id) => id > 0)
+  );
+  const shopCounts = {
+    assignedShopsCount: scopedShops.length,
+    visitedShopsCount: orderedShopIds.size,
+    orderedShopsCount: orderedShopIds.size,
+    notOrderedShopsCount: Math.max(0, scopedShops.length - orderedShopIds.size)
+  };
+
+  const achievedAmount = Number(orders.reduce((sum, o) => sum + Number(o.total || 0), 0).toFixed(2));
+
+  const catalogSource = orderItemsCatalog.length > 0 ? orderItemsCatalog : defaultOrderItems;
   const itemAchievedMap = {};
-  defaultOrderItems.forEach((item) => {
-    itemAchievedMap[item.itemid] = {
-      itemId: item.itemid,
+  catalogSource.forEach((item) => {
+    const iid = Number(item.itemId || item.itemid);
+    itemAchievedMap[iid] = {
+      itemId: iid,
       itemName: item.itemName,
-      price: item.price,
+      unit: String(item.unitType || 'kg').toLowerCase().startsWith('kg') ? 'kg' : String(item.unitType || 'kg'),
+      price: Number(item.price || 0),
       achievedQty: 0,
       achievedValue: 0
     };
@@ -4931,13 +5701,15 @@ app.get('/api/manager/reports', async (req, res) => {
 
   orders.forEach((o) => {
     (o.orderList || []).forEach((item) => {
-      const id = item.itemid;
+      const id = Number(item.itemid || item.itemId);
       const qty = parseFloat(item.qty) || 0;
-      const price = parseFloat(item.custprice || item.price || item.actprice || 50);
+      if (id <= 0 || qty <= 0) return;
+      const price = parseFloat(item.price || item.custprice || item.actprice || 50);
       if (!itemAchievedMap[id]) {
         itemAchievedMap[id] = {
           itemId: id,
           itemName: item.itemName || `Item ${id}`,
+          unit: 'kg',
           price,
           achievedQty: 0,
           achievedValue: 0
@@ -4962,7 +5734,7 @@ app.get('/api/manager/reports', async (req, res) => {
     matchedTargets.forEach((t) => {
       targetAmount += Number(t.targetAmount || 0);
       (t.itemTargets || []).forEach((it) => {
-        const id = it.itemId;
+        const id = Number(it.itemId);
         if (!itemTargetMap[id]) {
           itemTargetMap[id] = { targetQty: 0, targetAmount: 0 };
         }
@@ -4974,39 +5746,81 @@ app.get('/api/manager/reports', async (req, res) => {
 
   const itemBreakdown = Object.values(itemAchievedMap).map((ach) => {
     const tgt = itemTargetMap[ach.itemId] || { targetQty: 0, targetAmount: 0 };
-    const targetQty = tgt.targetQty;
-    const targetVal = tgt.targetAmount;
+    const targetQty = Number(tgt.targetQty || 0);
+    const targetVal = Number(tgt.targetAmount || 0);
     const qtyGap = Math.max(0, targetQty - ach.achievedQty);
     const valueGap = Math.max(0, targetVal - ach.achievedValue);
+    const differenceQty = Number((ach.achievedQty - targetQty).toFixed(2));
+    const differenceValue = Number((ach.achievedValue - targetVal).toFixed(2));
+    const itemHasTarget = targetQty > 0 || targetVal > 0;
+    const achievementPct = targetVal > 0
+      ? Number(((ach.achievedValue / targetVal) * 100).toFixed(1))
+      : (targetQty > 0 ? Number(((ach.achievedQty / targetQty) * 100).toFixed(1)) : 0);
 
     return {
       itemId: ach.itemId,
       itemName: ach.itemName,
+      unit: ach.unit || 'kg',
       price: ach.price,
       targetQty,
-      achievedQty: ach.achievedQty,
-      qtyGap,
-      targetValue: targetVal,
-      achievedValue: ach.achievedValue,
-      valueGap,
-      hasTarget: targetQty > 0 || targetVal > 0
+      achievedQty: Number(ach.achievedQty.toFixed(2)),
+      differenceQty,
+      qtyGap: Number(qtyGap.toFixed(2)),
+      targetValue: Number(targetVal.toFixed(2)),
+      achievedValue: Number(ach.achievedValue.toFixed(2)),
+      differenceValue,
+      valueGap: Number(valueGap.toFixed(2)),
+      achievementPct,
+      performanceIndicator: getPerformanceIndicator(achievementPct, itemHasTarget),
+      hasTarget: itemHasTarget
     };
   });
 
-  const targetGap = hasTarget ? Math.max(0, targetAmount - achievedAmount) : 0;
+  // Agent-level Target vs Actual breakdown (strictly Field Sales Agents)
+  const agentBreakdown = targetAgentIds.map((aid) => {
+    const ag = salesPersons.find((s) => Number(s.id) === Number(aid));
+    const agTargets = matchedTargets.filter((t) => Number(t.agentId) === Number(aid));
+    const agTargetAmt = agTargets.reduce((s, t) => s + Number(t.targetAmount || 0), 0);
+    const agOrders = orders.filter((o) => Number(o.spersonid) === Number(aid));
+    const agActualAmt = Number(agOrders.reduce((s, o) => s + Number(o.total || 0), 0).toFixed(2));
+    const agDiffAmt = Number((agActualAmt - agTargetAmt).toFixed(2));
+    const agAchPct = agTargetAmt > 0 ? Number(((agActualAmt / agTargetAmt) * 100).toFixed(1)) : 0;
+    const agAssignedShops = shops.filter((s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(aid)).length;
+    const agOrderedShops = new Set(agOrders.map((o) => Number(o.customerId || o.shopid || 0)).filter((id) => id > 0)).size;
+    return {
+      agentId: Number(aid),
+      agentName: ag ? ag.name : `Agent #${aid}`,
+      role: ag ? ag.role : 'Field Sales Agent',
+      clusterId: ag ? ag.clusterid : 1,
+      assignedShopsCount: agAssignedShops,
+      orderedShopsCount: agOrderedShops,
+      ordersCount: agOrders.length,
+      targetAmount: Number(agTargetAmt.toFixed(2)),
+      actualAmount: agActualAmt,
+      differenceAmount: agDiffAmt,
+      achievementPct: agAchPct,
+      performanceIndicator: getPerformanceIndicator(agAchPct, agTargetAmt > 0)
+    };
+  });
+
+  const targetGap = hasTarget ? Math.max(0, Number((targetAmount - achievedAmount).toFixed(2))) : 0;
+  const differenceAmount = Number((achievedAmount - targetAmount).toFixed(2));
+  const achievementPct = hasTarget && targetAmount > 0
+    ? Number(((achievedAmount / targetAmount) * 100).toFixed(1))
+    : 0;
   const achievementRate = hasTarget && targetAmount > 0
     ? Math.min(100, Math.round((achievedAmount / targetAmount) * 100))
     : 0;
+  const performanceIndicator = getPerformanceIndicator(achievementPct, hasTarget && targetAmount > 0);
 
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const yest = new Date(Date.now() - 86400000);
-  const yestISO = yest.toISOString().slice(0, 10);
+  const todayISO = getIstDateString();
+  const yestISO = addDaysToDateStr(todayISO, -1);
 
   const todayAchieved = orders
-    .filter((o) => o.date === todayISO)
+    .filter((o) => String(o.date || '').slice(0, 10) === todayISO)
     .reduce((sum, o) => sum + Number(o.total || 0), 0);
   const yestAchieved = orders
-    .filter((o) => o.date === yestISO)
+    .filter((o) => String(o.date || '').slice(0, 10) === yestISO)
     .reduce((sum, o) => sum + Number(o.total || 0), 0);
 
   const dailyComparison = [
@@ -5014,16 +5828,98 @@ app.get('/api/manager/reports', async (req, res) => {
     { label: 'Today', date: todayISO, achieved: todayAchieved, target: hasTarget ? Math.round(targetAmount / 2) : 0 }
   ];
 
+  // Daily delivery status across scopeOrdersAllDates so selecting an In Progress count for a previous day opens matching orders
+  const dailyMap = new Map();
+  for (const o of scopeOrdersAllDates) {
+    const dStr = String(o.date || '').slice(0, 10);
+    if (!dStr) continue;
+    const expDeliv = o.expectedDeliveryDate || addDaysToDateStr(dStr, 1);
+    if (!dailyMap.has(dStr)) {
+      dailyMap.set(dStr, {
+        date: dStr,
+        expectedDeliveryDate: expDeliv,
+        totalOrders: 0,
+        deliveredCount: 0,
+        inProgressCount: 0,
+        pendingApprovalCount: 0,
+        totalQty: 0,
+        deliveredQty: 0,
+        inProgressQty: 0,
+        inProgressOrders: []
+      });
+    }
+    const dayEntry = dailyMap.get(dStr);
+    dayEntry.totalOrders += 1;
+    const st = String(o.status || '').toLowerCase();
+    const isDeliv = st === 'delivered';
+    const isPend = st === 'price approval pending';
+    const activeLines = (Array.isArray(o.orderList) ? o.orderList : [])
+      .filter((l) => (parseFloat(l.qty) || 0) > 0)
+      .map((l) => ({
+        itemid: l.itemid || l.itemId,
+        itemName: l.itemName || l.description || l.name || `Item ${l.itemid || l.itemId}`,
+        description: l.itemName || l.description || l.name || `Item ${l.itemid || l.itemId}`,
+        qty: parseFloat(l.qty) || 0,
+        unit: String(l.unitType || l.unit || 'kg').toLowerCase().startsWith('kg') ? 'kg' : String(l.unitType || l.unit || 'kg'),
+        price: parseFloat(l.price || l.custprice || l.actprice || 0),
+        requestedPrice: l.requestedPrice !== undefined && l.requestedPrice !== null ? parseFloat(l.requestedPrice) : null,
+        priceRequestStatus: l.priceRequestStatus || null
+      }));
+    const orderQty = activeLines.reduce((s, l) => s + l.qty, 0);
+    dayEntry.totalQty = Number((dayEntry.totalQty + orderQty).toFixed(2));
+    if (isDeliv) {
+      dayEntry.deliveredCount += 1;
+      dayEntry.deliveredQty = Number((dayEntry.deliveredQty + orderQty).toFixed(2));
+    } else {
+      if (isPend) dayEntry.pendingApprovalCount += 1;
+      dayEntry.inProgressCount += 1;
+      dayEntry.inProgressQty = Number((dayEntry.inProgressQty + orderQty).toFixed(2));
+      dayEntry.inProgressOrders.push({
+        orderId: o.orderId || o.id,
+        id: o.id || o.orderId,
+        shopId: o.shopId || `S${String(o.customerId || '').padStart(3, '0')}`,
+        customerId: o.customerId || o.shopid,
+        shopName: o.shopName || o.customer || 'Shop',
+        shopCategory: o.shopCategory || 'Retail',
+        agentName: o.agentName || '',
+        spersonid: o.spersonid,
+        date: dStr,
+        expectedDeliveryDate: expDeliv,
+        status: o.status || 'In progress',
+        total: Number(o.total || 0),
+        totalQty: Number(orderQty.toFixed(2)),
+        itemsCount: activeLines.length,
+        locationText: o.locationText || null,
+        visitPhotoStatus: o.visitPhotoStatus || null,
+        orderList: activeLines
+      });
+    }
+  }
+  const dailyDeliveryStatus = Array.from(dailyMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+
+  const frequentlyOrderedCustomers = computeFrequentlyOrderedCustomers(orders, scopedShops, periodInfo);
+
   res.json({
     status: 200,
     report: {
+      timezone: 'Asia/Kolkata',
+      periodInfo,
       hasTarget,
-      targetAmount,
+      targetAmount: Number(targetAmount.toFixed(2)),
       achievedAmount,
+      differenceAmount,
       targetGap,
       achievementRate,
+      achievementPct,
+      performanceIndicator,
+      performanceIndicatorScale: PERFORMANCE_INDICATOR_SCALE,
+      shopCounts,
+      frequentlyOrderedCustomers,
       itemBreakdown,
+      agentBreakdown,
       dailyComparison,
+      dailyDeliveryStatus,
+      authorizedClusters,
       ordersCount: orders.length
     }
   });

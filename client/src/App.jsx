@@ -878,6 +878,14 @@ export default function App() {
           </div>
         </header>
 
+        {/* Subtle Monochrome Background Watermark (strictly behind content, never full-color, preserves contrast) */}
+        <div className="app-watermark-bg" aria-hidden="true">
+          <div className="app-watermark-mark">
+            <img src={logoIcon} alt="" className="app-watermark-logo" />
+            <span className="app-watermark-text">LineCart</span>
+          </div>
+        </div>
+
         {/* Main Content Router */}
         <div className="page-content" id="pageContent">
           <ErrorBoundary>

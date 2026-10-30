@@ -489,6 +489,90 @@ export async function runMigrationsAndSeed({
     console.warn('[DB Migration] Could not backfill payment_balance_due:', balErr.message);
   }
 
+  // Ensure orders table has location, visit photo, and expected_delivery_date columns (Migration 006)
+  if (db.mode === 'postgres') {
+    await db.execRaw(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_lat REAL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_lng REAL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_accuracy REAL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_text TEXT;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS visit_photo TEXT;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS visit_photo_status TEXT;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS visit_photo_updated_at TEXT;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS expected_delivery_date TEXT;
+      CREATE INDEX IF NOT EXISTS idx_orders_expected_delivery_date ON orders(expected_delivery_date);
+    `);
+  } else {
+    try {
+      const orderTableInfo6 = await db.query("PRAGMA table_info('orders')");
+      const orderCols6 = new Set(orderTableInfo6.rows.map((r) => r.name));
+      if (!orderCols6.has('location_lat')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN location_lat REAL;');
+      }
+      if (!orderCols6.has('location_lng')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN location_lng REAL;');
+      }
+      if (!orderCols6.has('location_accuracy')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN location_accuracy REAL;');
+      }
+      if (!orderCols6.has('location_text')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN location_text TEXT;');
+      }
+      if (!orderCols6.has('visit_photo')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN visit_photo TEXT;');
+      }
+      if (!orderCols6.has('visit_photo_status')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN visit_photo_status TEXT;');
+      }
+      if (!orderCols6.has('visit_photo_updated_at')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN visit_photo_updated_at TEXT;');
+      }
+      if (!orderCols6.has('expected_delivery_date')) {
+        await db.execRaw('ALTER TABLE orders ADD COLUMN expected_delivery_date TEXT;');
+      }
+      await db.execRaw('CREATE INDEX IF NOT EXISTS idx_orders_expected_delivery_date ON orders(expected_delivery_date);');
+    } catch (mig6Err) {
+      console.warn('[DB Migration] Could not verify/add migration 006 columns in SQLite:', mig6Err.message);
+    }
+  }
+
+  const mig6File = path.join(__dirname, 'migrations', '006_order_location_photo_delivery_date.sql');
+  if (fs.existsSync(mig6File)) {
+    const mig6Check = await db.query(
+      'SELECT version FROM schema_migrations WHERE version = $1',
+      ['006_order_location_photo_delivery_date']
+    );
+    if (mig6Check.rowCount === 0) {
+      await db.query(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)',
+        ['006_order_location_photo_delivery_date', new Date().toISOString()]
+      );
+      console.log('[DB Migration] Applied 006_order_location_photo_delivery_date.sql');
+    }
+  }
+
+  // Safely backfill expected_delivery_date = order_date + 1 day ONLY where missing, never overwriting explicit dates or status
+  try {
+    const missingExpRes = await db.query(
+      "SELECT order_id, order_date FROM orders WHERE expected_delivery_date IS NULL OR expected_delivery_date = ''"
+    );
+    for (const row of (missingExpRes.rows || [])) {
+      const baseDateStr = String(row.order_date || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(baseDateStr)) {
+        const dt = new Date(`${baseDateStr}T00:00:00Z`);
+        if (!isNaN(dt.getTime())) {
+          const nextDayStr = new Date(dt.getTime() + 86400000).toISOString().slice(0, 10);
+          await db.query(
+            'UPDATE orders SET expected_delivery_date = $1 WHERE order_id = $2 AND (expected_delivery_date IS NULL OR expected_delivery_date = \'\')',
+            [nextDayStr, row.order_id]
+          );
+        }
+      }
+    }
+  } catch (expErr) {
+    console.warn('[DB Migration] Could not backfill expected_delivery_date:', expErr.message);
+  }
+
   // Preserve existing data: safely backfill assigned_agent_id from created_by for any unassigned shops
   try {
     await db.query('UPDATE shops SET assigned_agent_id = created_by WHERE assigned_agent_id IS NULL AND created_by IS NOT NULL');
@@ -993,10 +1077,15 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       ...(parsed || {}),
       itemid: Number(row.item_id),
       itemName: row.item_name,
+      description: row.item_name,
+      unit: (parsed && (parsed.unit || parsed.unitType)) ? String(parsed.unit || parsed.unitType).toLowerCase().startsWith('kg') ? 'kg' : String(parsed.unit || parsed.unitType) : 'kg',
       qty: Number(row.qty),
       price: Number(row.price),
       custprice: Number(row.cust_price),
+      custPrice: Number(row.cust_price),
       actprice: Number(row.act_price),
+      actPrice: Number(row.act_price),
+      catPrice: Number(row.act_price || row.price),
       requestedPrice: row.requested_price !== null && row.requested_price !== undefined ? Number(row.requested_price) : undefined,
       priceRequestStatus: row.price_request_status || undefined
     });
@@ -1005,6 +1094,14 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
   const orders = ordersRes.rows.map((r) => {
     const orderId = String(r.order_id);
     const orderList = itemsByOrder.get(orderId) || [];
+    const baseOrderDate = String(r.order_date || '').slice(0, 10);
+    let defaultExpectedDeliveryDate = r.expected_delivery_date || null;
+    if (!defaultExpectedDeliveryDate && /^\d{4}-\d{2}-\d{2}$/.test(baseOrderDate)) {
+      const dt = new Date(`${baseOrderDate}T00:00:00Z`);
+      if (!isNaN(dt.getTime())) {
+        defaultExpectedDeliveryDate = new Date(dt.getTime() + 86400000).toISOString().slice(0, 10);
+      }
+    }
     return {
       id: orderId,
       orderId,
@@ -1017,6 +1114,7 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       agentName: r.agent_name,
       clusterId: Number(r.cluster_id || 1),
       date: r.order_date,
+      expectedDeliveryDate: defaultExpectedDeliveryDate,
       createdAt: r.created_at,
       status: r.status || 'In progress',
       itemsCount: Number(r.items_count || orderList.length),
@@ -1034,6 +1132,13 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       paymentCollectedAt: r.payment_collected_at || null,
       paymentCollectedBy: r.payment_collected_by !== null && r.payment_collected_by !== undefined ? Number(r.payment_collected_by) : null,
       paymentCollectedByName: r.payment_collected_by_name || null,
+      locationLat: r.location_lat !== null && r.location_lat !== undefined ? Number(r.location_lat) : null,
+      locationLng: r.location_lng !== null && r.location_lng !== undefined ? Number(r.location_lng) : null,
+      locationAccuracy: r.location_accuracy !== null && r.location_accuracy !== undefined ? Number(r.location_accuracy) : null,
+      locationText: r.location_text || null,
+      visitPhoto: r.visit_photo || null,
+      visitPhotoStatus: r.visit_photo_status || (r.visit_photo ? 'synced' : null),
+      visitPhotoUpdatedAt: r.visit_photo_updated_at || null,
       idempotencyKey: r.idempotency_key || null,
       orderList
     };

@@ -3893,3 +3893,319 @@
     min-width: 480px;
   }
 }
+
+/* ============================================================================
+   GENERAL READABILITY, SUBTLE MONOCHROME WATERMARK & ANDROID TYPOGRAPHY TUNING
+   ============================================================================ */
+
+.main-area {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-watermark-bg,
+.bg-watermark,
+.watermark-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.android-preview .app-watermark-bg {
+  position: absolute;
+}
+
+.app-watermark-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  filter: grayscale(100%) saturate(0%) contrast(75%);
+  -webkit-filter: grayscale(100%) saturate(0%) contrast(75%);
+  opacity: 0.032;
+  color: #64748b;
+  transform: translateY(12px);
+}
+
+.app-watermark-logo {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  filter: grayscale(100%) saturate(0%) brightness(0.7) contrast(85%);
+  -webkit-filter: grayscale(100%) saturate(0%) brightness(0.7) contrast(85%);
+}
+
+.app-watermark-text {
+  font: 800 38px Manrope, sans-serif;
+  letter-spacing: -1px;
+  color: #64748b;
+}
+
+.page-content {
+  position: relative;
+  z-index: 1;
+}
+
+/* Slightly larger small text & control labels for improved readability, especially on Android */
+.workspace-label {
+  font-size: 11px;
+  color: #6b7a82;
+}
+.eyebrow {
+  font-size: 12px;
+  color: #64748b;
+}
+.page-heading p {
+  font-size: 13px;
+  color: #5b6b73;
+}
+.stat-top {
+  font-size: 12.5px;
+  color: #5b6b73;
+  font-weight: 600;
+}
+.stat-foot {
+  font-size: 11.5px;
+  color: #64748b;
+}
+.panel-head h2,
+.table-heading h2,
+.form-panel h2 {
+  font-size: 15px;
+}
+.panel-head p,
+.form-panel .section-help,
+.table-footer,
+.recent-count {
+  font-size: 12px;
+  color: #64748b;
+}
+.field-group label,
+.recent-filters label > span,
+.cluster-pill-label,
+.cluster-filter-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.field,
+.select,
+.textarea,
+.search-input,
+.recent-filter {
+  font-size: 13px;
+  color: #1e293b;
+  min-height: 40px;
+}
+.select-small {
+  font-size: 12px;
+  height: 34px;
+  color: #334155;
+}
+.primary-button,
+.secondary-button,
+.quiet-button {
+  font-size: 13px;
+  min-height: 40px;
+}
+.tab {
+  font-size: 12px;
+  padding: 8px 13px;
+  color: #52616a;
+}
+.data-table th,
+.order-table th,
+.history-items-table th {
+  font-size: 11px;
+  color: #475569;
+}
+.data-table td,
+.order-table td:first-child {
+  font-size: 12.5px;
+  color: #334155;
+}
+.order-table input,
+.order-table select {
+  font-size: 12.5px;
+  height: 34px;
+}
+.status {
+  font-size: 11px;
+  padding: 5px 10px;
+}
+.summary-title,
+.summary-value,
+.summary-line {
+  font-size: 12.5px;
+}
+.summary-sub,
+.summary-note {
+  font-size: 11.5px;
+  color: #64748b;
+}
+.report-kpi span {
+  font-size: 11.5px;
+  color: #52616a;
+  font-weight: 600;
+}
+.category-tile small {
+  font-size: 11px;
+  color: #5b6b73;
+}
+
+/* Android preview & mobile small text bump without overflow or clipping */
+.android-preview .eyebrow {
+  font-size: 10.5px;
+}
+.android-preview .page-heading p {
+  font-size: 12px;
+}
+.android-preview .page-heading .primary-button,
+.android-preview .page-heading .secondary-button {
+  font-size: 11.5px;
+  height: 36px;
+  padding: 0 11px;
+}
+.android-preview .stat-top {
+  font-size: 11px;
+}
+.android-preview .stat-foot {
+  font-size: 10.5px;
+}
+.android-preview .panel-head h2,
+.android-preview .table-heading h2 {
+  font-size: 14px;
+}
+.android-preview .panel-head p {
+  font-size: 11px;
+}
+.android-preview .summary-title,
+.android-preview .summary-value {
+  font-size: 11.5px;
+}
+.android-preview .summary-sub,
+.android-preview .category-tile small {
+  font-size: 10.5px;
+}
+.android-preview .recent-filters label > span {
+  font-size: 10.5px;
+}
+.android-preview .recent-filter,
+.android-preview .clear-filters {
+  font-size: 11.5px;
+  height: 36px;
+}
+.android-preview .mobile-bottom-nav button {
+  font-size: 10.5px;
+}
+@media (max-width: 780px) {
+  .mobile-bottom-nav button {
+    font-size: 11px;
+  }
+  .field,
+  .select,
+  .textarea,
+  .search-input {
+    font-size: 14px;
+  }
+  .field-group label {
+    font-size: 12.5px;
+  }
+}
+
+/* Period filter pill bar & report tables */
+.report-period-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+.report-period-btn {
+  border: 0;
+  background: transparent;
+  color: #475569;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.report-period-btn:hover {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.6);
+}
+.report-period-btn.active {
+  background: #ffffff;
+  color: #0284c7;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  font-weight: 700;
+}
+
+.perf-indicator-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.perf-indicator-badge.green,
+.perf-indicator-badge.exceeded {
+  background: #dcfce7;
+  color: #15803d;
+}
+.perf-indicator-badge.blue,
+.perf-indicator-badge.on_track {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.perf-indicator-badge.amber,
+.perf-indicator-badge.needs_attention {
+  background: #fef3c7;
+  color: #b45309;
+}
+.perf-indicator-badge.red,
+.perf-indicator-badge.critical {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.perf-indicator-badge.neutral,
+.perf-indicator-badge.no_target {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.inprogress-drilldown-btn {
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+.inprogress-drilldown-btn:hover {
+  background: #fef3c7;
+  transform: translateY(-1px);
+}
+

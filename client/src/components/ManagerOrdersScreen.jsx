@@ -670,27 +670,47 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
 
       {activeTab === 'price-requests' ? (
         <div className="price-requests-view">
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            {['pending', 'approved', 'rejected', 'all'].map((st) => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => setPriceStatusFilter(st)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  border: '1px solid #cbd5e1',
-                  background: priceStatusFilter === st ? '#1e293b' : '#fff',
-                  color: priceStatusFilter === st ? '#fff' : '#475569',
-                  cursor: 'pointer',
-                  textTransform: 'capitalize'
-                }}
-              >
-                {st === 'all' ? 'All Requests' : st}
-              </button>
-            ))}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '10px',
+            marginBottom: '16px'
+          }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {['pending', 'approved', 'rejected', 'all'].map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setPriceStatusFilter(st)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    border: '1px solid #cbd5e1',
+                    background: priceStatusFilter === st ? '#1e293b' : '#fff',
+                    color: priceStatusFilter === st ? '#fff' : '#475569',
+                    cursor: 'pointer',
+                    textTransform: 'capitalize'
+                  }}
+                >
+                  {st === 'all' ? 'All Requests' : st}
+                </button>
+              ))}
+            </div>
+            <div style={{
+              fontSize: '12px',
+              color: '#0369a1',
+              background: '#f0f9ff',
+              border: '1px solid #bae6fd',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontWeight: 600
+            }}>
+              ✓ Single-step approval: One decision by either Admin or authorized Sales Manager resolves the request.
+            </div>
           </div>
 
           {priceRequestsError ? (
@@ -746,7 +766,11 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
                         background: pr.status === 'approved' ? '#dcfce7' : pr.status === 'rejected' ? '#fee2e2' : '#fef3c7',
                         color: pr.status === 'approved' ? '#15803d' : pr.status === 'rejected' ? '#b91c1c' : '#b45309'
                       }}>
-                        {pr.status === 'approved' ? '✓ Approved' : pr.status === 'rejected' ? '✕ Rejected' : '⏳ Pending Approval'}
+                        {pr.status === 'approved'
+                          ? '✓ Approved (Resolved)'
+                          : pr.status === 'rejected'
+                          ? '✕ Rejected (Resolved)'
+                          : '⏳ Pending (1 approval resolves)'}
                       </span>
                     </div>
 
@@ -786,51 +810,57 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
                     )}
 
                     {pr.status === 'pending' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
-                        {isSelf ? (
-                          <span style={{ fontSize: '11px', color: '#b91c1c', fontWeight: 600 }}>
-                            ⚠️ Self-approval forbidden (created by your account)
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => setDecisionModal({ request: pr, action: 'reject', comment: '', applyToCatalog: false })}
-                              style={{
-                                padding: '6px 14px',
-                                borderRadius: '6px',
-                                border: '1px solid #fca5a5',
-                                background: '#fef2f2',
-                                color: '#b91c1c',
-                                fontSize: '12px',
-                                fontWeight: 700,
-                                cursor: 'pointer'
-                              }}
-                            >
-                              Reject
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDecisionModal({ request: pr, action: 'approve', comment: '', applyToCatalog: false })}
-                              style={{
-                                padding: '6px 16px',
-                                borderRadius: '6px',
-                                border: 'none',
-                                background: '#16a34a',
-                                color: '#fff',
-                                fontSize: '12px',
-                                fontWeight: 700,
-                                cursor: 'pointer'
-                              }}
-                            >
-                              Approve
-                            </button>
-                          </>
-                        )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                        <span style={{ fontSize: '11.5px', color: '#64748b' }}>
+                          Action by either Admin or authorized Sales Manager resolves this request immediately.
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isSelf ? (
+                            <span style={{ fontSize: '11px', color: '#b91c1c', fontWeight: 600 }}>
+                              ⚠️ Self-approval forbidden (created by your account)
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setDecisionModal({ request: pr, action: 'reject', comment: '', applyToCatalog: false })}
+                                style={{
+                                  padding: '6px 14px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #fca5a5',
+                                  background: '#fef2f2',
+                                  color: '#b91c1c',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Reject
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDecisionModal({ request: pr, action: 'approve', comment: '', applyToCatalog: false })}
+                                style={{
+                                  padding: '6px 16px',
+                                  borderRadius: '6px',
+                                  border: 'none',
+                                  background: '#16a34a',
+                                  color: '#fff',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Approve
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     ) : (
-                      <div style={{ fontSize: '11px', color: '#64748b', borderTop: '1px solid #f1f5f9', paddingTop: '8px' }}>
-                        Decided by <b>{pr.decisionByName || ('User #' + pr.decisionBy)}</b> on {pr.decisionAt ? new Date(pr.decisionAt).toLocaleString('en-IN') : '—'}
+                      <div style={{ fontSize: '11.5px', color: '#475569', borderTop: '1px solid #f1f5f9', paddingTop: '8px' }}>
+                        Resolved by <b>{pr.decisionByName || ('User #' + pr.decisionBy)}</b>
+                        {pr.decisionByRole ? <span> ({pr.decisionByRole})</span> : null} on {pr.decisionAt ? new Date(pr.decisionAt).toLocaleString('en-IN') : '—'}
                         {pr.decisionComment && <span> · Note: <i>"{pr.decisionComment}"</i></span>}
                       </div>
                     )}
@@ -1377,12 +1407,31 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
                     {(selectedOrder.orderList && selectedOrder.orderList.length > 0) ? (
                       selectedOrder.orderList.map((item, idx) => {
                         const rate = parseFloat(item.custprice || item.price || item.actprice || 50);
+                        const catRate = parseFloat(item.catalogPrice || item.catPrice || item.actprice || rate);
+                        const reqRate = item.requestedPrice !== undefined && item.requestedPrice !== null
+                          ? parseFloat(item.requestedPrice)
+                          : null;
+                        const reqStatus = item.priceRequestStatus || null;
                         const qty = parseFloat(item.qty) || 1;
                         return (
                           <tr key={idx}>
-                            <td>{item.itemName || `Commodity #${item.itemid || idx + 1}`}</td>
+                            <td>
+                              <div>{item.itemName || `Commodity #${item.itemid || idx + 1}`}</div>
+                              {reqRate !== null && !isNaN(reqRate) && (
+                                <div style={{ fontSize: '11px', marginTop: '2px', color: reqStatus === 'approved' ? '#15803d' : reqStatus === 'rejected' ? '#b91c1c' : '#b45309' }}>
+                                  Catalog: ₹{catRate.toFixed(2)} · Requested: ₹{reqRate.toFixed(2)} ·{' '}
+                                  <b>
+                                    {reqStatus === 'approved'
+                                      ? '✓ Approved'
+                                      : reqStatus === 'rejected'
+                                      ? '✕ Rejected (Catalog applied)'
+                                      : '⏳ Pending approval'}
+                                  </b>
+                                </div>
+                              )}
+                            </td>
                             <td style={{ textAlign: 'right' }}>₹{rate.toFixed(2)}</td>
-                            <td style={{ textAlign: 'right' }}>{qty}</td>
+                            <td style={{ textAlign: 'right' }}>{qty} {item.unit || 'kg'}</td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
                               ₹{(rate * qty).toLocaleString('en-IN')}
                             </td>

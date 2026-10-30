@@ -183,7 +183,7 @@ export const api = {
   },
 
   // 4. POST /createorder
-  async createOrder(orderList, idempotencyKey = null, deviceEventTime = null) {
+  async createOrder(orderList, idempotencyKey = null, deviceEventTime = null, extraMeta = {}) {
     const key = idempotencyKey || `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const eventTime = deviceEventTime || new Date().toISOString();
     const res = await fetch(`${BASE_URL}/createorder`, {
@@ -194,7 +194,12 @@ export const api = {
         'X-Device-Event-Time': eventTime,
         ...getAuthHeaders()
       },
-      body: JSON.stringify({ orderList, idempotencyKey: key, deviceEventTime: eventTime })
+      body: JSON.stringify({
+        orderList,
+        idempotencyKey: key,
+        deviceEventTime: eventTime,
+        ...(extraMeta || {})
+      })
     });
     return res.json();
   },
@@ -277,6 +282,9 @@ export const api = {
       }
       if (spersonId.clusterId !== undefined && spersonId.clusterId !== null && spersonId.clusterId !== '') {
         params.set('clusterId', spersonId.clusterId);
+      }
+      if (spersonId.period) {
+        params.set('period', spersonId.period);
       }
       if (spersonId.fromDate) {
         params.set('fromDate', spersonId.fromDate);

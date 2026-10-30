@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { formatShopId, getGoogleMapsUrl, getPaymentSummary } from '../utils';
 import { queueOrderCreation } from '../offline/syncEngine';
@@ -13,6 +13,33 @@ const REMARKS_OPTIONS = [
   'Not interested'
 ];
 
+function getIstTodayString() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function addDays(dateStr, days) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '';
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function normalizeUnit(u) {
+  const s = String(u || 'kg').trim();
+  if (!s || s.toLowerCase().startsWith('kg')) return 'kg';
+  return s;
+}
+
 export default function OrderEntryScreen({
   user,
   clusters = [],
@@ -23,12 +50,44 @@ export default function OrderEntryScreen({
   onNavigate,
   showToast
 }) {
-  const [selectedClusterId, setSelectedClusterId] = useState('all');
+  // Strictly scope clusters to those containing shops assigned to this agent
+  const availableClusters = clusters.filter((c) =>
+    shops.some((s) => Number(s.clusterid) === Number(c.clusterId))
+  );
+  const hasSingleAssignedCluster = availableClusters.length <= 1;
+  const singleClusterId = availableClusters.length === 1
+    ? String(availableClusters[0].clusterId)
+    : (shops[0]?.clusterid ? String(shops[0].clusterid) : String(user?.clusterid || 1));
+
+  const [selectedClusterId, setSelectedClusterId] = useState(() =>
+    hasSingleAssignedCluster ? singleClusterId : 'all'
+  );
   const [selectedShopId, setSelectedShopId] = useState('');
-  const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [orderDate, setOrderDate] = useState(() => getIstTodayString());
   const [orderRows, setOrderRows] = useState([]);
   const [orderNotes, setOrderNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Foreground Location State (single foreground request on open/use, never continuous tracking)
+  const [locationCoords, setLocationCoords] = useState(null); // { lat, lng, accuracy }
+  const [locationText, setLocationText] = useState('');
+  const [locationStatus, setLocationStatus] = useState('idle'); // 'idle' | 'loading' | 'ok' | 'poor_accuracy' | 'denied' | 'unavailable'
+  const [locationMessage, setLocationMessage] = useState('');
+
+  // In-App Camera / Visit Photo State
+  const [visitPhoto, setVisitPhoto] = useState(null);
+  const [visitPhotoStatus, setVisitPhotoStatus] = useState(null); // 'ready' | 'waiting_offline' | 'synced'
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Last saved order summary for quick confirmation
+  const [lastSavedOrder, setLastSavedOrder] = useState(null);
+
+  // 7-Day Order History State
   const [historyOrders, setHistoryOrders] = useState([]);
   const [historyPeriod, setHistoryPeriod] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -44,10 +103,39 @@ export default function OrderEntryScreen({
       .join('')
       .toUpperCase();
 
-  // Filter shops by selected cluster
-  const clusterShops = selectedClusterId === 'all'
-    ? shops
+  // Monitor online/offline status for photo sync indicator
+  useEffect(() => {
+    const onOnline = () => {
+      setIsOffline(false);
+      setVisitPhotoStatus((prev) => (prev === 'waiting_offline' ? 'ready' : prev));
+    };
+    const onOffline = () => {
+      setIsOffline(true);
+      setVisitPhotoStatus((prev) => (prev === 'ready' ? 'waiting_offline' : prev));
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  // Automatically enforce single assigned cluster when agent has only one assigned cluster
+  useEffect(() => {
+    if (hasSingleAssignedCluster && singleClusterId && selectedClusterId !== singleClusterId) {
+      setSelectedClusterId(singleClusterId);
+    }
+  }, [hasSingleAssignedCluster, singleClusterId, selectedClusterId]);
+
+  // Filter shops strictly to agent's assigned shops in the selected cluster
+  const clusterShops = (hasSingleAssignedCluster || selectedClusterId === 'all')
+    ? (hasSingleAssignedCluster
+        ? shops.filter((s) => Number(s.clusterid) === Number(singleClusterId))
+        : shops)
     : shops.filter((s) => Number(s.clusterid) === Number(selectedClusterId));
+
+  const effectiveShops = clusterShops.length > 0 ? clusterShops : shops;
 
   // Initialize selected shop if preselectedShop passed or cluster changes
   useEffect(() => {
@@ -59,12 +147,12 @@ export default function OrderEntryScreen({
         return;
       }
     }
-    if (clusterShops.length > 0 && !selectedShopId) {
-      setSelectedShopId(String(clusterShops[0].shopid));
+    if (effectiveShops.length > 0 && !selectedShopId) {
+      setSelectedShopId(String(effectiveShops[0].shopid));
     }
   }, [preselectedShop, selectedClusterId, shops]);
 
-  // Load catalog items into order rows
+  // Load catalog items into order rows (unit normalized to 'kg' where applicable)
   useEffect(() => {
     if (catalogItems.length > 0) {
       setOrderRows(
@@ -72,10 +160,10 @@ export default function OrderEntryScreen({
           itemid: item.itemid,
           itemName: item.itemName,
           itemimage: item.itemimage || '/lincart_flashicon.png',
-          unitType: item.unitType || 'Kgs',
+          unitType: normalizeUnit(item.unitType || 'kg'),
           price: Number(item.price) || 50,
           qty: 0,
-          custprice: Number(item.cprice) > 0 ? Number(item.cprice) : Number(item.price) || 50,
+          custprice: Number(item.price) || 50,
           requestedPrice: '',
           requestReason: '',
           remarks: 'Not Connected'
@@ -83,6 +171,166 @@ export default function OrderEntryScreen({
       );
     }
   }, [catalogItems]);
+
+  // Foreground Location Fetch (single one-shot request when agent opens/uses the Location field; never continuous)
+  const requestForegroundLocation = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocationStatus('unavailable');
+      setLocationMessage('GPS unavailable on this device or browser.');
+      return;
+    }
+
+    setLocationStatus('loading');
+    setLocationMessage('Requesting foreground GPS location...');
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude);
+        const lng = Number(pos.coords.longitude);
+        const acc = Math.round(Number(pos.coords.accuracy || 0));
+        const formatted = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        setLocationCoords({ lat, lng, accuracy: acc });
+        setLocationText(formatted);
+
+        if (acc > 100) {
+          setLocationStatus('poor_accuracy');
+          setLocationMessage(`Poor GPS accuracy (±${acc}m). Coordinates recorded, or tap Retry in an open area.`);
+        } else {
+          setLocationStatus('ok');
+          setLocationMessage(`Foreground GPS captured (accuracy ±${acc}m).`);
+        }
+      },
+      (err) => {
+        if (err && err.code === 1) {
+          setLocationStatus('denied');
+          setLocationMessage('Location permission denied. Please enable foreground location access in settings and tap Retry.');
+        } else if (err && err.code === 2) {
+          setLocationStatus('unavailable');
+          setLocationMessage('GPS position unavailable. Please check that device location/GPS is turned on.');
+        } else if (err && err.code === 3) {
+          setLocationStatus('unavailable');
+          setLocationMessage('GPS request timed out. Move to an area with clear sky view and tap Retry.');
+        } else {
+          setLocationStatus('unavailable');
+          setLocationMessage(err?.message || 'Unable to retrieve GPS coordinates.');
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  };
+
+  // Stop camera stream cleanly when modal closes or component unmounts
+  const stopCameraStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => stopCameraStream();
+  }, []);
+
+  const handleOpenCamera = async () => {
+    setCameraError('');
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        setCameraOpen(true);
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+      } catch (err) {
+        stopCameraStream();
+        setCameraOpen(false);
+        // Fallback to native file input with camera capture
+        if (fileInputRef.current) {
+          fileInputRef.current.click();
+        } else {
+          setCameraError('Camera access was denied or is unavailable on this device.');
+        }
+      }
+    } else if (fileInputRef.current) {
+      fileInputRef.current.click();
+    } else {
+      setCameraError('Camera is not supported in this environment.');
+    }
+  };
+
+  const handleCaptureVideoFrame = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    const maxDim = 960;
+    let w = video.videoWidth || 640;
+    let h = video.videoHeight || 480;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+    }
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+    setVisitPhoto(dataUrl);
+    setVisitPhotoStatus(navigator.onLine ? 'ready' : 'waiting_offline');
+    stopCameraStream();
+    setCameraOpen(false);
+    if (showToast) {
+      showToast(navigator.onLine ? 'Visit photo captured and attached to order.' : 'Visit photo captured (waiting to sync offline).');
+    }
+  };
+
+  const handleFilePhotoSelected = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 960;
+        let w = img.width || 640;
+        let h = img.height || 480;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL('image/jpeg', 0.78);
+        setVisitPhoto(compressed);
+        setVisitPhotoStatus(navigator.onLine ? 'ready' : 'waiting_offline');
+        if (showToast) {
+          showToast(navigator.onLine ? 'Visit photo attached to order.' : 'Visit photo attached (waiting to sync offline).');
+        }
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const fetchOrderHistory = (shopId) => {
     if (!shopId) {
@@ -146,6 +394,7 @@ export default function OrderEntryScreen({
   };
 
   const currentShop = shops.find((s) => String(s.shopid) === String(selectedShopId));
+  const expectedDeliveryDate = addDays(orderDate, 1);
 
   const handleQtyChange = (idx, val) => {
     const numeric = parseFloat(val) || 0;
@@ -162,13 +411,8 @@ export default function OrderEntryScreen({
     );
   };
 
-  const handleCustPriceChange = (idx, val) => {
-    const numeric = parseFloat(val) || 0;
-    setOrderRows((prev) =>
-      prev.map((r, i) => (i === idx ? { ...r, custprice: numeric, requestedPrice: val } : r))
-    );
-  };
-
+  // Entering a customer-requested price records a price request for approval ONLY;
+  // it NEVER changes the catalog price (r.price), custprice, line totals, or order total.
   const handleRequestedPriceChange = (idx, val) => {
     setOrderRows((prev) =>
       prev.map((r, i) => (i === idx ? { ...r, requestedPrice: val } : r))
@@ -178,12 +422,6 @@ export default function OrderEntryScreen({
   const handleRequestReasonChange = (idx, val) => {
     setOrderRows((prev) =>
       prev.map((r, i) => (i === idx ? { ...r, requestReason: val } : r))
-    );
-  };
-
-  const handleRemarksChange = (idx, val) => {
-    setOrderRows((prev) =>
-      prev.map((r, i) => (i === idx ? { ...r, remarks: val } : r))
     );
   };
 
@@ -201,7 +439,7 @@ export default function OrderEntryScreen({
           itemid: nextItem.itemid,
           itemName: nextItem.itemName,
           itemimage: nextItem.itemimage || '/lincart_flashicon.png',
-          unitType: nextItem.unitType || 'Kgs',
+          unitType: normalizeUnit(nextItem.unitType || 'kg'),
           price: Number(nextItem.price) || 50,
           qty: 1,
           custprice: Number(nextItem.price) || 50,
@@ -215,28 +453,29 @@ export default function OrderEntryScreen({
     }
   };
 
-  // Subtotal calculated from valid items
+  // Active items with quantity > 0
   const activeItems = orderRows.filter((r) => Number(r.qty) > 0);
-  const hasPriceReq = orderRows.some(
-    (r) => Number(r.qty) > 0 &&
-           r.requestedPrice !== undefined &&
-           r.requestedPrice !== null &&
-           r.requestedPrice !== '' &&
-           Math.abs(Number(r.requestedPrice) - Number(r.price)) > 0.001
+  const hasPriceReq = activeItems.some(
+    (r) =>
+      r.requestedPrice !== undefined &&
+      r.requestedPrice !== null &&
+      r.requestedPrice !== '' &&
+      Math.abs(Number(r.requestedPrice) - Number(r.price)) > 0.001
   );
 
-  const subtotal = orderRows.reduce((sum, r) => {
+  // Order total & line totals strictly use catalog price (r.price); requestedPrice is pending approval
+  const subtotal = activeItems.reduce((sum, r) => {
     const qty = Number(r.qty) || 0;
-    const hasReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '';
-    const reqVal = hasReq ? parseFloat(r.requestedPrice) : null;
-    const effPrice = (hasReq && reqVal !== null && !isNaN(reqVal)) ? reqVal : (Number(r.custprice) || Number(r.price) || 0);
-    return sum + qty * effPrice;
+    const catalogPrice = Number(r.price) || 0;
+    return sum + qty * catalogPrice;
   }, 0);
+
+  const totalQuantityKg = activeItems.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
 
   const handleSubmitOrder = async (e) => {
     if (e) e.preventDefault();
     if (!currentShop) {
-      showToast('Please select a valid customer.');
+      showToast('Please select a valid assigned customer store.');
       return;
     }
     if (activeItems.length === 0) {
@@ -257,24 +496,43 @@ export default function OrderEntryScreen({
 
     setSubmitting(true);
     const spersonid = Number(user?.id || localStorage.getItem('LineCartPref_userid') || 1);
-    const finalClusterId = currentShop?.clusterid || (selectedClusterId !== 'all' ? Number(selectedClusterId) : 1);
+    const finalClusterId = Number(currentShop?.clusterid || singleClusterId || 1);
+
+    const extraMeta = {
+      orderDate,
+      expectedDeliveryDate,
+      locationLat: locationCoords?.lat ?? null,
+      locationLng: locationCoords?.lng ?? null,
+      locationAccuracy: locationCoords?.accuracy ?? null,
+      locationText: locationText || null,
+      visitPhoto: visitPhoto || null
+    };
+
     const orderList = orderRows.map((r) => {
       const hasReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '';
       const reqVal = hasReq ? parseFloat(r.requestedPrice) : null;
       const isCustom = hasReq && reqVal !== null && !isNaN(reqVal) && Math.abs(reqVal - Number(r.price)) > 0.001;
+      const catPrice = Number(r.price);
       return {
         customerid: currentShop.shopid,
         itemid: r.itemid,
         itemName: r.itemName,
+        unitType: normalizeUnit(r.unitType),
         qty: r.qty,
-        price: Number(r.price),
-        catalogPrice: Number(r.price),
-        actprice: Number(r.price),
-        custprice: isCustom ? reqVal : Number(r.price),
+        price: catPrice,
+        catalogPrice: catPrice,
+        actprice: catPrice,
+        custprice: catPrice, // Catalog price preserved until price request is approved
         requestedPrice: isCustom ? reqVal : undefined,
         requestReason: r.requestReason || '',
         spersonid,
         clusterid: finalClusterId,
+        date: orderDate,
+        expectedDeliveryDate,
+        locationLat: extraMeta.locationLat,
+        locationLng: extraMeta.locationLng,
+        locationAccuracy: extraMeta.locationAccuracy,
+        locationText: extraMeta.locationText,
         remarks: REMARKS_OPTIONS.indexOf(r.remarks) >= 0 ? REMARKS_OPTIONS.indexOf(r.remarks) : 0,
         notes: orderNotes
       };
@@ -282,6 +540,22 @@ export default function OrderEntryScreen({
 
     const shortId = formatShopId(currentShop.shopid);
     const finalStatus = hasPriceReq ? 'Price approval pending' : 'In progress';
+    const savedItemsSnapshot = activeItems.map((r) => {
+      const hasReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '';
+      const reqVal = hasReq ? parseFloat(r.requestedPrice) : null;
+      const isCustom = hasReq && reqVal !== null && !isNaN(reqVal) && Math.abs(reqVal - Number(r.price)) > 0.001;
+      return {
+        itemid: r.itemid,
+        itemName: r.itemName,
+        qty: Number(r.qty),
+        unitType: normalizeUnit(r.unitType),
+        price: Number(r.price),
+        catalogPrice: Number(r.price),
+        lineTotal: Number((Number(r.qty) * Number(r.price)).toFixed(2)),
+        requestedPrice: isCustom ? reqVal : null,
+        priceRequestStatus: isCustom ? 'pending' : null
+      };
+    });
 
     // If offline, queue locally immediately without attempting remote fetch
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -290,27 +564,47 @@ export default function OrderEntryScreen({
           user?.id || spersonid,
           orderList,
           currentShop,
-          activeItems
+          activeItems,
+          extraMeta
         );
-        showToast(hasPriceReq ? 'Price request queued locally (Offline). Waiting to sync.' : 'Order saved locally (Offline). Waiting to sync.');
+        if (visitPhoto) setVisitPhotoStatus('waiting_offline');
+        showToast(
+          hasPriceReq
+            ? 'Order & price request saved locally (Offline). Waiting to sync.'
+            : 'Order saved locally (Offline). Waiting to sync.'
+        );
+        const placedObj = {
+          id: tempRef,
+          orderId: tempRef,
+          tempRef,
+          idempotencyKey,
+          customer: currentShop.shopName,
+          shopName: currentShop.shopName,
+          shopCategory: currentShop.shopCategory || 'Retail',
+          shopId: shortId,
+          shopid: currentShop.shopid,
+          clusterId: finalClusterId,
+          date: orderDate,
+          expectedDeliveryDate,
+          items: savedItemsSnapshot.length,
+          itemsCount: savedItemsSnapshot.length,
+          total: subtotal,
+          status: finalStatus,
+          priceApprovalPending: hasPriceReq,
+          locationLat: extraMeta.locationLat,
+          locationLng: extraMeta.locationLng,
+          locationAccuracy: extraMeta.locationAccuracy,
+          locationText: extraMeta.locationText,
+          visitPhoto: visitPhoto || null,
+          visitPhotoStatus: visitPhoto ? 'waiting_offline' : null,
+          syncState: 'waiting',
+          syncStatus: 'waiting',
+          orderList: savedItemsSnapshot,
+          itemsList: savedItemsSnapshot
+        };
+        setLastSavedOrder(placedObj);
         if (onOrderPlaced) {
-          onOrderPlaced({
-            id: tempRef,
-            tempRef,
-            idempotencyKey,
-            customer: currentShop.shopName,
-            shopId: shortId,
-            shopid: currentShop.shopid,
-            clusterId: finalClusterId,
-            date: orderDate,
-            items: activeItems.length,
-            itemsCount: activeItems.length,
-            total: subtotal,
-            status: finalStatus,
-            priceApprovalPending: hasPriceReq,
-            syncState: 'waiting',
-            itemsList: activeItems
-          });
+          onOrderPlaced(placedObj);
         }
         onNavigate('reports');
       } catch (err) {
@@ -322,29 +616,47 @@ export default function OrderEntryScreen({
     }
 
     try {
-      const res = await api.createOrder(orderList);
+      const res = await api.createOrder(orderList, null, null, extraMeta);
       if (res && (res.status === 200 || res.status === 1)) {
-        showToast(hasPriceReq ? `Order placed! Custom price request submitted for approval.` : `Order for ${currentShop.shopName} placed successfully!`);
+        if (visitPhoto) setVisitPhotoStatus('synced');
+        showToast(
+          hasPriceReq
+            ? 'Order placed at catalog price! Customer price request sent for approval.'
+            : `Order for ${currentShop.shopName} placed successfully!`
+        );
         fetchOrderHistory(selectedShopId);
+        const serial = res.id || Math.floor(Math.random() * 90000 + 10000);
+        const orderId = res.orderId || `${shortId}-${serial}`;
+        const placedObj = {
+          id: orderId,
+          orderId,
+          customer: currentShop.shopName,
+          shopName: currentShop.shopName,
+          shopCategory: currentShop.shopCategory || 'Retail',
+          shopId: shortId,
+          shopid: currentShop.shopid,
+          clusterId: finalClusterId,
+          date: orderDate,
+          expectedDeliveryDate: res.expectedDeliveryDate || expectedDeliveryDate,
+          items: savedItemsSnapshot.length,
+          itemsCount: savedItemsSnapshot.length,
+          total: subtotal,
+          status: res.statusName || finalStatus,
+          priceApprovalPending: res.priceApprovalPending ?? hasPriceReq,
+          locationLat: extraMeta.locationLat,
+          locationLng: extraMeta.locationLng,
+          locationAccuracy: extraMeta.locationAccuracy,
+          locationText: extraMeta.locationText,
+          visitPhoto: visitPhoto || null,
+          visitPhotoStatus: visitPhoto ? 'synced' : null,
+          syncState: 'synced',
+          syncStatus: 'synced',
+          orderList: savedItemsSnapshot,
+          itemsList: savedItemsSnapshot
+        };
+        setLastSavedOrder(placedObj);
         if (onOrderPlaced) {
-          const serial = res.id || Math.floor(Math.random() * 90000 + 10000);
-          const orderId = res.orderId || `${shortId}-${serial}`;
-
-          onOrderPlaced({
-            id: orderId,
-            customer: currentShop.shopName,
-            shopId: shortId,
-            shopid: currentShop.shopid,
-            clusterId: finalClusterId,
-            date: orderDate,
-            items: activeItems.length,
-            itemsCount: activeItems.length,
-            total: subtotal,
-            status: res.statusName || finalStatus,
-            priceApprovalPending: res.priceApprovalPending ?? hasPriceReq,
-            syncState: 'synced',
-            itemsList: activeItems
-          });
+          onOrderPlaced(placedObj);
         }
         onNavigate('reports');
       } else {
@@ -357,27 +669,43 @@ export default function OrderEntryScreen({
           user?.id || spersonid,
           orderList,
           currentShop,
-          activeItems
+          activeItems,
+          extraMeta
         );
-        showToast(`Network drop: Order saved locally. Waiting to sync.`);
+        if (visitPhoto) setVisitPhotoStatus('waiting_offline');
+        showToast('Network drop: Order & photo queued locally. Waiting to sync.');
+        const placedObj = {
+          id: tempRef,
+          orderId: tempRef,
+          tempRef,
+          idempotencyKey,
+          customer: currentShop.shopName,
+          shopName: currentShop.shopName,
+          shopCategory: currentShop.shopCategory || 'Retail',
+          shopId: shortId,
+          shopid: currentShop.shopid,
+          clusterId: finalClusterId,
+          date: orderDate,
+          expectedDeliveryDate,
+          items: savedItemsSnapshot.length,
+          itemsCount: savedItemsSnapshot.length,
+          total: subtotal,
+          status: finalStatus,
+          priceApprovalPending: hasPriceReq,
+          locationLat: extraMeta.locationLat,
+          locationLng: extraMeta.locationLng,
+          locationAccuracy: extraMeta.locationAccuracy,
+          locationText: extraMeta.locationText,
+          visitPhoto: visitPhoto || null,
+          visitPhotoStatus: visitPhoto ? 'waiting_offline' : null,
+          syncState: 'waiting',
+          syncStatus: 'waiting',
+          orderList: savedItemsSnapshot,
+          itemsList: savedItemsSnapshot
+        };
+        setLastSavedOrder(placedObj);
         if (onOrderPlaced) {
-          onOrderPlaced({
-            id: tempRef,
-            tempRef,
-            idempotencyKey,
-            customer: currentShop.shopName,
-            shopId: shortId,
-            shopid: currentShop.shopid,
-            clusterId: finalClusterId,
-            date: orderDate,
-            items: activeItems.length,
-            itemsCount: activeItems.length,
-            total: subtotal,
-            status: finalStatus,
-            priceApprovalPending: hasPriceReq,
-            syncState: 'waiting',
-            itemsList: activeItems
-          });
+          onOrderPlaced(placedObj);
         }
         onNavigate('reports');
       } catch {
@@ -387,11 +715,6 @@ export default function OrderEntryScreen({
       setSubmitting(false);
     }
   };
-
-  // Only show clusters that contain shops assigned to this agent
-  const availableClusters = clusters.filter((c) =>
-    shops.some((s) => Number(s.clusterid) === Number(c.clusterId))
-  );
 
   if (shops.length === 0) {
     return (
@@ -407,7 +730,7 @@ export default function OrderEntryScreen({
           <button
             type="button"
             className="secondary-button"
-            onClick={() => onNavigate ? onNavigate('overview') : window.location.reload()}
+            onClick={() => (onNavigate ? onNavigate('overview') : window.location.reload())}
           >
             ← Return to Home
           </button>
@@ -416,14 +739,21 @@ export default function OrderEntryScreen({
     );
   }
 
+  const assignedClusterObj =
+    availableClusters.find((c) => Number(c.clusterId) === Number(currentShop?.clusterid || singleClusterId)) ||
+    clusters.find((c) => Number(c.clusterId) === Number(currentShop?.clusterid || singleClusterId));
+  const assignedClusterName =
+    assignedClusterObj?.clusterName ||
+    (Number(currentShop?.clusterid || singleClusterId) === 2 ? 'Thuthukudi' : 'Pollachi and Udumalapet');
+
   return (
     <div>
       {/* Page Heading */}
       <div className="page-heading">
         <div>
-          <p className="eyebrow">ORDER MANAGEMENT</p>
+          <p className="eyebrow">ORDER MANAGEMENT · {assignedClusterName.toUpperCase()}</p>
           <h1>Create order</h1>
-          <p>Add wholesale items for a customer and review the live delivery total.</p>
+          <p>Select your assigned shop, capture visit location & photo, and enter wholesale item quantities.</p>
         </div>
         <button
           type="button"
@@ -440,37 +770,57 @@ export default function OrderEntryScreen({
       <div className="form-grid">
         {/* Left Form Panel */}
         <section className="panel form-panel">
-          <h2>Order details</h2>
-          <p className="section-help">Choose a cluster route and customer store to start taking replenishment orders.</p>
+          <h2>Order & visit details</h2>
+          <p className="section-help">
+            {hasSingleAssignedCluster
+              ? `Assigned cluster route: ${assignedClusterName} (${effectiveShops.length} assigned ${effectiveShops.length === 1 ? 'shop' : 'shops'}).`
+              : 'Choose an assigned cluster route and customer store to start taking replenishment orders.'}
+          </p>
 
           <div className="field-grid">
-            {/* Cluster Route Select */}
-            <div className="field-group">
-              <label htmlFor="clusterSelect">Cluster Route *</label>
-              <select
-                id="clusterSelect"
-                className="select"
-                value={selectedClusterId}
-                onChange={(e) => {
-                  setSelectedClusterId(e.target.value);
-                  setSelectedShopId('');
-                }}
-              >
-                <option value="all">All assigned routes ({shops.length} stores)</option>
-                {availableClusters.map((c) => {
-                  const cnt = shops.filter((s) => Number(s.clusterid) === Number(c.clusterId)).length;
-                  return (
-                    <option key={c.clusterId} value={String(c.clusterId)}>
-                      {c.clusterName} ({cnt} stores)
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+            {/* When agent has only one assigned cluster, hide Cluster selector and put Order Date in that space */}
+            {hasSingleAssignedCluster ? (
+              <div className="field-group">
+                <label htmlFor="orderDate">Order Date *</label>
+                <input
+                  id="orderDate"
+                  type="date"
+                  className="field"
+                  value={orderDate}
+                  onChange={(e) => setOrderDate(e.target.value)}
+                />
+                <small style={{ fontSize: '11.5px', color: '#0369a1', fontWeight: 600 }}>
+                  🚚 Expected delivery date: {formatOrderDate(expectedDeliveryDate)} (Order date + 1 day)
+                </small>
+              </div>
+            ) : (
+              <div className="field-group">
+                <label htmlFor="clusterSelect">Cluster Route *</label>
+                <select
+                  id="clusterSelect"
+                  className="select"
+                  value={selectedClusterId}
+                  onChange={(e) => {
+                    setSelectedClusterId(e.target.value);
+                    setSelectedShopId('');
+                  }}
+                >
+                  <option value="all">All assigned routes ({shops.length} stores)</option>
+                  {availableClusters.map((c) => {
+                    const cnt = shops.filter((s) => Number(s.clusterid) === Number(c.clusterId)).length;
+                    return (
+                      <option key={c.clusterId} value={String(c.clusterId)}>
+                        {c.clusterName} ({cnt} stores)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
 
             {/* Customer Store Select */}
             <div className="field-group">
-              <label htmlFor="shopSelect">Customer Store ({clusterShops.length}) *</label>
+              <label htmlFor="shopSelect">Customer Store ({effectiveShops.length}) *</label>
               <select
                 id="shopSelect"
                 className="select"
@@ -478,7 +828,7 @@ export default function OrderEntryScreen({
                 onChange={(e) => setSelectedShopId(e.target.value)}
               >
                 <option value="">Select a store</option>
-                {clusterShops.map((s) => (
+                {effectiveShops.map((s) => (
                   <option key={s.shopid} value={s.shopid}>
                     [{formatShopId(s.shopid)}] {s.shopName} · {s.shopCategory || 'Retail'}
                   </option>
@@ -486,18 +836,285 @@ export default function OrderEntryScreen({
               </select>
             </div>
 
-            {/* Order Date */}
-            <div className="field-group full">
-              <label htmlFor="orderDate">Delivery Order Date *</label>
+            {/* If multiple clusters, show Order Date on the next row */}
+            {!hasSingleAssignedCluster && (
+              <div className="field-group full">
+                <label htmlFor="orderDate">Order Date *</label>
+                <input
+                  id="orderDate"
+                  type="date"
+                  className="field"
+                  value={orderDate}
+                  onChange={(e) => setOrderDate(e.target.value)}
+                />
+                <small style={{ fontSize: '11.5px', color: '#0369a1', fontWeight: 600 }}>
+                  🚚 Expected delivery date: {formatOrderDate(expectedDeliveryDate)} (Order date + 1 day)
+                </small>
+              </div>
+            )}
+
+            {/* Shop Category Field */}
+            <div className="field-group">
+              <label htmlFor="shopCategoryField">Shop Category</label>
               <input
-                id="orderDate"
-                type="date"
+                id="shopCategoryField"
+                type="text"
                 className="field"
-                value={orderDate}
-                onChange={(e) => setOrderDate(e.target.value)}
+                value={currentShop?.shopCategory || 'Retail'}
+                readOnly
+                style={{ background: '#f8fafc', fontWeight: 600, color: '#334155' }}
               />
             </div>
+
+            {/* Location Field directly after Shop Category */}
+            <div className="field-group">
+              <label htmlFor="orderLocationField">Location (Latitude, Longitude)</label>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                  id="orderLocationField"
+                  type="text"
+                  className="field"
+                  readOnly
+                  value={locationText}
+                  placeholder="Tap here or 'Fetch GPS' to capture lat, lng"
+                  onFocus={() => {
+                    if (locationStatus === 'idle') {
+                      requestForegroundLocation();
+                    }
+                  }}
+                  onClick={() => {
+                    if (locationStatus === 'idle' || locationStatus === 'denied' || locationStatus === 'unavailable') {
+                      requestForegroundLocation();
+                    }
+                  }}
+                  style={{ cursor: 'pointer', fontFamily: locationText ? 'monospace' : 'inherit' }}
+                  aria-label="Foreground GPS Latitude and Longitude"
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={requestForegroundLocation}
+                  disabled={locationStatus === 'loading'}
+                  style={{ whiteSpace: 'nowrap', padding: '0 12px', flexShrink: 0 }}
+                  title="Request foreground GPS coordinates"
+                >
+                  {locationStatus === 'loading' ? '⏳ Locating...' : locationText ? '↻ Retry GPS' : '📍 Fetch GPS'}
+                </button>
+              </div>
+              {locationStatus !== 'idle' && (
+                <div
+                  role="status"
+                  style={{
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                    marginTop: '2px',
+                    background:
+                      locationStatus === 'ok'
+                        ? '#dcfce7'
+                        : locationStatus === 'poor_accuracy'
+                        ? '#fef3c7'
+                        : locationStatus === 'loading'
+                        ? '#e0f2fe'
+                        : '#fee2e2',
+                    color:
+                      locationStatus === 'ok'
+                        ? '#15803d'
+                        : locationStatus === 'poor_accuracy'
+                        ? '#b45309'
+                        : locationStatus === 'loading'
+                        ? '#0369a1'
+                        : '#b91c1c'
+                  }}
+                >
+                  {locationStatus === 'ok' && '✓ '}
+                  {locationStatus === 'poor_accuracy' && '⚠️ '}
+                  {(locationStatus === 'denied' || locationStatus === 'unavailable') && '⚠️ '}
+                  {locationMessage}
+                </div>
+              )}
+            </div>
+
+            {/* In-App Camera Action for Order/Visit Record */}
+            <div className="field-group full">
+              <label>Order / Visit Photo Capture</label>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                  padding: '12px 14px',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  {visitPhoto ? (
+                    <img
+                      src={visitPhoto}
+                      alt="Captured shop visit"
+                      style={{
+                        width: '64px',
+                        height: '64px',
+                        objectFit: 'cover',
+                        borderRadius: '8px',
+                        border: '2px solid #0284c7'
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: '52px',
+                        height: '52px',
+                        borderRadius: '8px',
+                        background: '#e0f2fe',
+                        color: '#0284c7',
+                        display: 'grid',
+                        placeItems: 'center',
+                        fontSize: '22px'
+                      }}
+                    >
+                      📷
+                    </div>
+                  )}
+                  <div>
+                    <strong style={{ display: 'block', fontSize: '13px', color: '#0f172a' }}>
+                      {visitPhoto ? 'Visit Photo Attached' : 'Capture Shop Visit Photo'}
+                    </strong>
+                    <span style={{ fontSize: '12px', color: '#475569' }}>
+                      {visitPhoto
+                        ? isOffline || visitPhotoStatus === 'waiting_offline'
+                          ? '⏳ Waiting to sync offline (saved locally with order)'
+                          : visitPhotoStatus === 'synced'
+                          ? '✓ Photo saved & synced to server'
+                          : '✓ Photo ready — will save & sync when order is placed'
+                        : 'Take a photo using the in-app camera to attach to this order/visit record.'}
+                    </span>
+                    {cameraError && (
+                      <div style={{ fontSize: '11.5px', color: '#b91c1c', marginTop: '3px', fontWeight: 600 }}>
+                        ⚠️ {cameraError}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFilePhotoSelected}
+                    style={{ display: 'none' }}
+                    aria-label="Capture or attach visit photo"
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleOpenCamera}
+                    style={{ borderColor: '#0284c7', color: '#0284c7', fontWeight: 700 }}
+                  >
+                    📷 {visitPhoto ? 'Retake Camera Photo' : 'Take Camera Photo'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                  >
+                    📁 Attach Photo
+                  </button>
+                  {visitPhoto && (
+                    <button
+                      type="button"
+                      className="quiet-button"
+                      onClick={() => {
+                        setVisitPhoto(null);
+                        setVisitPhotoStatus(null);
+                      }}
+                      style={{ color: '#b91c1c', fontWeight: 600 }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
+
+          {/* In-App Live Camera Modal */}
+          {cameraOpen && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="In-app camera capture"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 999,
+                background: 'rgba(15, 23, 42, 0.82)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '16px'
+              }}
+            >
+              <div
+                style={{
+                  background: '#ffffff',
+                  borderRadius: '14px',
+                  maxWidth: '480px',
+                  width: '100%',
+                  padding: '16px',
+                  boxShadow: '0 20px 50px rgba(0,0,0,0.35)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <strong style={{ fontSize: '15px', color: '#0f172a' }}>📷 In-App Visit Camera</strong>
+                  <button
+                    type="button"
+                    className="quiet-button"
+                    onClick={() => {
+                      stopCameraStream();
+                      setCameraOpen(false);
+                    }}
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                <div style={{ background: '#000', borderRadius: '10px', overflow: 'hidden', aspectRatio: '4/3' }}>
+                  <video
+                    ref={videoRef}
+                    playsInline
+                    muted
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      stopCameraStream();
+                      setCameraOpen(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={handleCaptureVideoFrame}
+                  >
+                    📸 Capture & Attach Photo
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Selected Customer Hero Card */}
           {currentShop && (() => {
@@ -587,7 +1204,6 @@ export default function OrderEntryScreen({
 
               {!historyCollapsed && (
                 <div className="shop-history-body mt-2">
-                  {/* Loading State */}
                   {loadingHistory && (
                     <div className="history-status-state loading" role="status">
                       <div className="history-spinner" aria-hidden="true" />
@@ -595,7 +1211,6 @@ export default function OrderEntryScreen({
                     </div>
                   )}
 
-                  {/* Error State */}
                   {!loadingHistory && historyError && (
                     <div className="history-status-state error" role="alert">
                       <div className="flex items-center gap-2">
@@ -612,7 +1227,6 @@ export default function OrderEntryScreen({
                     </div>
                   )}
 
-                  {/* Empty State */}
                   {!loadingHistory && !historyError && historyOrders.length === 0 && (
                     <div className="history-status-state empty">
                       <span className="empty-state-icon" aria-hidden="true">📦</span>
@@ -625,12 +1239,12 @@ export default function OrderEntryScreen({
                     </div>
                   )}
 
-                  {/* Orders List */}
                   {!loadingHistory && !historyError && historyOrders.length > 0 && (
                     <div className="history-orders-list">
                       {historyOrders.map((order) => {
                         const statusLower = (order.status || 'in progress').toLowerCase();
                         const statusClass = statusLower === 'delivered' ? 'delivered' : statusLower === 'cancelled' ? 'cancelled' : 'in-progress';
+                        const expDeliv = order.expectedDeliveryDate || addDays(String(order.date || '').slice(0, 10), 1);
 
                         return (
                           <div key={order.orderId || order.serialNo} className="history-order-card">
@@ -640,8 +1254,13 @@ export default function OrderEntryScreen({
                                   #{order.serialNo || order.orderId}
                                 </span>
                                 <span className="history-order-date">
-                                  📅 {formatOrderDate(order.date)}
+                                  📅 Ordered: {formatOrderDate(order.date)}
                                 </span>
+                                {expDeliv && (
+                                  <span className="history-order-date" style={{ color: '#0369a1', fontWeight: 600 }}>
+                                    🚚 Expected delivery: {formatOrderDate(expDeliv)}
+                                  </span>
+                                )}
                                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                   <span className={`status ${statusClass}`}>
                                     {order.status || 'In progress'}
@@ -681,33 +1300,52 @@ export default function OrderEntryScreen({
                               <table className="history-items-table">
                                 <thead>
                                   <tr>
-                                    <th style={{ width: '38%' }}>Item</th>
-                                    <th style={{ width: '20%' }}>Quantity</th>
-                                    <th style={{ width: '22%' }}>Historical Unit Price</th>
+                                    <th style={{ width: '36%' }}>Item Description</th>
+                                    <th style={{ width: '18%' }}>Ordered Qty</th>
+                                    <th style={{ width: '26%' }}>Catalog / Approved Price</th>
                                     <th style={{ width: '20%', textAlign: 'right' }}>Line Total</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {(order.items || []).map((it, idx) => (
-                                    <tr key={it.id || idx}>
-                                      <td>
-                                        <b>{it.name}</b>
-                                      </td>
-                                      <td>
-                                        <span className="qty-highlight">
-                                          {it.qty} {it.unit || 'Kgs'}
-                                        </span>
-                                      </td>
-                                      <td>
-                                        <span className="unit-price-pill">
-                                          {money(it.unitPrice)} <small className="unit-type">/{it.unit || 'unit'}</small>
-                                        </span>
-                                      </td>
-                                      <td className="row-total" style={{ textAlign: 'right' }}>
-                                        <b>{money(it.lineTotal)}</b>
-                                      </td>
-                                    </tr>
-                                  ))}
+                                  {(order.items || []).map((it, idx) => {
+                                    const unitLabel = normalizeUnit(it.unit || 'kg');
+                                    const hasReq = it.requestedPrice !== null && it.requestedPrice !== undefined && Math.abs(Number(it.requestedPrice) - Number(it.unitPrice)) > 0.001;
+                                    return (
+                                      <tr key={it.id || idx}>
+                                        <td>
+                                          <b>{it.name}</b>
+                                        </td>
+                                        <td>
+                                          <span className="qty-highlight">
+                                            {it.qty} {unitLabel}
+                                          </span>
+                                        </td>
+                                        <td>
+                                          <span className="unit-price-pill">
+                                            {money(it.unitPrice)} <small className="unit-type">/{unitLabel}</small>
+                                          </span>
+                                          {hasReq && (
+                                            <div style={{
+                                              fontSize: '11px',
+                                              color: it.priceRequestStatus === 'approved' ? '#15803d' : it.priceRequestStatus === 'rejected' ? '#b91c1c' : '#92400e',
+                                              marginTop: '2px',
+                                              fontWeight: 600
+                                            }}>
+                                              Catalog: {money(it.catalogPrice || it.unitPrice)}/{unitLabel} · Requested: {money(it.requestedPrice)}/{unitLabel} ·{' '}
+                                              {it.priceRequestStatus === 'approved'
+                                                ? '✓ Approved'
+                                                : it.priceRequestStatus === 'rejected'
+                                                ? '✕ Rejected'
+                                                : '⏳ Pending approval'}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="row-total" style={{ textAlign: 'right' }}>
+                                          <b>{money(it.lineTotal)}</b>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
@@ -724,28 +1362,34 @@ export default function OrderEntryScreen({
           {/* Items Section */}
           <div className="items-head">
             <strong>Order items catalog</strong>
-            <span>{orderRows.length} commodities available</span>
+            <span>{orderRows.length} commodities available · Line totals use catalog price</span>
           </div>
 
           <div className="table-scroll-container">
-            <table className="order-table" style={{ minWidth: '640px' }}>
+            <table className="order-table" style={{ minWidth: '660px' }}>
               <thead>
                 <tr>
-                  <th style={{ width: '28%' }}>Item</th>
-                  <th style={{ width: '10%' }}>Unit</th>
-                  <th style={{ width: '13%' }}>Catalog price</th>
-                  <th style={{ width: '12%' }}>Quantity</th>
-                  <th style={{ width: '21%' }}>Requested price</th>
-                  <th style={{ width: '12%', textAlign: 'right' }}>Total</th>
+                  <th style={{ width: '26%' }}>Item Description</th>
+                  <th style={{ width: '9%' }}>Unit</th>
+                  <th style={{ width: '14%' }}>Catalog price</th>
+                  <th style={{ width: '13%' }}>Quantity (kg)</th>
+                  <th style={{ width: '22%' }}>Customer-requested price</th>
+                  <th style={{ width: '12%', textAlign: 'right' }}>Line Total</th>
                   <th style={{ width: '4%' }}></th>
                 </tr>
               </thead>
               <tbody>
                 {orderRows.map((r, i) => {
-                  const hasCustomReq = r.requestedPrice !== undefined && r.requestedPrice !== null && r.requestedPrice !== '' && Math.abs(Number(r.requestedPrice) - Number(r.price)) > 0.001;
-                  const reqNum = parseFloat(r.requestedPrice);
-                  const effectivePrice = (r.requestedPrice !== '' && !isNaN(reqNum)) ? reqNum : (Number(r.custprice) || Number(r.price) || 0);
-                  const rowTotal = (Number(r.qty) || 0) * effectivePrice;
+                  const unitLabel = normalizeUnit(r.unitType);
+                  const catalogPrice = Number(r.price) || 0;
+                  const hasCustomReq =
+                    r.requestedPrice !== undefined &&
+                    r.requestedPrice !== null &&
+                    r.requestedPrice !== '' &&
+                    !isNaN(parseFloat(r.requestedPrice)) &&
+                    Math.abs(parseFloat(r.requestedPrice) - catalogPrice) > 0.001;
+                  // Line total strictly uses catalogPrice (customer-requested price does NOT alter catalog price or line total)
+                  const rowTotal = (Number(r.qty) || 0) * catalogPrice;
                   return (
                     <tr key={r.itemid || i}>
                       <td>
@@ -762,9 +1406,11 @@ export default function OrderEntryScreen({
                           <span>{r.itemName}</span>
                         </div>
                       </td>
-                      <td><span className="status pending">{r.unitType}</span></td>
+                      <td><span className="status pending">{unitLabel}</span></td>
                       <td>
-                        <span style={{ fontWeight: 600, color: '#334155' }}>{money(r.price)}</span>
+                        <span style={{ fontWeight: 700, color: '#0f172a' }}>
+                          {money(catalogPrice)}/{unitLabel}
+                        </span>
                       </td>
                       <td>
                         <input
@@ -774,41 +1420,41 @@ export default function OrderEntryScreen({
                           value={r.qty === 0 ? '' : r.qty}
                           onChange={(e) => handleQtyChange(i, e.target.value)}
                           placeholder="0"
-                          aria-label={`${r.itemName} quantity`}
+                          aria-label={`${r.itemName} quantity in ${unitLabel}`}
                         />
                       </td>
                       <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <input
                             type="number"
                             min="0"
                             step="0.5"
                             value={r.requestedPrice !== undefined ? r.requestedPrice : ''}
                             onChange={(e) => handleRequestedPriceChange(i, e.target.value)}
-                            placeholder={`Catalog: ${r.price}`}
-                            aria-label={`${r.itemName} requested price`}
+                            placeholder={`Request rate (Catalog: ₹${catalogPrice})`}
+                            aria-label={`${r.itemName} customer-requested price`}
                           />
                           {hasCustomReq && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{
-                                fontSize: '10px',
+                                fontSize: '11px',
                                 fontWeight: 700,
                                 background: '#fef3c7',
                                 color: '#92400e',
                                 border: '1px solid #fde68a',
                                 borderRadius: '4px',
-                                padding: '1px 5px',
+                                padding: '2px 6px',
                                 display: 'inline-block',
                                 width: 'fit-content'
                               }}>
-                                ⏳ Pending approval
+                                Catalog: {money(catalogPrice)} · Requested: {money(r.requestedPrice)} · ⏳ Pending approval
                               </span>
                               <input
                                 type="text"
-                                placeholder="Reason for request..."
+                                placeholder="Reason for price request..."
                                 value={r.requestReason || ''}
                                 onChange={(e) => handleRequestReasonChange(i, e.target.value)}
-                                style={{ fontSize: '11px', padding: '2px 6px', height: '24px' }}
+                                style={{ fontSize: '11.5px', padding: '3px 7px', height: '28px' }}
                                 aria-label="Price request reason"
                               />
                             </div>
@@ -856,7 +1502,9 @@ export default function OrderEntryScreen({
         {/* Right Summary Panel */}
         <aside className="panel form-panel order-summary">
           <h2>Order summary</h2>
-          <p className="section-help">Review line items and customer pricing before submission.</p>
+          <p className="section-help">
+            Live order breakdown using catalog prices. Customer-requested prices are recorded separately for approval.
+          </p>
 
           <div className="summary-lines">
             <div className="summary-line">
@@ -864,23 +1512,141 @@ export default function OrderEntryScreen({
               <b>{currentShop?.shopName || '—'}</b>
             </div>
             <div className="summary-line">
-              <span>Cluster route</span>
-              <b>{currentShop ? (clusters.find((c) => Number(c.clusterId) === Number(currentShop.clusterid))?.clusterName || (Number(currentShop.clusterid) === 2 ? 'Thuthukudi' : 'Pollachi and Udumalapet')) : (selectedClusterId === 'all' ? 'All clusters' : (clusters.find((c) => String(c.clusterId) === String(selectedClusterId))?.clusterName || 'Pollachi and Udumalapet'))}</b>
+              <span>Shop category</span>
+              <b>{currentShop?.shopCategory || 'Retail'}</b>
             </div>
             <div className="summary-line">
-              <span>Active items ({activeItems.length})</span>
+              <span>Cluster route</span>
+              <b>{assignedClusterName}</b>
+            </div>
+            <div className="summary-line">
+              <span>Order date</span>
+              <b>{formatOrderDate(orderDate)}</b>
+            </div>
+            <div className="summary-line">
+              <span>Expected delivery</span>
+              <b style={{ color: '#0369a1' }}>{formatOrderDate(expectedDeliveryDate)}</b>
+            </div>
+            <div className="summary-line">
+              <span>Visit GPS location</span>
+              <b style={{ fontFamily: locationText ? 'monospace' : 'inherit', fontSize: '11.5px' }}>
+                {locationText || 'Not captured yet'}
+              </b>
+            </div>
+            <div className="summary-line">
+              <span>Visit photo status</span>
+              <b>
+                {visitPhoto
+                  ? isOffline || visitPhotoStatus === 'waiting_offline'
+                    ? '⏳ Waiting to sync offline'
+                    : visitPhotoStatus === 'synced'
+                    ? '✓ Saved & synced'
+                    : '📷 Attached (ready)'
+                  : 'None attached'}
+              </b>
+            </div>
+          </div>
+
+          {/* Ordered Items List (Each item's description and ordered quantity with unit 'kg') */}
+          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #edf0f1' }}>
+            <strong style={{ display: 'block', fontSize: '12.5px', color: '#0f172a', marginBottom: '8px' }}>
+              Ordered items ({activeItems.length} {activeItems.length === 1 ? 'item' : 'items'} · {totalQuantityKg} kg)
+            </strong>
+
+            {activeItems.length === 0 ? (
+              <div
+                style={{
+                  padding: '12px',
+                  background: '#f8fafc',
+                  border: '1px dashed #cbd5e1',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#64748b'
+                }}
+              >
+                {historyOrders.length > 0 || lastSavedOrder ? (
+                  <div>
+                    <strong style={{ display: 'block', color: '#334155', marginBottom: '6px' }}>
+                      Latest saved order ({(lastSavedOrder || historyOrders[0]).orderId || `#${historyOrders[0]?.serialNo}`}):
+                    </strong>
+                    {((lastSavedOrder ? lastSavedOrder.orderList : historyOrders[0]?.items) || []).map((it, idx) => {
+                      const desc = it.itemName || it.name || `Item #${it.itemid || it.itemId}`;
+                      const unit = normalizeUnit(it.unitType || it.unit || 'kg');
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            padding: '4px 0',
+                            borderBottom: '1px solid #f1f5f9',
+                            color: '#1e293b'
+                          }}
+                        >
+                          <span>{desc}</span>
+                          <b>
+                            {it.qty} {unit}
+                          </b>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  'Enter a quantity above to see each item description, quantity (kg), and catalog line total.'
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '8px' }}>
+                {activeItems.map((r) => {
+                  const unitLabel = normalizeUnit(r.unitType);
+                  const catPrice = Number(r.price) || 0;
+                  const lineTotal = Number(r.qty || 0) * catPrice;
+                  const hasReq =
+                    r.requestedPrice !== undefined &&
+                    r.requestedPrice !== null &&
+                    r.requestedPrice !== '' &&
+                    !isNaN(parseFloat(r.requestedPrice)) &&
+                    Math.abs(parseFloat(r.requestedPrice) - catPrice) > 0.001;
+                  return (
+                    <div
+                      key={r.itemid}
+                      style={{
+                        padding: '8px 10px',
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '8px',
+                        fontSize: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700, color: '#0f172a' }}>
+                        <span>{r.itemName}</span>
+                        <span>
+                          {r.qty} {unitLabel} × {money(catPrice)} = {money(lineTotal)}
+                        </span>
+                      </div>
+                      {hasReq && (
+                        <div style={{ marginTop: '4px', fontSize: '11.5px', color: '#92400e', fontWeight: 600 }}>
+                          Catalog: {money(catPrice)}/{unitLabel} · Requested: {money(r.requestedPrice)}/{unitLabel} (⏳ Pending approval)
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="summary-lines" style={{ marginTop: '14px' }}>
+            <div className="summary-line">
+              <span>Total quantity</span>
+              <b>{totalQuantityKg} kg</b>
+            </div>
+            <div className="summary-line">
+              <span>Catalog order subtotal</span>
               <b>{money(subtotal)}</b>
             </div>
-            <div className="summary-line">
-              <span>Route freight</span>
-              <b>Included</b>
-            </div>
-            <div className="summary-line">
-              <span>Taxes</span>
-              <b>—</b>
-            </div>
             <div className="summary-total">
-              <span>Total order value</span>
+              <span>Total order value (Catalog)</span>
               <strong>{money(subtotal)}</strong>
             </div>
           </div>
@@ -893,10 +1659,10 @@ export default function OrderEntryScreen({
               padding: '10px 12px',
               margin: '12px 0',
               color: '#92400e',
-              fontSize: '11px',
+              fontSize: '12px',
               lineHeight: 1.45
             }}>
-              ⏳ <b>Price Approval Pending:</b> This order contains custom requested rates. It will require approval by an Admin or Sales Manager before dispatch.
+              ⏳ <b>Price Request Recorded for Approval:</b> Catalog prices and order total ({money(subtotal)}) remain unchanged when placing the order. Requested customer rates will be applied only after Admin/Sales Manager approval.
             </div>
           )}
 
@@ -910,7 +1676,7 @@ export default function OrderEntryScreen({
           </button>
 
           <p className="summary-note">
-            The customer’s replenishment order will be stored and synchronized with the live summary report and route dispatch.
+            Orders placed today default to tomorrow ({formatOrderDate(expectedDeliveryDate)}) as their expected delivery date.
           </p>
         </aside>
       </div>

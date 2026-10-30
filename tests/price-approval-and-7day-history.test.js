@@ -137,6 +137,8 @@ describe('Price Approval Queue & 7-Day Shop Order History Verification', async (
       assert.strictEqual(data.status, 200);
       assert.strictEqual(data.priceApprovalPending, true);
       assert.strictEqual(data.statusName, 'Price approval pending');
+      // Order total must remain at catalog price (5 * 53.0 = 265.0) until approved
+      assert.strictEqual(Number(data.orderTotal), 265.0);
       testOrderId = data.orderId;
 
       // Check DB price_requests row
@@ -159,6 +161,7 @@ describe('Price Approval Queue & 7-Day Shop Order History Verification', async (
       assert.strictEqual(res.status, 200);
       const data = await res.json();
       assert.strictEqual(data.status, 200);
+      assert.strictEqual(data.approvalRule, 'single');
       assert(Array.isArray(data.priceRequests));
       assert(data.pendingCount >= 1);
 
@@ -167,6 +170,7 @@ describe('Price Approval Queue & 7-Day Shop Order History Verification', async (
       assert.strictEqual(target.orderId, testOrderId);
       assert.strictEqual(Number(target.requestedPrice), 42.0);
       assert.strictEqual(Number(target.catalogPrice), 53.0);
+      assert.strictEqual(target.approvalRule, 'single');
       assert(target.shopName, 'Must include shopName');
       assert(target.itemName, 'Must include itemName');
       assert(target.agentName, 'Must include requesting agentName');
@@ -216,6 +220,79 @@ describe('Price Approval Queue & 7-Day Shop Order History Verification', async (
         body: JSON.stringify({ action: 'approve' })
       });
       assert.strictEqual(res.status, 403);
+    });
+
+    test('Single approval by authorized Sales Manager resolves the request immediately without requiring Admin approval', async () => {
+      const res = await fetch(`http://localhost:3001/api/price-requests/${pendingRequestId}/decision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${managerToken}`
+        },
+        body: JSON.stringify({ action: 'approve', comment: 'Single manager approval' })
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.decision, 'approved');
+      assert.strictEqual(data.approvalRule, 'single');
+      assert.strictEqual(data.orderStatus, 'In progress');
+      assert.strictEqual(Number(data.orderTotal), 210.0); // 5 * 42.0
+
+      // Conflicting second decision by another role is blocked with 409 because one approval is final
+      const conflictRes = await fetch(`http://localhost:3001/api/price-requests/${pendingRequestId}/decision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ action: 'reject', comment: 'Late conflicting decision' })
+      });
+      assert.strictEqual(conflictRes.status, 409);
+    });
+
+    test('Single approval by Admin alone resolves a price request immediately without requiring Sales Manager approval', async () => {
+      const createRes = await fetch('http://localhost:3001/api/linecart/createorder', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${agentToken}`
+        },
+        body: JSON.stringify({
+          idempotencyKey: 'admin-single-approve-' + Date.now(),
+          orderList: [
+            {
+              itemid: 1,
+              itemName: 'Onio Medium',
+              qty: 6,
+              price: 53.0,
+              catalogPrice: 53.0,
+              requestedPrice: 45.0,
+              requestReason: 'Admin direct approval test',
+              customerid: 101,
+              clusterid: 1,
+              spersonid: agentUser.id
+            }
+          ]
+        })
+      });
+      assert.strictEqual(createRes.status, 200);
+      const createData = await createRes.json();
+      const prRows = await db.query(`SELECT id FROM price_requests WHERE order_id = $1`, [createData.orderId]);
+      const adminReqId = prRows.rows[0].id;
+
+      const decRes = await fetch(`http://localhost:3001/api/price-requests/${adminReqId}/decision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ action: 'approve', comment: 'Approved directly by Admin' })
+      });
+      assert.strictEqual(decRes.status, 200);
+      const decData = await decRes.json();
+      assert.strictEqual(decData.decision, 'approved');
+      assert.strictEqual(decData.orderStatus, 'In progress');
+      assert.strictEqual(Number(decData.orderTotal), 270.0); // 6 * 45.0
     });
   });
 
@@ -384,7 +461,7 @@ describe('Price Approval Queue & 7-Day Shop Order History Verification', async (
       assert.strictEqual(todayOrder.items.length, 1);
       assert.strictEqual(todayOrder.items[0].name, 'Onio Medium');
       assert.strictEqual(Number(todayOrder.items[0].qty), 5);
-      assert.strictEqual(todayOrder.items[0].unit, 'Kgs');
+      assert(['kg', 'Kgs'].includes(todayOrder.items[0].unit), 'Item unit must be kg/Kgs');
       assert.strictEqual(Number(todayOrder.items[0].unitPrice), 53.0);
       assert.strictEqual(Number(todayOrder.items[0].lineTotal), 265.0);
       assert.strictEqual(todayOrder.paymentStatus, 'Collected');
