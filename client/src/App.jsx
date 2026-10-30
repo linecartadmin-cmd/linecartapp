@@ -17,6 +17,7 @@ import {
 } from './offline/offlineDb';
 
 // Lazy-loaded secondary screens for reduced initial bundle and fast APK startup
+const logoIcon = '/lincart_flashicon.png';
 const OrderEntryScreen = lazy(() => import('./components/OrderEntryScreen'));
 const ReportsScreen = lazy(() => import('./components/ReportsScreen'));
 const CustomersScreen = lazy(() => import('./components/CustomersScreen'));
@@ -881,14 +882,21 @@ export default function App() {
         {/* Subtle Monochrome Background Watermark (strictly behind content, never full-color, preserves contrast) */}
         <div className="app-watermark-bg" aria-hidden="true">
           <div className="app-watermark-mark">
-            <img src={logoIcon} alt="" className="app-watermark-logo" />
+            <img
+              src={logoIcon}
+              alt=""
+              className="app-watermark-logo"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
             <span className="app-watermark-text">LineCart</span>
           </div>
         </div>
 
         {/* Main Content Router */}
         <div className="page-content" id="pageContent">
-          <ErrorBoundary>
+          <ErrorBoundary key={page}>
             <Suspense fallback={<ScreenLoadingSkeleton />}>
             {/* Administrator Exclusive Screens */}
             {(page === 'admin-dashboard' || (page === 'overview' && isAdmin)) && (

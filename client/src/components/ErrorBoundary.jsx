@@ -19,11 +19,22 @@ export default class ErrorBoundary extends React.Component {
     window.location.reload();
   };
 
+  handleSignOutAndReset = () => {
+    try {
+      localStorage.removeItem('LineCartPref_token');
+      localStorage.removeItem('LineCartPref_userid');
+      localStorage.removeItem('LineCartPref_user');
+      window.location.hash = '';
+    } catch {}
+    this.setState({ hasError: false, error: null });
+    window.location.reload();
+  };
+
   render() {
     if (this.state.hasError) {
       return (
-        <div className="admin-page-container" style={{ padding: '2rem' }}>
-          <div className="card" style={{ maxWidth: '560px', margin: '3rem auto', textAlign: 'center', padding: '2.5rem' }}>
+        <div className="admin-page-container" style={{ padding: '2rem', minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="card" style={{ maxWidth: '560px', width: '100%', margin: '0 auto', textAlign: 'center', padding: '2.5rem' }}>
             <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>⚠️</div>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1e293b', marginBottom: '0.5rem' }}>
               Something went wrong loading this screen
@@ -46,7 +57,7 @@ export default class ErrorBoundary extends React.Component {
                 {this.state.error.message}
               </pre>
             )}
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn-primary"
@@ -54,6 +65,14 @@ export default class ErrorBoundary extends React.Component {
                 style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem' }}
               >
                 Reload Application
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={this.handleSignOutAndReset}
+                style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem' }}
+              >
+                Return to Login
               </button>
             </div>
           </div>
