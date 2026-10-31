@@ -26,6 +26,24 @@ function getIstTodayString() {
   }
 }
 
+function formatIstDateDisplay(dateStr) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr || '—';
+  try {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    // Construct a UTC noon timestamp for that calendar date and format in Asia/Kolkata
+    const utcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    }).format(utcNoon);
+  } catch {
+    return dateStr;
+  }
+}
+
 function addDays(dateStr, days) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '';
   const d = new Date(`${dateStr}T00:00:00Z`);
@@ -45,26 +63,56 @@ export default function OrderEntryScreen({
   clusters = [],
   shops = [],
   catalogItems = [],
+  initialOrderRows = null,
+  defaultExpandedItemId = null,
   preselectedShop = '',
   onOrderPlaced,
   onNavigate,
   showToast
 }) {
+  const isAgent = user?.role === 'Field Sales Agent';
+  const agentAssignedShops = isAgent && user?.id
+    ? shops.filter((s) => {
+        const assignedId = s.assignedAgentId ?? s.assigned_agent_id ?? s.salesExecId ?? s.salesexecid;
+        return assignedId === undefined || assignedId === null || Number(assignedId) === Number(user.id);
+      })
+    : shops;
+
   // Strictly scope clusters to those containing shops assigned to this agent
   const availableClusters = clusters.filter((c) =>
-    shops.some((s) => Number(s.clusterid) === Number(c.clusterId))
+    agentAssignedShops.some((s) => Number(s.clusterid ?? s.clusterId) === Number(c.clusterId ?? c.id))
   );
   const hasSingleAssignedCluster = availableClusters.length <= 1;
   const singleClusterId = availableClusters.length === 1
-    ? String(availableClusters[0].clusterId)
-    : (shops[0]?.clusterid ? String(shops[0].clusterid) : String(user?.clusterid || 1));
+    ? String(availableClusters[0].clusterId ?? availableClusters[0].id)
+    : (agentAssignedShops[0]?.clusterid ? String(agentAssignedShops[0].clusterid) : String(user?.clusterid || 1));
 
   const [selectedClusterId, setSelectedClusterId] = useState(() =>
     hasSingleAssignedCluster ? singleClusterId : 'all'
   );
-  const [selectedShopId, setSelectedShopId] = useState('');
+  const todayIst = getIstTodayString();
+  const [selectedShopId, setSelectedShopId] = useState(() =>
+    agentAssignedShops.length > 0 ? String(agentAssignedShops[0].shopid ?? agentAssignedShops[0].id) : ''
+  );
   const [orderDate, setOrderDate] = useState(() => getIstTodayString());
-  const [orderRows, setOrderRows] = useState([]);
+  const [orderRows, setOrderRows] = useState(() => {
+    if (Array.isArray(initialOrderRows) && initialOrderRows.length > 0) {
+      return initialOrderRows;
+    }
+    return (catalogItems || []).map((item) => ({
+      itemid: item.itemid ?? item.id,
+      itemName: item.itemName ?? item.name,
+      itemimage: item.itemimage || '/lincart_flashicon.png',
+      unitType: normalizeUnit(item.unitType || item.unit || 'kg'),
+      price: Number(item.price) || 50,
+      qty: 0,
+      custprice: Number(item.price) || 50,
+      requestedPrice: '',
+      requestReason: '',
+      remarks: 'Not Connected'
+    }));
+  });
+  const [expandedItemId, setExpandedItemId] = useState(defaultExpandedItemId);
   const [orderNotes, setOrderNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -131,11 +179,11 @@ export default function OrderEntryScreen({
   // Filter shops strictly to agent's assigned shops in the selected cluster
   const clusterShops = (hasSingleAssignedCluster || selectedClusterId === 'all')
     ? (hasSingleAssignedCluster
-        ? shops.filter((s) => Number(s.clusterid) === Number(singleClusterId))
-        : shops)
-    : shops.filter((s) => Number(s.clusterid) === Number(selectedClusterId));
+        ? agentAssignedShops.filter((s) => Number(s.clusterid ?? s.clusterId) === Number(singleClusterId))
+        : agentAssignedShops)
+    : agentAssignedShops.filter((s) => Number(s.clusterid ?? s.clusterId) === Number(selectedClusterId));
 
-  const effectiveShops = clusterShops.length > 0 ? clusterShops : shops;
+  const effectiveShops = clusterShops.length > 0 ? clusterShops : agentAssignedShops;
 
   // Initialize selected shop if preselectedShop passed or cluster changes
   useEffect(() => {
@@ -448,6 +496,7 @@ export default function OrderEntryScreen({
           remarks: 'Order Placed'
         }
       ]);
+      setExpandedItemId(nextItem.itemid);
     } else {
       showToast('All catalog items are already in this order.');
     }
@@ -781,16 +830,33 @@ export default function OrderEntryScreen({
             {/* When agent has only one assigned cluster, hide Cluster selector and put Order Date in that space */}
             {hasSingleAssignedCluster ? (
               <div className="field-group">
-                <label htmlFor="orderDate">Order Date *</label>
-                <input
-                  id="orderDate"
-                  type="date"
-                  className="field"
-                  value={orderDate}
-                  onChange={(e) => setOrderDate(e.target.value)}
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <label htmlFor="orderDate">Order Date (IST · Asia/Kolkata) *</label>
+                  <span className="order-date-ist-pill" data-testid="order-date-ist-display">
+                    📅 {orderDate === todayIst ? 'Today (IST)' : 'Selected (IST)'}: {formatIstDateDisplay(orderDate)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    id="orderDate"
+                    type="date"
+                    className="field"
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                  />
+                  {orderDate !== todayIst && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setOrderDate(todayIst)}
+                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >
+                      Today (IST)
+                    </button>
+                  )}
+                </div>
                 <small style={{ fontSize: '11.5px', color: '#0369a1', fontWeight: 600 }}>
-                  🚚 Expected delivery date: {formatOrderDate(expectedDeliveryDate)} (Order date + 1 day)
+                  🚚 Expected delivery date: {formatIstDateDisplay(expectedDeliveryDate)} (Order date + 1 day)
                 </small>
               </div>
             ) : (
@@ -839,16 +905,33 @@ export default function OrderEntryScreen({
             {/* If multiple clusters, show Order Date on the next row */}
             {!hasSingleAssignedCluster && (
               <div className="field-group full">
-                <label htmlFor="orderDate">Order Date *</label>
-                <input
-                  id="orderDate"
-                  type="date"
-                  className="field"
-                  value={orderDate}
-                  onChange={(e) => setOrderDate(e.target.value)}
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <label htmlFor="orderDate">Order Date (IST · Asia/Kolkata) *</label>
+                  <span className="order-date-ist-pill" data-testid="order-date-ist-display">
+                    📅 {orderDate === todayIst ? 'Today (IST)' : 'Selected (IST)'}: {formatIstDateDisplay(orderDate)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    id="orderDate"
+                    type="date"
+                    className="field"
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                  />
+                  {orderDate !== todayIst && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setOrderDate(todayIst)}
+                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >
+                      Today (IST)
+                    </button>
+                  )}
+                </div>
                 <small style={{ fontSize: '11.5px', color: '#0369a1', fontWeight: 600 }}>
-                  🚚 Expected delivery date: {formatOrderDate(expectedDeliveryDate)} (Order date + 1 day)
+                  🚚 Expected delivery date: {formatIstDateDisplay(expectedDeliveryDate)} (Order date + 1 day)
                 </small>
               </div>
             )}
@@ -1297,7 +1380,7 @@ export default function OrderEntryScreen({
                             </div>
 
                             <div className="history-items-table-wrapper">
-                              <table className="history-items-table">
+                              <table className="history-items-table responsive-stack-table">
                                 <thead>
                                   <tr>
                                     <th style={{ width: '36%' }}>Item Description</th>
@@ -1312,15 +1395,15 @@ export default function OrderEntryScreen({
                                     const hasReq = it.requestedPrice !== null && it.requestedPrice !== undefined && Math.abs(Number(it.requestedPrice) - Number(it.unitPrice)) > 0.001;
                                     return (
                                       <tr key={it.id || idx}>
-                                        <td>
+                                        <td data-label="Item Description">
                                           <b>{it.name}</b>
                                         </td>
-                                        <td>
+                                        <td data-label="Ordered Qty">
                                           <span className="qty-highlight">
                                             {it.qty} {unitLabel}
                                           </span>
                                         </td>
-                                        <td>
+                                        <td data-label="Catalog / Approved Price">
                                           <span className="unit-price-pill">
                                             {money(it.unitPrice)} <small className="unit-type">/{unitLabel}</small>
                                           </span>
@@ -1340,7 +1423,7 @@ export default function OrderEntryScreen({
                                             </div>
                                           )}
                                         </td>
-                                        <td className="row-total" style={{ textAlign: 'right' }}>
+                                        <td className="row-total" data-label="Line Total" style={{ textAlign: 'right' }}>
                                           <b>{money(it.lineTotal)}</b>
                                         </td>
                                       </tr>
@@ -1359,124 +1442,254 @@ export default function OrderEntryScreen({
             </div>
           )}
 
-          {/* Items Section */}
+          {/* Items Section: Tappable Item Catalog with Compact Quantity & Customer-Price Entry (Zero Horizontal Scroll) */}
           <div className="items-head">
-            <strong>Order items catalog</strong>
-            <span>{orderRows.length} commodities available · Line totals use catalog price</span>
+            <div>
+              <strong>Order items catalog</strong>
+              <span style={{ display: 'block', marginTop: '2px' }}>
+                Tap any item to open quantity &amp; customer-price entry · Line totals use catalog price
+              </span>
+            </div>
+            <span className="catalog-count-pill">
+              {activeItems.length}/{orderRows.length} selected
+            </span>
           </div>
 
-          <div className="table-scroll-container">
-            <table className="order-table" style={{ minWidth: '660px' }}>
-              <thead>
-                <tr>
-                  <th style={{ width: '26%' }}>Item Description</th>
-                  <th style={{ width: '9%' }}>Unit</th>
-                  <th style={{ width: '14%' }}>Catalog price</th>
-                  <th style={{ width: '13%' }}>Quantity (kg)</th>
-                  <th style={{ width: '22%' }}>Customer-requested price</th>
-                  <th style={{ width: '12%', textAlign: 'right' }}>Line Total</th>
-                  <th style={{ width: '4%' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {orderRows.map((r, i) => {
-                  const unitLabel = normalizeUnit(r.unitType);
-                  const catalogPrice = Number(r.price) || 0;
-                  const hasCustomReq =
-                    r.requestedPrice !== undefined &&
-                    r.requestedPrice !== null &&
-                    r.requestedPrice !== '' &&
-                    !isNaN(parseFloat(r.requestedPrice)) &&
-                    Math.abs(parseFloat(r.requestedPrice) - catalogPrice) > 0.001;
-                  // Line total strictly uses catalogPrice (customer-requested price does NOT alter catalog price or line total)
-                  const rowTotal = (Number(r.qty) || 0) * catalogPrice;
-                  return (
-                    <tr key={r.itemid || i}>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={r.itemimage}
-                            alt=""
-                            className="w-7 h-7 object-cover rounded"
-                            onError={(e) => {
-                              e.currentTarget.onerror = null;
-                              e.currentTarget.src = '/lincart_flashicon.png';
-                            }}
-                          />
-                          <span>{r.itemName}</span>
+          <div className="order-catalog-list" role="list" aria-label="Order items catalog" data-testid="order-catalog-list">
+            {orderRows.map((r, i) => {
+              const unitLabel = normalizeUnit(r.unitType);
+              const catalogPrice = Number(r.price) || 0;
+              const qtyVal = Number(r.qty) || 0;
+              const hasCustomReq =
+                r.requestedPrice !== undefined &&
+                r.requestedPrice !== null &&
+                r.requestedPrice !== '' &&
+                !isNaN(parseFloat(r.requestedPrice)) &&
+                Math.abs(parseFloat(r.requestedPrice) - catalogPrice) > 0.001;
+              // Line total strictly uses catalogPrice (customer-requested price does NOT alter catalog price or line total)
+              const rowTotal = qtyVal * catalogPrice;
+              const isExpanded = expandedItemId === r.itemid;
+
+              return (
+                <div
+                  key={r.itemid || i}
+                  role="listitem"
+                  data-testid={`catalog-card-${r.itemid}`}
+                  className={`order-catalog-card ${isExpanded ? 'is-expanded' : ''} ${qtyVal > 0 ? 'has-qty' : ''}`}
+                >
+                  {/* Tappable Item Header */}
+                  <button
+                    type="button"
+                    className="order-catalog-card-trigger"
+                    data-testid={`catalog-trigger-${r.itemid}`}
+                    onClick={() => setExpandedItemId((prev) => (prev === r.itemid ? null : r.itemid))}
+                    aria-expanded={isExpanded}
+                    aria-controls={`catalog-entry-${r.itemid}`}
+                  >
+                    <div className="order-catalog-item-main">
+                      <img
+                        src={r.itemimage}
+                        alt=""
+                        className="order-catalog-item-thumb"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '/lincart_flashicon.png';
+                        }}
+                      />
+                      <div className="order-catalog-item-titles">
+                        <div className="order-catalog-item-name-row">
+                          <strong className="order-catalog-item-name">{r.itemName}</strong>
+                          <span className="order-catalog-unit-badge">{unitLabel}</span>
                         </div>
-                      </td>
-                      <td><span className="status pending">{unitLabel}</span></td>
-                      <td>
-                        <span style={{ fontWeight: 700, color: '#0f172a' }}>
-                          {money(catalogPrice)}/{unitLabel}
+                        <div className="order-catalog-price-sub">
+                          <span>Catalog price: <b>{money(catalogPrice)}/{unitLabel}</b></span>
+                          {hasCustomReq && (
+                            <span className="order-catalog-req-chip">
+                              ⏳ Req: {money(r.requestedPrice)}/{unitLabel} (Pending)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="order-catalog-item-summary">
+                      {qtyVal > 0 ? (
+                        <div className="order-catalog-active-metrics">
+                          <span className="order-catalog-qty-pill">
+                            {qtyVal} {unitLabel}
+                          </span>
+                          <span className="order-catalog-linetotal-pill">
+                            {money(rowTotal)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="order-catalog-tap-hint">
+                          {isExpanded ? 'Close ▲' : '＋ Tap to enter'}
                         </span>
-                      </td>
-                      <td>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={r.qty === 0 ? '' : r.qty}
-                          onChange={(e) => handleQtyChange(i, e.target.value)}
-                          placeholder="0"
-                          aria-label={`${r.itemName} quantity in ${unitLabel}`}
-                        />
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      )}
+                      {qtyVal > 0 && (
+                        <span className="order-catalog-chevron" aria-hidden="true">
+                          {isExpanded ? '▲' : '✎'}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Compact Quantity & Customer-Price Entry Drawer (Shown when item is tapped) */}
+                  {isExpanded && (
+                    <div
+                      id={`catalog-entry-${r.itemid}`}
+                      className="order-catalog-entry-panel"
+                      role="region"
+                      aria-label={`Quantity and price entry for ${r.itemName}`}
+                    >
+                      {/* Clearly Separated 4-Box Metric Strip */}
+                      <div className="order-catalog-separated-strip">
+                        <div className="separated-metric-box">
+                          <span className="separated-metric-label">Catalog Price</span>
+                          <strong className="separated-metric-value">{money(catalogPrice)}/{unitLabel}</strong>
+                        </div>
+                        <div className="separated-metric-box">
+                          <span className="separated-metric-label">Requested Price</span>
+                          <strong className={`separated-metric-value ${hasCustomReq ? 'is-pending-req' : 'is-muted'}`}>
+                            {hasCustomReq ? `${money(r.requestedPrice)}/${unitLabel}` : 'Not requested'}
+                          </strong>
+                        </div>
+                        <div className="separated-metric-box">
+                          <span className="separated-metric-label">Quantity</span>
+                          <strong className="separated-metric-value">{qtyVal} {unitLabel}</strong>
+                        </div>
+                        <div className="separated-metric-box is-total-box">
+                          <span className="separated-metric-label">Line Total (Catalog)</span>
+                          <strong className="separated-metric-value">{money(rowTotal)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="order-catalog-inputs-grid">
+                        {/* Quantity Entry with Large Touch Targets */}
+                        <div className="order-catalog-input-group">
+                          <label htmlFor={`qty-input-${r.itemid}`}>
+                            Quantity ({unitLabel})
+                          </label>
+                          <div className="qty-stepper-control">
+                            <button
+                              type="button"
+                              className="qty-stepper-btn"
+                              onClick={() => handleQtyChange(i, Math.max(0, qtyVal - 1))}
+                              aria-label={`Decrease ${r.itemName} quantity`}
+                            >
+                              −
+                            </button>
+                            <input
+                              id={`qty-input-${r.itemid}`}
+                              type="number"
+                              inputMode="decimal"
+                              min="0"
+                              step="1"
+                              className="qty-stepper-input"
+                              value={r.qty === 0 ? '' : r.qty}
+                              onChange={(e) => handleQtyChange(i, e.target.value)}
+                              placeholder="0"
+                              aria-label={`${r.itemName} quantity in ${unitLabel}`}
+                            />
+                            <button
+                              type="button"
+                              className="qty-stepper-btn"
+                              onClick={() => handleQtyChange(i, qtyVal + 1)}
+                              aria-label={`Increase ${r.itemName} quantity`}
+                            >
+                              ＋
+                            </button>
+                          </div>
+                          <div className="qty-quick-chips">
+                            {[5, 10, 25, 50].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                className="qty-quick-chip"
+                                onClick={() => handleQtyChange(i, qtyVal + preset)}
+                              >
+                                +{preset} {unitLabel}
+                              </button>
+                            ))}
+                            {qtyVal > 0 && (
+                              <button
+                                type="button"
+                                className="qty-quick-chip is-clear"
+                                onClick={() => handleQtyChange(i, 0)}
+                              >
+                                Clear (0)
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Customer-Requested Price Entry (Separated & Pending Approval Only) */}
+                        <div className="order-catalog-input-group">
+                          <label htmlFor={`req-price-input-${r.itemid}`}>
+                            Requested Customer Price (₹/{unitLabel}) <span style={{ fontWeight: 500, color: '#64748b' }}>· Optional</span>
+                          </label>
                           <input
+                            id={`req-price-input-${r.itemid}`}
                             type="number"
+                            inputMode="decimal"
                             min="0"
                             step="0.5"
+                            className="field req-price-input"
                             value={r.requestedPrice !== undefined ? r.requestedPrice : ''}
                             onChange={(e) => handleRequestedPriceChange(i, e.target.value)}
-                            placeholder={`Request rate (Catalog: ₹${catalogPrice})`}
+                            placeholder={`Catalog rate is ₹${catalogPrice}/${unitLabel} (enter to request approval)`}
                             aria-label={`${r.itemName} customer-requested price`}
                           />
+                          <small className="req-price-help-note">
+                            Entering a customer price creates a <b>pending price request</b>. Line total ({money(rowTotal)}) stays at catalog price ({money(catalogPrice)}/{unitLabel}) until approved.
+                          </small>
+
                           {hasCustomReq && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                background: '#fef3c7',
-                                color: '#92400e',
-                                border: '1px solid #fde68a',
-                                borderRadius: '4px',
-                                padding: '2px 6px',
-                                display: 'inline-block',
-                                width: 'fit-content'
-                              }}>
-                                Catalog: {money(catalogPrice)} · Requested: {money(r.requestedPrice)} · ⏳ Pending approval
-                              </span>
+                            <div className="req-price-pending-box">
+                              <div className="req-price-pending-badge">
+                                <span>Catalog: <b>{money(catalogPrice)}/{unitLabel}</b></span>
+                                <span>·</span>
+                                <span>Requested: <b>{money(r.requestedPrice)}/{unitLabel}</b></span>
+                                <span>·</span>
+                                <span>⏳ Pending single approval</span>
+                              </div>
                               <input
                                 type="text"
-                                placeholder="Reason for price request..."
+                                className="field req-reason-input"
+                                placeholder="Reason for customer price request (optional)..."
                                 value={r.requestReason || ''}
                                 onChange={(e) => handleRequestReasonChange(i, e.target.value)}
-                                style={{ fontSize: '11.5px', padding: '3px 7px', height: '28px' }}
                                 aria-label="Price request reason"
                               />
                             </div>
                           )}
                         </div>
-                      </td>
-                      <td className="row-total">{money(rowTotal)}</td>
-                      <td>
+                      </div>
+
+                      <div className="order-catalog-entry-footer">
                         <button
                           type="button"
-                          className="remove-row"
+                          className="quiet-button"
                           onClick={() => handleRemoveItem(i)}
-                          title="Remove item"
+                          style={{ color: '#b91c1c', fontWeight: 600 }}
                         >
-                          ×
+                          Remove item
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => setExpandedItemId(null)}
+                          style={{ fontWeight: 700, borderColor: '#0284c7', color: '#0284c7' }}
+                        >
+                          ✓ Done with {r.itemName}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <button
@@ -1520,12 +1733,12 @@ export default function OrderEntryScreen({
               <b>{assignedClusterName}</b>
             </div>
             <div className="summary-line">
-              <span>Order date</span>
-              <b>{formatOrderDate(orderDate)}</b>
+              <span>Order date (IST)</span>
+              <b>{formatIstDateDisplay(orderDate)} ({orderDate})</b>
             </div>
             <div className="summary-line">
               <span>Expected delivery</span>
-              <b style={{ color: '#0369a1' }}>{formatOrderDate(expectedDeliveryDate)}</b>
+              <b style={{ color: '#0369a1' }}>{formatIstDateDisplay(expectedDeliveryDate)}</b>
             </div>
             <div className="summary-line">
               <span>Visit GPS location</span>

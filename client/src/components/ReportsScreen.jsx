@@ -44,18 +44,29 @@ export default function ReportsScreen({
   clusters = [],
   shops = [],
   orders = [],
+  defaultPeriod = '7d',
+  defaultStatusFilter = 'All',
+  defaultSearchQuery = '',
   onNavigate,
   showToast
 }) {
-  const [reportPeriod, setReportPeriod] = useState('7d'); // 'today' | '7d' | '30d'
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [reportPeriod, setReportPeriod] = useState(defaultPeriod); // 'today' | '7d' | '30d'
+  const [statusFilter, setStatusFilter] = useState(defaultStatusFilter);
+  const [searchQuery, setSearchQuery] = useState(defaultSearchQuery);
 
-  // Field Sales Agent sees only assigned clusters
+  // Field Sales Agent sees only assigned shops and their clusters
+  const isAgent = user?.role === 'Field Sales Agent';
+  const agentShops = isAgent && user?.id
+    ? shops.filter((s) => {
+        const assignedId = s.assignedAgentId ?? s.assigned_agent_id ?? s.salesExecId ?? s.salesexecid;
+        return assignedId === undefined || assignedId === null || Number(assignedId) === Number(user.id);
+      })
+    : shops;
+
   const assignedClusters = clusters.filter((c) =>
-    shops.some((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId))
+    agentShops.some((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId))
   );
-  const effectiveClusters = assignedClusters.length > 0 ? assignedClusters : clusters;
+  const effectiveClusters = assignedClusters.length > 0 ? assignedClusters : (isAgent ? [] : clusters);
   const hasSingleCluster = effectiveClusters.length <= 1;
   const defaultClusterFilter = hasSingleCluster && effectiveClusters[0]
     ? String(effectiveClusters[0].clusterId)
@@ -122,8 +133,8 @@ export default function ReportsScreen({
 
   // Scoped shops for this agent & cluster
   const scopedShops = selectedClusterFilter === 'all'
-    ? shops
-    : shops.filter((s) => Number(s.clusterid || s.clusterId) === Number(selectedClusterFilter));
+    ? agentShops
+    : agentShops.filter((s) => Number(s.clusterid || s.clusterId) === Number(selectedClusterFilter));
 
   const allowedClusterIds = new Set(effectiveClusters.map((c) => Number(c.clusterId)));
 
@@ -150,6 +161,12 @@ export default function ReportsScreen({
   const pendingApprovalCount = clusterFilteredOrders.filter((o) => (o.status || '').toLowerCase() === 'price approval pending').length;
   const totalValue = clusterFilteredOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
 
+  // Only use serverReport when its period matches the currently selected reportPeriod
+  const activeServerReport =
+    serverReport && (!serverReport.periodInfo?.periodKey || serverReport.periodInfo.periodKey === reportPeriod)
+      ? serverReport
+      : null;
+
   // Shop counts with explicit definitions (Assigned Shops, Visited Shops, Shops with Orders)
   const orderedShopIds = new Set(
     clusterFilteredOrders
@@ -157,9 +174,9 @@ export default function ReportsScreen({
       .map((o) => String(o.shopid || o.customerId || o.shopId || o.customer || ''))
       .filter(Boolean)
   );
-  const assignedShopsCount = serverReport?.shopCounts?.assignedShopsCount ?? scopedShops.length;
-  const orderedShopsCount = serverReport?.shopCounts?.orderedShopsCount ?? orderedShopIds.size;
-  const visitedShopsCount = serverReport?.shopCounts?.visitedShopsCount ?? orderedShopIds.size;
+  const assignedShopsCount = activeServerReport?.shopCounts?.assignedShopsCount ?? scopedShops.length;
+  const orderedShopsCount = activeServerReport?.shopCounts?.orderedShopsCount ?? orderedShopIds.size;
+  const visitedShopsCount = activeServerReport?.shopCounts?.visitedShopsCount ?? orderedShopIds.size;
 
   const shownOrders = clusterFilteredOrders.filter((o) => {
     const st = (o.status || 'In progress').toLowerCase();
@@ -172,7 +189,7 @@ export default function ReportsScreen({
 
   // Daily delivery status list (including previous days) so selecting an In Progress count for a previous day opens matching orders
   const dailyDeliveryStatus = (() => {
-    const serverDays = serverReport?.clusterList?.flatMap((c) => c.dailyDeliveryStatus || []) || [];
+    const serverDays = activeServerReport?.clusterList?.flatMap((c) => c.dailyDeliveryStatus || []) || [];
     if (serverDays.length > 0 && selectedClusterFilter !== 'all') {
       return serverDays;
     }
@@ -225,8 +242,8 @@ export default function ReportsScreen({
     return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
   })();
 
-  // Target vs Actual data
-  const tva = serverReport?.targetVsActual || {
+  // Target vs Actual data (updates immediately when period or cluster changes)
+  const tva = activeServerReport?.targetVsActual || {
     hasTarget: false,
     targetAmount: 0,
     actualAmount: totalValue,
@@ -235,7 +252,7 @@ export default function ReportsScreen({
     performanceIndicator: computePerfIndicator(0, false),
     items: []
   };
-  const perfScale = serverReport?.performanceIndicatorScale || DEFAULT_PERF_SCALE;
+  const perfScale = activeServerReport?.performanceIndicatorScale || DEFAULT_PERF_SCALE;
 
   // Compute real ordered commodities from saved orders (never hardcoded demo items)
   const orderedCommodities = (() => {
@@ -252,8 +269,8 @@ export default function ReportsScreen({
         map.set(name, prev);
       }
     }
-    if (map.size === 0 && serverReport?.clusterList) {
-      for (const c of serverReport.clusterList) {
+    if (map.size === 0 && activeServerReport?.clusterList) {
+      for (const c of activeServerReport.clusterList) {
         for (const ds of c.deliverystatus || []) {
           const prev = map.get(ds.name) || { name: ds.name, qty: 0, unit: ds.unit || 'kg' };
           prev.qty += Number(ds.totalcount || 0);
@@ -332,84 +349,99 @@ export default function ReportsScreen({
         </button>
       </div>
 
-      {/* Period Selector (Today, Last 7 days, Last 30 days) + Assigned Cluster Filter */}
-      <div className="reports-toolbar" style={{ flexWrap: 'wrap', gap: '12px' }}>
-        <div className="reports-filter-group">
-          <span className="reports-filter-label">REPORT PERIOD (IST)</span>
-          <div className="report-period-pills" role="group" aria-label="Report period">
-            {[
-              { key: 'today', label: 'Today' },
-              { key: '7d', label: 'Last 7 days' },
-              { key: '30d', label: 'Last 30 days' }
-            ].map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                className={`report-period-btn ${reportPeriod === p.key ? 'active' : ''}`}
-                onClick={() => setReportPeriod(p.key)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Show cluster selector only if agent has more than 1 assigned cluster; otherwise show assigned cluster badge */}
-        {effectiveClusters.length > 1 ? (
-          <div className="reports-filter-group">
-            <label htmlFor="reportClusterSelect" className="reports-filter-label">ASSIGNED CLUSTER</label>
-            <select
-              id="reportClusterSelect"
-              className="select reports-cluster-select"
-              value={selectedClusterFilter}
-              onChange={(e) => setSelectedClusterFilter(e.target.value)}
-            >
-              <option value="all">All assigned clusters ({effectiveClusters.length})</option>
-              {effectiveClusters.map((c) => (
-                <option key={c.clusterId} value={String(c.clusterId)}>
-                  {c.clusterName}
-                </option>
+      {/* Redesigned Vertical & Responsive Filter Controls Card (Zero Overlap, Fits Narrow Phones) */}
+      <div className="reports-controls-card" role="region" aria-label="Report filters" data-testid="reports-controls-card">
+        <div className="reports-controls-top-grid">
+          {/* 1. Report Period Control */}
+          <div className="reports-control-block">
+            <span className="reports-control-label">REPORT PERIOD (IST)</span>
+            <div className="report-period-pills" role="group" aria-label="Report period">
+              {[
+                { key: 'today', label: 'Today' },
+                { key: '7d', label: 'Last 7 days' },
+                { key: '30d', label: 'Last 30 days' }
+              ].map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  className={`report-period-btn ${reportPeriod === p.key ? 'active' : ''}`}
+                  onClick={() => setReportPeriod(p.key)}
+                >
+                  {p.label}
+                </button>
               ))}
-            </select>
-          </div>
-        ) : (
-          effectiveClusters[0] && (
-            <div className="reports-filter-group">
-              <span className="reports-filter-label">ASSIGNED CLUSTER</span>
-              <span className="cluster-filter-pill" style={{ height: '38px', fontWeight: 700, fontSize: '12.5px' }}>
-                📍 {effectiveClusters[0].clusterName}
-              </span>
             </div>
-          )
-        )}
+          </div>
 
-        <div className="reports-search-wrap">
-          <input
-            className="search-input reports-search-input"
-            placeholder="Search order ID or store..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+          {/* 2. Assigned Cluster Control (Dropdown only when 2+ assigned clusters; static label when 1) */}
+          {effectiveClusters.length > 1 ? (
+            <div className="reports-control-block">
+              <label htmlFor="reportClusterSelect" className="reports-control-label">ASSIGNED CLUSTER</label>
+              <select
+                id="reportClusterSelect"
+                className="select reports-cluster-select-field"
+                value={selectedClusterFilter}
+                onChange={(e) => setSelectedClusterFilter(e.target.value)}
+              >
+                <option value="all">All assigned clusters ({effectiveClusters.length})</option>
+                {effectiveClusters.map((c) => (
+                  <option key={c.clusterId} value={String(c.clusterId)}>
+                    {c.clusterName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            effectiveClusters[0] && (
+              <div className="reports-control-block">
+                <span className="reports-control-label">ASSIGNED CLUSTER</span>
+                <div className="reports-cluster-static-badge" data-testid="report-assigned-cluster">
+                  <span aria-hidden="true">📍</span>
+                  <span>{effectiveClusters[0].clusterName}</span>
+                </div>
+              </div>
+            )
+          )}
         </div>
 
-        <div className="reports-tabs-wrap">
-          <div className="tabs reports-tabs">
-            {['All', 'Delivered', 'In progress', 'Pending approval'].map((st) => (
-              <button
-                key={st}
-                type="button"
-                className={`tab ${statusFilter === st ? 'selected' : ''}`}
-                onClick={() => setStatusFilter(st)}
-              >
-                {st}
-              </button>
-            ))}
+        <div className="reports-controls-bottom-grid">
+          {/* 3. Search Filter */}
+          <div className="reports-control-block reports-search-block">
+            <label htmlFor="reportSearchInput" className="reports-control-label">SEARCH ORDERS</label>
+            <div className="reports-search-wrap">
+              <input
+                id="reportSearchInput"
+                className="search-input reports-search-input"
+                placeholder="Search order ID or store..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* 4. Status Filter */}
+          <div className="reports-control-block reports-status-block">
+            <span className="reports-control-label">ORDER STATUS</span>
+            <div className="reports-tabs-wrap">
+              <div className="tabs reports-tabs" role="group" aria-label="Order status filter" data-testid="reports-status-tabs">
+                {['All', 'Delivered', 'In progress', 'Pending approval'].map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    className={`tab ${statusFilter === st ? 'selected' : ''}`}
+                    onClick={() => setStatusFilter(st)}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Explicit Shop Coverage & Order KPIs */}
-      <div className="stats-grid" style={{ marginBottom: '20px' }}>
+      <div className="stats-grid reports-stats-grid" style={{ marginBottom: '20px' }}>
         <div className="stat-card">
           <div className="stat-top">
             <span>Assigned Shops (Route Scope)</span>
@@ -455,7 +487,7 @@ export default function ReportsScreen({
       <section className="table-panel" style={{ marginBottom: '20px' }}>
         <div className="table-heading" style={{ flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <h2>Target vs Actual ({periodLabel})</h2>
+            <h2 id="tva-heading">Target vs Actual ({periodLabel})</h2>
             <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
               Tabular comparison of sales target, actual achieved sales, difference, achievement %, and performance indicator.
             </p>
@@ -465,8 +497,8 @@ export default function ReportsScreen({
           </span>
         </div>
 
-        <div className="table-scroll-container">
-          <table className="data-table">
+        <div className="table-scroll-container" tabIndex={0} role="region" aria-labelledby="tva-heading">
+          <table className="data-table responsive-stack-table">
             <thead>
               <tr>
                 <th>Scope / Commodity</th>
@@ -479,19 +511,19 @@ export default function ReportsScreen({
             </thead>
             <tbody>
               <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
-                <td>
+                <td data-label="Scope / Commodity">
                   <strong>Overall Route Sales ({periodLabel})</strong>
                 </td>
-                <td>{tva.hasTarget ? money(tva.targetAmount) : '₹0 (Not set)'}</td>
-                <td><strong>{money(tva.actualAmount ?? totalValue)}</strong></td>
-                <td style={{ color: (tva.differenceAmount || 0) >= 0 ? '#15803d' : '#b91c1c', fontWeight: 700 }}>
+                <td data-label="Target">{tva.hasTarget ? money(tva.targetAmount) : '₹0 (Not set)'}</td>
+                <td data-label="Actual"><strong>{money(tva.actualAmount ?? totalValue)}</strong></td>
+                <td data-label="Difference" style={{ color: (tva.differenceAmount || 0) >= 0 ? '#15803d' : '#b91c1c', fontWeight: 700 }}>
                   {(tva.differenceAmount || 0) >= 0 ? '+' : ''}
                   {money(tva.differenceAmount ?? totalValue)}
                 </td>
-                <td>
+                <td data-label="Achievement %">
                   <strong>{tva.hasTarget ? `${tva.achievementPct}%` : '—'}</strong>
                 </td>
-                <td>
+                <td data-label="Indicator">
                   <span className={`perf-indicator-badge ${tva.performanceIndicator?.color || 'neutral'}`}>
                     {tva.performanceIndicator?.label || 'No Target Set'}
                   </span>
@@ -500,24 +532,24 @@ export default function ReportsScreen({
 
               {(tva.items || []).map((row) => (
                 <tr key={row.itemId}>
-                  <td>
+                  <td data-label="Scope / Commodity">
                     <strong>{row.itemName}</strong>
                   </td>
-                  <td>
+                  <td data-label="Target">
                     {row.targetAmount > 0 ? money(row.targetAmount) : '—'}{' '}
                     {row.targetQty > 0 ? `(${row.targetQty} ${row.unit || 'kg'})` : ''}
                   </td>
-                  <td>
+                  <td data-label="Actual">
                     <strong>{money(row.actualAmount)}</strong> ({row.actualQty} {row.unit || 'kg'})
                   </td>
-                  <td style={{ color: row.differenceAmount >= 0 ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                  <td data-label="Difference" style={{ color: row.differenceAmount >= 0 ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
                     {row.differenceAmount >= 0 ? '+' : ''}
                     {money(row.differenceAmount)} ({row.differenceQty >= 0 ? '+' : ''}{row.differenceQty} {row.unit || 'kg'})
                   </td>
-                  <td>
+                  <td data-label="Achievement %">
                     <strong>{row.targetAmount > 0 || row.targetQty > 0 ? `${row.achievementPct}%` : '—'}</strong>
                   </td>
-                  <td>
+                  <td data-label="Indicator">
                     <span className={`perf-indicator-badge ${row.performanceIndicator?.color || 'neutral'}`}>
                       {row.performanceIndicator?.label || 'No Target Set'}
                     </span>
@@ -533,15 +565,15 @@ export default function ReportsScreen({
       <section className="table-panel" style={{ marginBottom: '20px' }}>
         <div className="table-heading" style={{ flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <h2>Delivery Status by Order Date & Expected Delivery Date</h2>
+            <h2 id="daily-deliv-heading">Delivery Status by Order Date & Expected Delivery Date</h2>
             <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
               Orders placed today default to tomorrow as their expected delivery date; yesterday’s orders are due today. Select any <b>In Progress</b> count (including previous days) to view the matching orders and item details.
             </p>
           </div>
         </div>
 
-        <div className="table-scroll-container">
-          <table className="data-table">
+        <div className="table-scroll-container" tabIndex={0} role="region" aria-labelledby="daily-deliv-heading">
+          <table className="data-table responsive-stack-table">
             <thead>
               <tr>
                 <th>Order Date</th>
@@ -558,7 +590,7 @@ export default function ReportsScreen({
                   const isToday = day.date === todayIST;
                   return (
                     <tr key={day.date}>
-                      <td>
+                      <td data-label="Order Date">
                         <strong>{dateLabel(day.date)}</strong>
                         {isToday && (
                           <span className="shop-code-pill" style={{ marginLeft: '6px' }}>Today</span>
@@ -569,7 +601,7 @@ export default function ReportsScreen({
                           </span>
                         )}
                       </td>
-                      <td>
+                      <td data-label="Expected Delivery">
                         <strong style={{ color: '#0369a1' }}>{dateLabel(day.expectedDeliveryDate)}</strong>
                         {day.expectedDeliveryDate === todayIST && (
                           <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: '#0369a1' }}>
@@ -577,11 +609,11 @@ export default function ReportsScreen({
                           </span>
                         )}
                       </td>
-                      <td>{day.totalOrders}</td>
-                      <td>
+                      <td data-label="Total Orders">{day.totalOrders}</td>
+                      <td data-label="Delivered">
                         <span className="status delivered">{day.deliveredCount} Delivered</span>
                       </td>
-                      <td>
+                      <td data-label="In Progress">
                         {day.inProgressCount > 0 ? (
                           <button
                             type="button"
@@ -606,7 +638,7 @@ export default function ReportsScreen({
                 })
               ) : (
                 <tr>
-                  <td colSpan="5">
+                  <td colSpan="5" className="empty-colspan-cell">
                     <div className="empty-state">No delivery records found for your assigned cluster scope.</div>
                   </td>
                 </tr>
@@ -628,7 +660,7 @@ export default function ReportsScreen({
             background: '#fffdf7'
           }}
         >
-          <div className="panel-head" style={{ borderBottom: '1px solid #fde68a', paddingBottom: '10px' }}>
+          <div className="panel-head" style={{ borderBottom: '1px solid #fde68a', paddingBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
             <div>
               <h2 style={{ color: '#92400e' }}>
                 ⏳ In Progress Orders for {dateLabel(selectedDayDrilldown.date)} ({selectedDayDrilldown.orders.length})
@@ -676,8 +708,8 @@ export default function ReportsScreen({
                   </div>
                 </div>
 
-                <div className="table-scroll-container">
-                  <table className="history-items-table">
+                <div className="table-scroll-container" tabIndex={0} role="region" aria-label={`Line items for order ${ord.orderId || ord.id}`}>
+                  <table className="history-items-table responsive-stack-table">
                     <thead>
                       <tr>
                         <th>Item Description</th>
@@ -692,13 +724,13 @@ export default function ReportsScreen({
                         const lineTot = Number(it.qty || 0) * Number(it.price || 0);
                         return (
                           <tr key={idx}>
-                            <td><b>{it.itemName}</b></td>
-                            <td>
+                            <td data-label="Item Description"><b>{it.itemName}</b></td>
+                            <td data-label="Ordered Quantity">
                               <span className="qty-highlight">
                                 {it.qty} {unit}
                               </span>
                             </td>
-                            <td>
+                            <td data-label="Catalog Price">
                               {money(it.price)}/{unit}
                               {it.requestedPrice !== null && it.requestedPrice !== undefined && (
                                 <span style={{ display: 'block', fontSize: '11px', color: '#92400e' }}>
@@ -706,7 +738,7 @@ export default function ReportsScreen({
                                 </span>
                               )}
                             </td>
-                            <td style={{ textAlign: 'right' }}><b>{money(lineTot)}</b></td>
+                            <td data-label="Line Total" style={{ textAlign: 'right' }}><b>{money(lineTot)}</b></td>
                           </tr>
                         );
                       })}
@@ -725,14 +757,14 @@ export default function ReportsScreen({
           {/* Order Status Summary Table Panel */}
           <section className="table-panel">
             <div className="table-heading">
-              <h2>Order status log <span className="muted-count">({shownOrders.length})</span></h2>
+              <h2 id="order-status-log-heading">Order status log <span className="muted-count">({shownOrders.length})</span></h2>
               <button className="view-all" onClick={() => onNavigate('orders')}>
                 ＋ New order →
               </button>
             </div>
 
-            <div className="table-scroll-container">
-              <table className="data-table">
+            <div className="table-scroll-container" tabIndex={0} role="region" aria-labelledby="order-status-log-heading">
+              <table className="data-table responsive-stack-table">
                 <thead>
                   <tr>
                     <th>Order ID</th>
@@ -756,7 +788,7 @@ export default function ReportsScreen({
                           style={{ cursor: 'pointer' }}
                           title="Click to view ordered item details"
                         >
-                          <td>
+                          <td data-label="Order ID">
                             <strong className="order-id-tag">{o.id}</strong>
                             {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
                               <span style={{ display: 'block', fontSize: '11px', color: '#ed6c02', fontWeight: 600 }}>
@@ -764,7 +796,7 @@ export default function ReportsScreen({
                               </span>
                             )}
                           </td>
-                          <td>
+                          <td data-label="Customer">
                             <div className="customer-cell">
                               <span className="customer-dot">{initials(o.customer || o.shopName)}</span>
                               <div>
@@ -773,13 +805,13 @@ export default function ReportsScreen({
                               </div>
                             </div>
                           </td>
-                          <td>{dateLabel(dStr)}</td>
-                          <td>
+                          <td data-label="Order Date">{dateLabel(dStr)}</td>
+                          <td data-label="Expected Delivery">
                             <strong style={{ color: '#0369a1' }}>{dateLabel(expDeliv)}</strong>
                           </td>
-                          <td>{o.itemsCount || o.items || (o.orderList || []).length || 1} items</td>
-                          <td><strong>{money(o.total)}</strong></td>
-                          <td>
+                          <td data-label="Items">{o.itemsCount || o.items || (o.orderList || []).length || 1} items</td>
+                          <td data-label="Total"><strong>{money(o.total)}</strong></td>
+                          <td data-label="Status">
                             {(() => {
                               const pay = getPaymentSummary(o);
                               return (
@@ -811,7 +843,7 @@ export default function ReportsScreen({
                     })
                   ) : (
                     <tr>
-                      <td colSpan="7">
+                      <td colSpan="7" className="empty-colspan-cell">
                         <div className="empty-state">No orders match this period and filter.</div>
                       </td>
                     </tr>
@@ -823,7 +855,7 @@ export default function ReportsScreen({
 
           {selectedOrderDetail && (
             <section className="panel" style={{ marginTop: '14px', border: '1px solid #bae6fd', background: '#f0f9ff' }}>
-              <div className="panel-head">
+              <div className="panel-head" style={{ flexWrap: 'wrap', gap: '8px' }}>
                 <div>
                   <h2>Order Summary · #{selectedOrderDetail.id} ({selectedOrderDetail.customer || selectedOrderDetail.shopName})</h2>
                   <p>
@@ -834,8 +866,8 @@ export default function ReportsScreen({
                   ✕ Close
                 </button>
               </div>
-              <div className="table-scroll-container">
-                <table className="history-items-table" style={{ background: '#fff' }}>
+              <div className="table-scroll-container" tabIndex={0} role="region" aria-label={`Order items for ${selectedOrderDetail.id}`}>
+                <table className="history-items-table responsive-stack-table" style={{ background: '#fff' }}>
                   <thead>
                     <tr>
                       <th>Item Description</th>
@@ -851,10 +883,10 @@ export default function ReportsScreen({
                       const q = Number(it.qty || 0);
                       return (
                         <tr key={idx}>
-                          <td><b>{it.itemName || it.name || `Item #${it.itemid}`}</b></td>
-                          <td><span className="qty-highlight">{q} {unit}</span></td>
-                          <td>{money(p)}/{unit}</td>
-                          <td style={{ textAlign: 'right' }}><b>{money(q * p)}</b></td>
+                          <td data-label="Item Description"><b>{it.itemName || it.name || `Item #${it.itemid}`}</b></td>
+                          <td data-label="Ordered Quantity"><span className="qty-highlight">{q} {unit}</span></td>
+                          <td data-label="Catalog Price">{money(p)}/{unit}</td>
+                          <td data-label="Line Total" style={{ textAlign: 'right' }}><b>{money(q * p)}</b></td>
                         </tr>
                       );
                     })}
@@ -949,14 +981,14 @@ export default function ReportsScreen({
       <section className="table-panel" style={{ marginTop: '24px' }}>
         <div className="table-heading">
           <div>
-            <h2>Performance Indicator Reference Table</h2>
+            <h2 id="perf-ref-heading">Performance Indicator Reference Table</h2>
             <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
               Standard achievement bands used to evaluate Target vs Actual sales performance across periods.
             </p>
           </div>
         </div>
-        <div className="table-scroll-container">
-          <table className="data-table">
+        <div className="table-scroll-container" tabIndex={0} role="region" aria-labelledby="perf-ref-heading">
+          <table className="data-table responsive-stack-table">
             <thead>
               <tr>
                 <th>Performance Indicator</th>
@@ -967,13 +999,13 @@ export default function ReportsScreen({
             <tbody>
               {perfScale.map((row) => (
                 <tr key={row.band}>
-                  <td>
+                  <td data-label="Indicator">
                     <span className={`perf-indicator-badge ${row.color}`}>
                       {row.band}
                     </span>
                   </td>
-                  <td><strong>{row.range}</strong></td>
-                  <td>{row.description}</td>
+                  <td data-label="Achievement Range"><strong>{row.range}</strong></td>
+                  <td data-label="Interpretation">{row.description}</td>
                 </tr>
               ))}
             </tbody>

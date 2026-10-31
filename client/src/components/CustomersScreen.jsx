@@ -254,14 +254,78 @@ export default function CustomersScreen({
     }
   };
 
-  // Filter clusters for agents so only routes containing assigned shops are shown
-  const availableClusters = isAgent
-    ? clusters.filter((c) => localShops.some((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)))
-    : clusters;
+  // Strictly restrict shop visibility to the agent's assigned shops
+  const visibleShops = isAgent
+    ? localShops.filter((s) => {
+        const aid = s.assignedAgentId ?? s.assigned_agent_id;
+        if (aid !== undefined && aid !== null && user?.id !== undefined && user?.id !== null) {
+          return Number(aid) === Number(user.id);
+        }
+        return true;
+      })
+    : localShops;
+
+  // Filter clusters for agents so only routes containing their assigned shops are included
+  const availableClusters = (() => {
+    if (!isAgent) return clusters;
+    const shopClusterIds = Array.from(
+      new Set(visibleShops.map((s) => Number(s.clusterid || s.clusterId)).filter((id) => id > 0))
+    );
+    if (shopClusterIds.length > 0) {
+      const matched = clusters.filter((c) => shopClusterIds.includes(Number(c.clusterId)));
+      if (matched.length === shopClusterIds.length) return matched;
+      return shopClusterIds.map((cid) => {
+        const found = clusters.find((c) => Number(c.clusterId) === cid);
+        return found || {
+          clusterId: cid,
+          clusterName: cid === 2 ? 'Thuthukudi' : `Cluster #${cid}`
+        };
+      });
+    }
+    if (clusters.length === 1) return clusters;
+    if (user?.clusterid) {
+      const userCluster = clusters.find((c) => Number(c.clusterId) === Number(user.clusterid));
+      return userCluster ? [userCluster] : [{ clusterId: Number(user.clusterid), clusterName: Number(user.clusterid) === 2 ? 'Thuthukudi' : 'Pollachi and Udumalapet' }];
+    }
+    return [];
+  })();
+
+  const hasSingleAssignedCluster = isAgent && availableClusters.length <= 1;
+  const singleAssignedCluster = hasSingleAssignedCluster
+    ? availableClusters[0] ||
+      clusters.find((c) => Number(c.clusterId) === Number(user?.clusterid || 1)) || {
+        clusterId: Number(user?.clusterid || 1),
+        clusterName: Number(user?.clusterid) === 2 ? 'Thuthukudi' : 'Pollachi and Udumalapet'
+      }
+    : null;
+
+  useEffect(() => {
+    if (hasSingleAssignedCluster && singleAssignedCluster) {
+      const cidStr = String(singleAssignedCluster.clusterId);
+      if (selectedClusterFilter !== 'all' && selectedClusterFilter !== cidStr) {
+        setSelectedClusterFilter('all');
+      }
+      if (Number(formData.clusterid) !== Number(singleAssignedCluster.clusterId)) {
+        setFormData((prev) => ({ ...prev, clusterid: Number(singleAssignedCluster.clusterId) }));
+      }
+    } else if (isAgent && availableClusters.length >= 2) {
+      const validIds = availableClusters.map((c) => Number(c.clusterId));
+      if (!validIds.includes(Number(formData.clusterid))) {
+        setFormData((prev) => ({ ...prev, clusterid: validIds[0] }));
+      }
+      if (selectedClusterFilter !== 'all' && !validIds.includes(Number(selectedClusterFilter))) {
+        setSelectedClusterFilter('all');
+      }
+    }
+  }, [hasSingleAssignedCluster, singleAssignedCluster?.clusterId, isAgent, availableClusters.length, selectedClusterFilter, formData.clusterid]);
 
   // Filter shops for directory view
-  const filteredShops = localShops.filter((s) => {
-    if (selectedClusterFilter !== 'all' && Number(s.clusterid || s.clusterId) !== Number(selectedClusterFilter)) {
+  const filteredShops = visibleShops.filter((s) => {
+    if (hasSingleAssignedCluster && singleAssignedCluster) {
+      if (Number(s.clusterid || s.clusterId) !== Number(singleAssignedCluster.clusterId)) {
+        return false;
+      }
+    } else if (selectedClusterFilter !== 'all' && Number(s.clusterid || s.clusterId) !== Number(selectedClusterFilter)) {
       return false;
     }
     if (categoryFilter !== 'All' && (s.shopCategory || 'Retail').toLowerCase() !== categoryFilter.toLowerCase()) return false;
@@ -318,31 +382,44 @@ export default function CustomersScreen({
                 />
               </div>
 
-              <div className="shops-cluster-filter-wrap">
-                <label htmlFor="shopsClusterSelect" className="shops-cluster-label">CLUSTER</label>
-                <select
-                  id="shopsClusterSelect"
-                  className="select shops-cluster-select"
-                  value={selectedClusterFilter}
-                  onChange={(e) => {
-                    setSelectedClusterFilter(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                >
-                  <option value="all">All clusters ({localShops.length})</option>
-                  {availableClusters.map((c) => {
-                    const count = localShops.filter((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)).length;
-                    return (
-                      <option key={c.clusterId} value={String(c.clusterId)}>
-                        {c.clusterName} ({count})
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
+              {hasSingleAssignedCluster ? (
+                <div className="shops-cluster-filter-wrap shops-single-cluster-badge" data-testid="assigned-cluster-label">
+                  <span className="shops-cluster-label">ASSIGNED CLUSTER</span>
+                  <strong className="shops-cluster-static-value">
+                    📍 {singleAssignedCluster?.clusterName || 'Assigned Route'} ({visibleShops.length})
+                  </strong>
+                </div>
+              ) : (
+                <div className="shops-cluster-filter-wrap">
+                  <label htmlFor="shopsClusterSelect" className="shops-cluster-label">
+                    {isAgent ? 'ASSIGNED CLUSTERS' : 'CLUSTER'}
+                  </label>
+                  <select
+                    id="shopsClusterSelect"
+                    className="select shops-cluster-select"
+                    value={selectedClusterFilter}
+                    onChange={(e) => {
+                      setSelectedClusterFilter(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <option value="all">
+                      {isAgent ? `All assigned clusters (${visibleShops.length})` : `All clusters (${visibleShops.length})`}
+                    </option>
+                    {availableClusters.map((c) => {
+                      const count = visibleShops.filter((s) => Number(s.clusterid || s.clusterId) === Number(c.clusterId)).length;
+                      return (
+                        <option key={c.clusterId} value={String(c.clusterId)}>
+                          {c.clusterName} ({count})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
 
               <span className="shops-count-badge">
-                {filteredShops.length} registered customers
+                {filteredShops.length} {isAgent ? 'assigned' : 'registered'} {filteredShops.length === 1 ? 'customer' : 'customers'}
               </span>
             </div>
 
@@ -364,7 +441,7 @@ export default function CustomersScreen({
             </div>
           </div>
 
-          {localShops.length === 0 ? (
+          {visibleShops.length === 0 ? (
             <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 m-4 shadow-sm">
               <div className="text-4xl mb-3">🏪</div>
               <h3 className="text-lg font-bold text-slate-800 mb-1">
@@ -545,19 +622,36 @@ export default function CustomersScreen({
 
               <div className="field-grid">
                 <div className="field-group">
-                  <label htmlFor="regCluster">Cluster Route *</label>
-                  <select
-                    id="regCluster"
-                    className="select"
-                    value={formData.clusterid}
-                    onChange={(e) => setFormData({ ...formData, clusterid: Number(e.target.value) })}
-                  >
-                    {clusters.map((c) => (
-                      <option key={c.clusterId} value={c.clusterId}>
-                        {c.clusterName}
-                      </option>
-                    ))}
-                  </select>
+                  <label htmlFor="regCluster">Assigned Cluster Route *</label>
+                  {hasSingleAssignedCluster ? (
+                    <div
+                      id="regCluster"
+                      className="field shops-single-cluster-readonly"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: '#f8fafc',
+                        fontWeight: 700,
+                        color: '#0f172a'
+                      }}
+                    >
+                      <span>📍 {singleAssignedCluster?.clusterName || 'Assigned Route'}</span>
+                    </div>
+                  ) : (
+                    <select
+                      id="regCluster"
+                      className="select"
+                      value={formData.clusterid}
+                      onChange={(e) => setFormData({ ...formData, clusterid: Number(e.target.value) })}
+                    >
+                      {availableClusters.map((c) => (
+                        <option key={c.clusterId} value={c.clusterId}>
+                          {c.clusterName}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div className="field-group">
