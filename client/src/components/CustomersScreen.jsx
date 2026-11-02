@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
 import { formatShopId, getGoogleMapsUrl } from '../utils';
+import { fetchCurrentDeviceLocation, reverseGeocodeCoordinates } from '../utils/locationService';
 
 const SHOP_CATEGORIES = ['Retail', 'SuperMarket', 'HoReCa', 'ChainRetail', 'FruitShop'];
 const PAYMENT_MODES = ['Online', 'Cash'];
@@ -9,11 +10,12 @@ export default function CustomersScreen({
   user,
   clusters = [],
   shops = [],
+  defaultViewMode = 'list',
   onShopAdded,
   onOrderForCustomer,
   showToast
 }) {
-  const [viewMode, setViewMode] = useState('list'); // 'list' or 'newCustomer'
+  const [viewMode, setViewMode] = useState(defaultViewMode); // 'list' or 'newCustomer'
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [selectedClusterFilter, setSelectedClusterFilter] = useState('all');
@@ -93,6 +95,8 @@ export default function CustomersScreen({
   const [photoFile, setPhotoFile] = useState(null);
   const [isPhotoUploaded, setIsPhotoUploaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [locationFeedback, setLocationFeedback] = useState(null);
   const fileInputRef = useRef(null);
 
   const initials = (name) =>
@@ -117,26 +121,21 @@ export default function CustomersScreen({
     }
   }, [formData.clusterid, clusters]);
 
-  // Reverse geocode via Nominatim
-  const fetchAddressFromNominatim = async (lat, lon) => {
-    try {
-      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=27&addressdetails=1`;
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data?.display_name) {
-        setFormData((prev) => ({
-          ...prev,
-          address: data.display_name,
-          pincode: data.address?.postcode || prev.pincode
-        }));
-      }
-    } catch {
-      // offline fallback
+  // Reverse geocode coordinates and fill street address & pincode when available
+  const applyReverseGeocode = async (lat, lon) => {
+    const geo = await reverseGeocodeCoordinates(lat, lon);
+    if (geo.ok && geo.address) {
+      setFormData((prev) => ({
+        ...prev,
+        address: geo.address,
+        pincode: geo.pincode || prev.pincode
+      }));
+      return true;
     }
+    return false;
   };
 
-  const handleMapCanvasClick = (e) => {
+  const handleMapCanvasClick = async (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / rect.width - 0.5;
     const relY = 0.5 - (e.clientY - rect.top) / rect.height;
@@ -145,22 +144,85 @@ export default function CustomersScreen({
     const newLat = (baseLat + relY * 0.008).toFixed(6);
     const newLon = (baseLon + relX * 0.008).toFixed(6);
     setFormData((prev) => ({ ...prev, latitude: String(newLat), longitude: String(newLon) }));
-    fetchAddressFromNominatim(newLat, newLon);
+    setLocationFeedback({
+      type: 'info',
+      reason: 'manual_pin',
+      message: `Pin placed manually at ${newLat}, ${newLon}. Looking up street address…`
+    });
+    const filled = await applyReverseGeocode(newLat, newLon);
+    setLocationFeedback({
+      type: 'success',
+      reason: 'manual_pin',
+      message: filled
+        ? `Manual map pin set (${newLat}, ${newLon}) and street address updated.`
+        : `Manual map pin set (${newLat}, ${newLon}). Enter or edit the street address if needed.`
+    });
   };
 
-  const handleMapLocateClick = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude.toFixed(6);
-          const lon = pos.coords.longitude.toFixed(6);
-          setFormData((prev) => ({ ...prev, latitude: String(lat), longitude: String(lon) }));
-          fetchAddressFromNominatim(lat, lon);
-        },
-        () => {
-          fetchAddressFromNominatim(formData.latitude, formData.longitude);
-        }
-      );
+  // Shared one-shot location flow used by both "Use current location" and "GPS Detect"
+  const handleUseCurrentLocation = async () => {
+    if (locating) return;
+    setLocating(true);
+    setLocationFeedback({
+      type: 'info',
+      reason: 'loading',
+      message: 'Requesting device GPS location…'
+    });
+
+    try {
+      const loc = await fetchCurrentDeviceLocation();
+      if (!loc.ok) {
+        setLocationFeedback({
+          type: 'error',
+          reason: loc.reason || 'unavailable',
+          message: loc.message
+        });
+        if (showToast) showToast(loc.message);
+        return;
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        latitude: String(loc.latitude),
+        longitude: String(loc.longitude)
+      }));
+
+      setLocationFeedback({
+        type: 'info',
+        reason: 'geocoding',
+        message: `GPS coordinates found (${loc.latitude}, ${loc.longitude}). Looking up street address…`
+      });
+
+      const addressFilled = await applyReverseGeocode(loc.latitude, loc.longitude);
+      const accSuffix = loc.accuracy ? ` (±${loc.accuracy}m)` : '';
+
+      if (loc.lowAccuracy) {
+        const msg = addressFilled
+          ? `Approximate location captured (${loc.latitude}, ${loc.longitude}${accSuffix}) and street address filled. Please verify the map pin or tap the map to adjust.`
+          : `Approximate location captured (${loc.latitude}, ${loc.longitude}${accSuffix}), but street address could not be auto-filled. Verify the map pin and enter the street address manually.`;
+        setLocationFeedback({
+          type: 'warning',
+          reason: 'low_accuracy',
+          message: msg
+        });
+        if (showToast) showToast('Approximate GPS location captured. Please verify the map pin.');
+      } else if (addressFilled) {
+        setLocationFeedback({
+          type: 'success',
+          reason: 'ok',
+          message: `Current location captured (${loc.latitude}, ${loc.longitude}${accSuffix}) and street address filled.`
+        });
+        if (showToast) showToast('Current GPS location and street address updated.');
+      } else {
+        setLocationFeedback({
+          type: 'warning',
+          reason: 'geocode_unavailable',
+          message: `Current GPS coordinates captured (${loc.latitude}, ${loc.longitude}${accSuffix}), but street address could not be auto-filled. Please type the street address manually.`
+        });
+        if (showToast) showToast('GPS coordinates updated. Please enter the street address.');
+      }
+    } finally {
+      setLocating(false);
     }
   };
 
@@ -198,8 +260,19 @@ export default function CustomersScreen({
       showToast('Please enter a primary contact number.');
       return;
     }
-    if (!formData.latitude || !formData.longitude) {
-      showToast('Invalid location coordinates. Please tap on the map.');
+    const parsedLat = parseFloat(formData.latitude);
+    const parsedLon = parseFloat(formData.longitude);
+    if (
+      !formData.latitude ||
+      !formData.longitude ||
+      !Number.isFinite(parsedLat) ||
+      !Number.isFinite(parsedLon) ||
+      parsedLat < -90 ||
+      parsedLat > 90 ||
+      parsedLon < -180 ||
+      parsedLon > 180
+    ) {
+      showToast('Invalid location coordinates. Use current location or tap on the map.');
       return;
     }
     if (!formData.address.trim()) {
@@ -360,8 +433,8 @@ export default function CustomersScreen({
             <button
               className="primary-button"
               onClick={() => {
+                setLocationFeedback(null);
                 setViewMode('newCustomer');
-                fetchAddressFromNominatim(formData.latitude, formData.longitude);
               }}
             >
               ＋ &nbsp;Add customer
@@ -743,10 +816,16 @@ export default function CustomersScreen({
                   <label htmlFor="regPincode">Pin code *</label>
                   <input
                     id="regPincode"
+                    name="pincode"
                     className="field"
                     required
+                    inputMode="numeric"
+                    autoComplete="postal-code"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
                     maxLength={6}
-                    placeholder="642 100"
+                    placeholder="642100"
                     value={formData.pincode}
                     onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
                   />
@@ -756,13 +835,70 @@ export default function CustomersScreen({
                   <label htmlFor="regAddress">Full street address *</label>
                   <textarea
                     id="regAddress"
+                    name="address"
                     className="textarea"
                     required
                     maxLength={250}
+                    autoComplete="street-address"
+                    aria-describedby={locationFeedback ? 'regLocationStatus' : undefined}
                     placeholder="Street name, landmark, area, city"
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   />
+
+                  <div className="address-location-bar">
+                    <button
+                      type="button"
+                      id="useCurrentLocationBtn"
+                      data-testid="use-current-location-btn"
+                      className="use-current-location-btn"
+                      disabled={locating}
+                      onClick={handleUseCurrentLocation}
+                    >
+                      <span aria-hidden="true">{locating ? '⏳' : '📍'}</span>
+                      <span>{locating ? 'Detecting location…' : 'Use current location'}</span>
+                    </button>
+                    <span className="address-location-hint">
+                      Fetches device GPS, updates pin, and fills street address
+                    </span>
+                  </div>
+
+                  {locationFeedback && (
+                    <div
+                      id="regLocationStatus"
+                      data-testid="location-status-banner"
+                      data-reason={locationFeedback.reason}
+                      role={locationFeedback.type === 'error' ? 'alert' : 'status'}
+                      aria-live="polite"
+                      className={`location-status-banner is-${locationFeedback.type}`}
+                    >
+                      <span className="location-status-icon" aria-hidden="true">
+                        {locationFeedback.type === 'error'
+                          ? '⚠️'
+                          : locationFeedback.type === 'warning'
+                            ? '⚡'
+                            : locationFeedback.type === 'success'
+                              ? '✓'
+                              : 'ℹ️'}
+                      </span>
+                      <div className="location-status-body">
+                        <span className="location-status-text">{locationFeedback.message}</span>
+                        {(locationFeedback.type === 'error' || locationFeedback.reason === 'low_accuracy') && (
+                          <div className="location-status-actions">
+                            <button
+                              type="button"
+                              data-testid="location-retry-btn"
+                              className="location-retry-btn"
+                              disabled={locating}
+                              onClick={handleUseCurrentLocation}
+                            >
+                              ↻ Retry
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -855,32 +991,47 @@ export default function CustomersScreen({
             {/* Right Panel: Location & Map */}
             <aside className="panel form-panel">
               <h2>GPS Location & Geocoding</h2>
-              <p className="section-help">Click anywhere on the map to pin the shop and auto-detect address.</p>
+              <p className="section-help">Use device GPS or tap anywhere on the map to pin the shop and auto-detect address.</p>
 
-              <div className="field-grid">
-                <div className="field-group">
-                  <label htmlFor="regLat">Latitude</label>
-                  <input
-                    id="regLat"
-                    className="field"
-                    readOnly
-                    value={formData.latitude}
-                  />
-                </div>
-                <div className="field-group">
-                  <label htmlFor="regLon">Longitude</label>
-                  <input
-                    id="regLon"
-                    className="field"
-                    readOnly
-                    value={formData.longitude}
-                  />
+              <div className="coords-row-wrap">
+                <div className="coords-field-row" data-testid="lat-lon-row">
+                  <div className="field-group">
+                    <label htmlFor="regLat">Latitude</label>
+                    <input
+                      id="regLat"
+                      name="latitude"
+                      type="text"
+                      inputMode="decimal"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      className="field coord-input"
+                      value={formData.latitude}
+                      onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label htmlFor="regLon">Longitude</label>
+                    <input
+                      id="regLon"
+                      name="longitude"
+                      type="text"
+                      inputMode="decimal"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      className="field coord-input"
+                      value={formData.longitude}
+                      onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
+                    />
+                  </div>
                 </div>
               </div>
 
               {/* Interactive Map Box */}
               <div
                 onClick={handleMapCanvasClick}
+                data-testid="registration-map-box"
                 title="Tap map to set pin and auto-fill address"
                 className="w-full h-[220px] rounded-lg mt-3 bg-[#e8e4d8] relative overflow-hidden border border-[#edf1f2] cursor-crosshair shadow-inner"
               >
@@ -890,34 +1041,77 @@ export default function CustomersScreen({
                     (parseFloat(formData.longitude) || 77.0082) - 0.005
                   }%2C${(parseFloat(formData.latitude) || 10.6583) - 0.005}%2C${
                     (parseFloat(formData.longitude) || 77.0082) + 0.005
-                  }%2C${(parseFloat(formData.latitude) || 10.6583) + 0.005}&layer=mapnik`}
+                  }%2C${(parseFloat(formData.latitude) || 10.6583) + 0.005}&layer=mapnik&marker=${
+                    parseFloat(formData.latitude) || 10.6583
+                  }%2C${parseFloat(formData.longitude) || 77.0082}`}
                   className="w-full h-full pointer-events-none border-0"
                 />
 
                 {/* GPS Locate Button */}
                 <button
                   type="button"
+                  id="gpsDetectMapBtn"
+                  data-testid="gps-detect-btn"
+                  disabled={locating}
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleMapLocateClick();
+                    handleUseCurrentLocation();
                   }}
                   title="Locate with device GPS"
-                  className="absolute top-2 right-2 px-2.5 py-1.5 bg-white/95 hover:bg-white text-xs font-bold text-slate-700 rounded shadow-md z-20 flex items-center gap-1 border border-black/10"
+                  className="gps-detect-map-btn"
                 >
-                  ⌖ GPS Detect
+                  <span aria-hidden="true">{locating ? '⏳' : '⌖'}</span>
+                  <span>{locating ? 'Locating…' : 'GPS Detect'}</span>
                 </button>
 
                 {/* Center Red Pin */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full pointer-events-none z-10 flex flex-col items-center">
-                  <span className="bg-white/90 text-[#17232c] text-[10px] font-bold px-1.5 py-0.5 rounded shadow mb-0.5">
-                    Shop Location
+                <div
+                  data-testid="shop-map-pin"
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full pointer-events-none z-10 flex flex-col items-center"
+                >
+                  <span className="bg-white/95 text-[#17232c] text-[10px] font-bold px-1.5 py-0.5 rounded shadow mb-0.5 whitespace-nowrap">
+                    Shop ({(parseFloat(formData.latitude) || 10.6583).toFixed(4)}, {(parseFloat(formData.longitude) || 77.0082).toFixed(4)})
                   </span>
                   <div className="w-4 h-4 rounded-full bg-red-600 border-2 border-white shadow-md"></div>
                 </div>
               </div>
 
-              <span className="text-[10px] text-slate-400 block mt-2 text-center">
-                Tap anywhere on map to reposition storefront coordinates
+              {locationFeedback && (
+                <div
+                  data-testid="map-location-status"
+                  role={locationFeedback.type === 'error' ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className={`location-status-banner is-${locationFeedback.type} mt-2.5`}
+                >
+                  <span className="location-status-icon" aria-hidden="true">
+                    {locationFeedback.type === 'error'
+                      ? '⚠️'
+                      : locationFeedback.type === 'warning'
+                        ? '⚡'
+                        : locationFeedback.type === 'success'
+                          ? '✓'
+                          : 'ℹ️'}
+                  </span>
+                  <div className="location-status-body">
+                    <span className="location-status-text">{locationFeedback.message}</span>
+                    {(locationFeedback.type === 'error' || locationFeedback.reason === 'low_accuracy') && (
+                      <div className="location-status-actions">
+                        <button
+                          type="button"
+                          className="location-retry-btn"
+                          disabled={locating}
+                          onClick={handleUseCurrentLocation}
+                        >
+                          ↻ Retry
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <span className="text-[11px] text-slate-500 block mt-2 text-center">
+                Tap anywhere on map to reposition storefront coordinates manually
               </span>
             </aside>
           </form>
