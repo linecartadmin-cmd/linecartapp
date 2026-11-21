@@ -6,6 +6,7 @@
   "scripts": {
     "build": "npm install --prefix server && npm install --include=dev --prefix client && npm run build --prefix client",
     "start": "node server/index.js",
+    "test": "node tests/run-tests.mjs",
     "db:migrate": "node server/migrate.js",
     "db:backup": "node server/migrate.js --backup",
     "db:restore": "node server/migrate.js --restore",

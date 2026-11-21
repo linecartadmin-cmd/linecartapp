@@ -63,6 +63,22 @@ class DatabaseAdapter {
 
   async init() {
     const dbUrl = (process.env.DATABASE_URL || '').trim();
+
+    // Test safety guard: automated tests (node --test sets NODE_TEST_CONTEXT; the test runner sets
+    // LINECART_TEST_MODE) must only ever use a disposable local SQLite file, never a remote database.
+    const isTestContext = Boolean(process.env.NODE_TEST_CONTEXT) || process.env.LINECART_TEST_MODE === '1';
+    if (isTestContext) {
+      if (dbUrl) {
+        throw new Error(
+          '[DB FATAL] Refusing to run tests with DATABASE_URL set. Tests delete data and must only use a disposable local SQLite database (LOCAL_DB_PATH).'
+        );
+      }
+      if (!process.env.LOCAL_DB_PATH) {
+        throw new Error(
+          '[DB FATAL] Tests require LOCAL_DB_PATH pointing to a disposable database file. Run tests with `npm test`.'
+        );
+      }
+    }
     const isCloudOrStaging = (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
                              (process.env.APP_ENV || '').toLowerCase() === 'staging' ||
                              Boolean(process.env.RENDER);

@@ -20,6 +20,11 @@ const __dirname = path.dirname(__filename);
 
 // Environment Configuration Loader (.env reader without third-party deps)
 const loadEnvFile = () => {
+  // Under the test runner, never read developer .env files (they may contain real database credentials).
+  if (process.env.LINECART_TEST_MODE === '1') {
+    console.log('[Config] Test mode: skipping .env files');
+    return;
+  }
   const envCandidates = [
     path.join(__dirname, '../.env'),
     path.join(__dirname, '.env'),
