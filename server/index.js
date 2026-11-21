@@ -21,6 +21,8 @@ import {
   installProcessHandlers,
   logEvent
 } from './http-errors.js';
+import { registerVisitRoutes } from './visits.js';
+import { validateVisitSettingUpdates } from './geo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,12 +192,12 @@ const DEFAULT_ROLE_PERMISSIONS = {
     actions: ['view_all_reports', 'export_reports', 'export_png', 'manage_users', 'manage_roles', 'manage_assignments', 'manage_targets', 'manage_settings', 'create_order', 'view_orders', 'view_shops', 'manage_items', 'manage_daily_prices', 'view_items']
   },
   'Sales Manager': {
-    pages: ['reports', 'orders', 'map', 'team', 'customers', 'items'],
-    actions: ['view_team_reports', 'export_reports', 'export_png', 'view_team_orders', 'view_cluster_shops', 'view_team', 'view_items', 'update_daily_prices']
+    pages: ['reports', 'orders', 'map', 'team', 'customers', 'items', 'field-visits'],
+    actions: ['view_team_reports', 'export_reports', 'export_png', 'view_team_orders', 'view_cluster_shops', 'view_team', 'view_items', 'update_daily_prices', 'view_team_visits', 'review_visits', 'manage_shop_locations']
   },
   'Field Sales Agent': {
-    pages: ['overview', 'orders', 'reports', 'customers', 'summary'],
-    actions: ['view_agent_reports', 'create_order', 'view_assigned_shops', 'add_customer', 'view_summary']
+    pages: ['overview', 'orders', 'reports', 'customers', 'summary', 'visits'],
+    actions: ['view_agent_reports', 'create_order', 'view_assigned_shops', 'add_customer', 'view_summary', 'record_visits']
   },
   'Delivery Agent': {
     pages: ['delivery'],
@@ -4099,6 +4101,10 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
 app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   await refreshStateFromDb();
   const prev = JSON.stringify(appSettings);
+  const visitSettingError = validateVisitSettingUpdates(req.body || {});
+  if (visitSettingError) {
+    return res.status(400).json({ status: 400, message: visitSettingError });
+  }
   const updatedSettings = { ...appSettings, ...(req.body || {}) };
 
   await db.query(
@@ -6273,6 +6279,22 @@ app.get('/api/manager/shops', async (req, res) => {
       unmappedCount
     }
   });
+});
+
+// GPS-verified shop visits and shop coordinate management (Migration 007)
+registerVisitRoutes(app, {
+  db,
+  getCaller,
+  refreshStateFromDb,
+  getShops: () => shops,
+  getUsers: () => salesPersons,
+  getAppSettings: () => appSettings,
+  getAssignedAgentIds,
+  checkActionPermission,
+  addAuditLog,
+  getIstDateString,
+  addDaysToDateStr,
+  logEvent
 });
 
 // SPA fallback for non-API routes

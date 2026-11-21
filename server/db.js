@@ -22,8 +22,44 @@ export const ALLOCATION_LOCKS = Object.freeze({
   users: 4,
   items: 5,
   sales_targets: 6,
-  login_attempts: 7
+  login_attempts: 7,
+  shop_visits: 8,
+  shop_location: 9
 });
+
+/**
+ * Migration 007 data step (runs once, recorded as '007_shop_visits_permissions'):
+ * add the new Visits pages/actions to the stored role permissions of existing databases.
+ * Only appends missing entries; never removes or changes anything else.
+ */
+const VISIT_PERMISSION_ADDITIONS = {
+  'Field Sales Agent': { pages: ['visits'], actions: ['record_visits'] },
+  'Sales Manager': { pages: ['field-visits'], actions: ['view_team_visits', 'review_visits', 'manage_shop_locations'] }
+};
+
+async function applyVisitPermissionsOnce() {
+  const marker = '007_shop_visits_permissions';
+  const done = await db.query('SELECT version FROM schema_migrations WHERE version = $1', [marker]);
+  if (done.rowCount > 0) return;
+  await db.withTransaction(async (tx) => {
+    for (const [role, add] of Object.entries(VISIT_PERMISSION_ADDITIONS)) {
+      const r = await tx.query('SELECT pages_json, actions_json FROM role_permissions WHERE role = $1', [role]);
+      if (r.rowCount === 0) continue;
+      let pages = [];
+      let actions = [];
+      try { pages = JSON.parse(r.rows[0].pages_json || '[]'); } catch {}
+      try { actions = JSON.parse(r.rows[0].actions_json || '[]'); } catch {}
+      const newPages = [...pages, ...add.pages.filter((p) => !pages.includes(p))];
+      const newActions = [...actions, ...add.actions.filter((a) => !actions.includes(a))];
+      await tx.query(
+        'UPDATE role_permissions SET pages_json = $1, actions_json = $2, updated_at = $3 WHERE role = $4',
+        [JSON.stringify(newPages), JSON.stringify(newActions), new Date().toISOString(), role]
+      );
+    }
+    await tx.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)', [marker, new Date().toISOString()]);
+  });
+  console.log('[DB Migration] Applied 007 role permission additions (visits pages)');
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -606,6 +642,17 @@ export async function runMigrationsAndSeed({
     }
   }
 
+  // Migration 007: GPS-verified shop visits + shop coordinate history (additive tables only)
+  const mig7File = path.join(__dirname, 'migrations', '007_shop_visits.sql');
+  if (fs.existsSync(mig7File)) {
+    await db.execRaw(fs.readFileSync(mig7File, 'utf8'));
+    const mig7Check = await db.query('SELECT version FROM schema_migrations WHERE version = $1', ['007_shop_visits']);
+    if (mig7Check.rowCount === 0) {
+      await db.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)', ['007_shop_visits', new Date().toISOString()]);
+      console.log('[DB Migration] Applied 007_shop_visits.sql');
+    }
+  }
+
   // Safely backfill expected_delivery_date = order_date + 1 day ONLY where missing, never overwriting explicit dates or status
   try {
     const missingExpRes = await db.query(
@@ -1021,6 +1068,9 @@ export async function runMigrationsAndSeed({
       }
     }
   });
+
+  // Migration 007 data step: new Visits pages for existing role permission rows (runs once)
+  await applyVisitPermissionsOnce();
 
   // Also check any accounts already in DB that have phone_valid = 0
   const dbInvalidRes = await db.query(
