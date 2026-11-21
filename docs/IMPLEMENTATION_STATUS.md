@@ -13,8 +13,8 @@ Last updated: 21 Nov 2026. Baseline: commit `380a99c`.
 | PR-3 | Online-only order creation; offline order queue removed | Done (browser-tested) | `48e2520` |
 | PR-5 | Admin setup requires SETUP_TOKEN in production; never overwrites accounts | Done | `51514ba` |
 | PR-6 | Stored XSS on map screens | Done (browser-tested) | `de0a6f2` |
-| PR-7 | Browser and device storage safety, logout cleanup | Next | |
-| PR-8 | Backup and restore fidelity | Pending (test-runner part done) | |
+| PR-7 | Visit photos out of order lists; guarded device cache; sign-out clears device data | Done (browser-tested) | `029e3f7` |
+| PR-8 | Complete read-only backups; validated atomic restores | Done | `b436ccb` |
 | PR-9 | Node and Render compatibility | Blocked: Render Node version unknown | |
 | 5 | Functional fixes (delivery, payments, scope, passwords, lockout, demo data, permissions, validation, health, maintenance, logging) | Pending | |
 | 6 | UI and connectivity pass | Pending | |
@@ -27,7 +27,9 @@ Last updated: 21 Nov 2026. Baseline: commit `380a99c`.
 - **Two orders with the same total are no longer merged** when each has its own idempotency key. The 5-second double-tap guard still applies to keyless clients.
 - **Admin setup in production** needs `SETUP_TOKEN` sent as `Authorization: Setup <token>`.
 - **New optional server settings:** `SETUP_TOKEN`, `MIN_ORDER_CLIENT_LEVEL` (set to `2` after the new APK is rolled out).
-- **New endpoint:** `GET /api/ping` (no auth, no database).
+- **New endpoints:** `GET /api/ping` (no auth, no database); `GET /api/orders/:id/visit-photo` (order lists no longer carry photos, only `hasVisitPhoto`).
+- **Sign-out** removes that user's biometric credential, saved account entry and cached data from the device (unsent delivery/price updates are kept, with a warning).
+- **Backups** (`npm run db:backup`) are now complete and read-only; old backup files restore only with `--accept-lossy`. Make a fresh backup with the new format.
 
 ## Test results
 
@@ -35,6 +37,7 @@ Last updated: 21 Nov 2026. Baseline: commit `380a99c`.
 |---|---|---|
 | 21 Nov 2026 | `380a99c` unmodified, clean DB | 87 of 95 passed. All 8 failures were missing fixture data from a private `data.js`. |
 | 21 Nov 2026 | `de0a6f2` | 14 of 14 suites passed (all existing tests plus 8 new suites) |
+| 21 Nov 2026 | `b436ccb` | 16 of 16 suites passed |
 
 What the tests cover:
 - **Automated:** `npm test` (embedded SQLite).
@@ -52,6 +55,8 @@ What the tests cover:
 - **PostgreSQL verification:** the advisory-lock path (PR-2) runs only on Postgres. A local disposable PostgreSQL install is needed to run the suite against it.
 
 ## Known issues found during work
+- `server/migrate.js` (default command, no flags) seeds an outdated copy of the role permissions on an empty database; the server's own defaults differ. Low impact (insert-only), fix planned in step 5.
+- Pushing to `main` auto-deploys `linecart-staging.onrender.com`.
 - Staging stores shop photos on local disk (`storage.provider: local-disk`), so photos are lost on redeploy. Configure Supabase Storage.
 - Staging `/health` publicly returns user, shop and order counts (fix planned in step 5).
 - The current APK has no CAMERA permission, so visit-photo capture (`getUserMedia`) can fail (fix planned in step 7).
