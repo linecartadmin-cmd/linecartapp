@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 
 /**
@@ -199,6 +199,104 @@ export async function fetchCurrentDeviceLocation() {
       ok: false,
       ...classifyLocationError(err, isNative)
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fresh location for shop-visit verification
+// ---------------------------------------------------------------------------
+
+// Native Android plugin bundled in the app (MainActivity registers it). Returns a brand-new fix and
+// whether Android marks it as coming from a mock-location provider. Missing in older builds and on web.
+const LocationIntegrity = registerPlugin('LocationIntegrity');
+
+const VISIT_LOCATION_MESSAGES = {
+  permission_denied: {
+    native: 'Location permission is off for LineCart. Allow it in Android Settings → Apps → LineCart Wholesale → Permissions → Location, then try again.',
+    web: 'Location permission is blocked for this site. Allow location in your browser settings, then try again.'
+  },
+  services_disabled: 'Your phone\'s Location (GPS) is turned off. Turn it on in Quick Settings, then try again.',
+  timeout: 'Could not get a GPS fix in time. Step outside or near a window and try again.',
+  unavailable: 'Your location is unavailable right now. Check that GPS is on and try again.',
+  insecure: 'Location needs a secure (HTTPS) connection. Open LineCart over HTTPS and try again.'
+};
+
+/**
+ * Get a FRESH device location for visit verification. Never returns a cached position.
+ * Resolves to { ok: true, latitude, longitude, accuracy, fixTimestamp, mockLocation, platform }
+ * or { ok: false, reason, message }.
+ */
+export async function getFreshVisitLocation({ timeoutMs = 20000 } = {}) {
+  const isNative =
+    typeof window !== 'undefined' &&
+    typeof Capacitor?.isNativePlatform === 'function' &&
+    Capacitor.isNativePlatform();
+  const platform = isNative ? Capacitor.getPlatform?.() || 'android' : 'web';
+  const fail = (reason) => ({
+    ok: false,
+    reason,
+    message:
+      reason === 'permission_denied'
+        ? VISIT_LOCATION_MESSAGES.permission_denied[isNative ? 'native' : 'web']
+        : VISIT_LOCATION_MESSAGES[reason] || VISIT_LOCATION_MESSAGES.unavailable
+  });
+
+  try {
+    if (isNative) {
+      let perms = await Geolocation.checkPermissions();
+      if (perms?.location !== 'granted') {
+        perms = await Geolocation.requestPermissions({ permissions: ['location'] });
+      }
+      // Visit verification needs precise location; approximate (coarse) location is not enough
+      if (perms?.location !== 'granted') return fail('permission_denied');
+
+      // 1. Preferred: bundled native plugin (fresh fix + mock-location flag)
+      try {
+        const r = await LocationIntegrity.getFreshLocation({ timeoutMs });
+        if (Number.isFinite(Number(r?.latitude)) && Number.isFinite(Number(r?.longitude))) {
+          return {
+            ok: true,
+            latitude: Number(r.latitude),
+            longitude: Number(r.longitude),
+            accuracy: Number(r.accuracy),
+            fixTimestamp: Number(r.time) || Date.now(),
+            mockLocation: r.isMock === true ? 'yes' : r.isMock === false ? 'no' : 'unknown',
+            platform
+          };
+        }
+      } catch (pluginErr) {
+        const msg = String(pluginErr?.message || pluginErr || '');
+        if (/disabled|turned off|provider/i.test(msg)) return fail('services_disabled');
+        if (/timeout|timed out/i.test(msg)) return fail('timeout');
+        // Plugin not present in this build: fall back to Capacitor Geolocation below
+      }
+
+      // 2. Fallback: Capacitor Geolocation, fresh high-accuracy fix only (maximumAge 0, no coarse retry)
+      const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 });
+      return {
+        ok: true,
+        latitude: Number(pos.coords.latitude),
+        longitude: Number(pos.coords.longitude),
+        accuracy: Number(pos.coords.accuracy),
+        fixTimestamp: Number(pos.timestamp) || Date.now(),
+        mockLocation: 'unknown',
+        platform
+      };
+    }
+
+    if (typeof window !== 'undefined' && window.isSecureContext === false) return fail('insecure');
+    const pos = await getWebPosition({ enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 });
+    return {
+      ok: true,
+      latitude: Number(pos.coords.latitude),
+      longitude: Number(pos.coords.longitude),
+      accuracy: Number(pos.coords.accuracy),
+      fixTimestamp: Number(pos.timestamp) || Date.now(),
+      mockLocation: 'unknown',
+      platform
+    };
+  } catch (err) {
+    return fail(classifyLocationError(err, isNative).reason);
   }
 }
 

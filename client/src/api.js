@@ -802,6 +802,94 @@ export const api = {
     return res.json();
   },
 
+  // 17b. GPS-verified shop visits (online only)
+  async getVisitShops(filter = 'all') {
+    const res = await fetch(`${BASE_URL}/api/visits/my-shops?filter=${encodeURIComponent(filter)}`, {
+      headers: { ...getAuthHeaders() }
+    });
+    return res.json();
+  },
+
+  // Resolves with the server answer (2xx/4xx). Throws `uncertain` when the outcome is unknown so the
+  // caller can resend with the SAME idempotency key (the server returns the recorded visit, never a duplicate).
+  async verifyVisit(payload, idempotencyKey, timeoutMs = 20000) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    let res;
+    try {
+      res = await fetch(`${BASE_URL}/api/visits/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': idempotencyKey, ...getAuthHeaders() },
+        body: JSON.stringify({ ...payload, idempotencyKey, clientTime: new Date().toISOString() }),
+        signal: ctrl?.signal
+      });
+    } catch (err) {
+      const e = new Error(err?.name === 'AbortError' ? 'The server did not answer in time.' : 'The connection was interrupted.');
+      e.uncertain = true;
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    let body = null;
+    try { body = await res.json(); } catch {}
+    if (!body || [502, 503, 504].includes(res.status)) {
+      const e = new Error(`The server is temporarily unavailable (HTTP ${res.status}).`);
+      e.uncertain = true;
+      throw e;
+    }
+    return body;
+  },
+
+  async getVisits(params = {}) {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') q.set(k, v); });
+    const res = await fetch(`${BASE_URL}/api/visits?${q.toString()}`, { headers: { ...getAuthHeaders() } });
+    return res.json();
+  },
+
+  async getVisitSummary(date) {
+    const q = date ? `?date=${encodeURIComponent(date)}` : '';
+    const res = await fetch(`${BASE_URL}/api/visits/summary${q}`, { headers: { ...getAuthHeaders() } });
+    return res.json();
+  },
+
+  async reviewVisit(visitId, decision, comment = '') {
+    const res = await fetch(`${BASE_URL}/api/visits/${encodeURIComponent(visitId)}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ decision, comment })
+    });
+    return res.json();
+  },
+
+  async getVisitSettings() {
+    const res = await fetch(`${BASE_URL}/api/visits/settings`, { headers: { ...getAuthHeaders() } });
+    return res.json();
+  },
+
+  async getShopLocations(filter = 'missing') {
+    const res = await fetch(`${BASE_URL}/api/visits/shop-locations?filter=${encodeURIComponent(filter)}`, {
+      headers: { ...getAuthHeaders() }
+    });
+    return res.json();
+  },
+
+  async updateShopLocation(shopId, { latitude, longitude, reason, source = 'manual' }) {
+    const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/location`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ latitude, longitude, reason, source })
+    });
+    return res.json();
+  },
+
+  async getShopLocationHistory(shopId) {
+    const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/location-history`, {
+      headers: { ...getAuthHeaders() }
+    });
+    return res.json();
+  },
+
   // 18. Customer Price Requests APIs
   async getPriceRequests(status = null, userId = null) {
     try {

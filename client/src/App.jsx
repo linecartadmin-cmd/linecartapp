@@ -28,6 +28,8 @@ const SummaryReportScreen = lazy(() => import('./components/SummaryReportScreen'
 const ManagerReportsScreen = lazy(() => import('./components/ManagerReportsScreen'));
 const ManagerOrdersScreen = lazy(() => import('./components/ManagerOrdersScreen'));
 const ShopMapScreen = lazy(() => import('./components/ShopMapScreen'));
+const VisitsScreen = lazy(() => import('./components/VisitsScreen'));
+const FieldVisitsScreen = lazy(() => import('./components/FieldVisitsScreen'));
 const TeamAssignmentsScreen = lazy(() => import('./components/TeamAssignmentsScreen'));
 const AdminDashboardScreen = lazy(() => import('./components/AdminDashboardScreen'));
 const AdminUsersScreen = lazy(() => import('./components/AdminUsersScreen'));
@@ -158,18 +160,18 @@ export default function App() {
       if (r === 'admin') {
         const validAdmin = [
           'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
-          'admin-targets', 'orders', 'price-requests', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
+          'admin-targets', 'orders', 'price-requests', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items', 'field-visits'
         ];
         return validAdmin.includes(hash) ? hash : 'admin-dashboard';
       }
       if (r === 'sales manager') {
-        const validManager = ['reports', 'orders', 'price-requests', 'map', 'team', 'customers', 'items'];
+        const validManager = ['reports', 'orders', 'price-requests', 'map', 'team', 'customers', 'items', 'field-visits'];
         return validManager.includes(hash) ? hash : 'reports';
       }
       if (r === 'delivery agent') return 'delivery';
     } catch {}
     const valid = [
-      'overview', 'orders', 'price-requests', 'reports', 'customers', 'summary', 'map', 'team', 'delivery', 'items',
+      'overview', 'orders', 'price-requests', 'reports', 'customers', 'summary', 'map', 'team', 'delivery', 'items', 'visits', 'field-visits',
       'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
       'admin-targets', 'admin-orders', 'admin-reports', 'admin-audit', 'admin-settings'
     ];
@@ -211,10 +213,10 @@ export default function App() {
       const hash = window.location.hash.replace('#', '');
       const validAdminPages = [
         'admin-dashboard', 'admin-users', 'admin-roles', 'admin-assignments',
-        'admin-targets', 'orders', 'price-requests', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items'
+        'admin-targets', 'orders', 'price-requests', 'reports', 'map', 'admin-audit', 'admin-settings', 'customers', 'delivery', 'items', 'field-visits'
       ];
-      const validManagerPages = ['reports', 'orders', 'price-requests', 'map', 'team', 'customers', 'items'];
-      const validAgentPages = ['overview', 'orders', 'reports', 'customers', 'summary'];
+      const validManagerPages = ['reports', 'orders', 'price-requests', 'map', 'team', 'customers', 'items', 'field-visits'];
+      const validAgentPages = ['overview', 'orders', 'reports', 'customers', 'summary', 'visits'];
       const validDeliveryPages = ['delivery'];
 
       const validList = isAdmin ? validAdminPages : isManager ? validManagerPages : isDelivery ? validDeliveryPages : validAgentPages;
@@ -642,6 +644,13 @@ export default function App() {
             </button>
 
             <button
+              className={`nav-item ${page === 'field-visits' ? 'active' : ''}`}
+              onClick={() => navigate('field-visits')}
+            >
+              <span className="nav-icon">📍</span>Field Visits
+            </button>
+
+            <button
               className={`nav-item ${page === 'delivery' ? 'active' : ''}`}
               onClick={() => navigate('delivery')}
             >
@@ -722,6 +731,15 @@ export default function App() {
               </button>
             )}
 
+            {isPageAllowed('field-visits') && (
+              <button
+                className={`nav-item ${page === 'field-visits' ? 'active' : ''}`}
+                onClick={() => navigate('field-visits')}
+              >
+                <span className="nav-icon">📍</span>Field Visits
+              </button>
+            )}
+
             {isPageAllowed('team') && (
               <button
                 className={`nav-item ${page === 'team' ? 'active' : ''}`}
@@ -769,6 +787,15 @@ export default function App() {
                 }}
               >
                 <span className="nav-icon">▤</span>Order entry
+              </button>
+            )}
+
+            {isPageAllowed('visits') && (
+              <button
+                className={`nav-item ${page === 'visits' ? 'active' : ''}`}
+                onClick={() => navigate('visits')}
+              >
+                <span className="nav-icon">📍</span>My Visits
               </button>
             )}
 
@@ -1078,6 +1105,14 @@ export default function App() {
             />
           )}
 
+          {page === 'visits' && !isAdmin && !isManager && !isDelivery && (
+            <VisitsScreen user={user} showToast={showToast} />
+          )}
+
+          {page === 'field-visits' && (isAdmin || isManager) && (
+            <FieldVisitsScreen user={user} showToast={showToast} />
+          )}
+
           {page === 'summary' && (
             <SummaryReportScreen
               user={user}
@@ -1131,6 +1166,12 @@ export default function App() {
               onClick={() => navigate('items')}
             >
               <span>🏷️</span>Items
+            </button>
+            <button
+              className={page === 'field-visits' ? 'active' : ''}
+              onClick={() => navigate('field-visits')}
+            >
+              <span>📍</span>Visits
             </button>
             <button
               className={page === 'admin-roles' ? 'active' : ''}
@@ -1187,6 +1228,14 @@ export default function App() {
                 <span>🗺</span>Map
               </button>
             )}
+            {isPageAllowed('field-visits') && (
+              <button
+                className={page === 'field-visits' ? 'active' : ''}
+                onClick={() => navigate('field-visits')}
+              >
+                <span>📍</span>Visits
+              </button>
+            )}
             {isPageAllowed('team') && (
               <button
                 className={page === 'team' ? 'active' : ''}
@@ -1231,6 +1280,14 @@ export default function App() {
                 }}
               >
                 <span>▤</span>Orders
+              </button>
+            )}
+            {isPageAllowed('visits') && (
+              <button
+                className={page === 'visits' ? 'active' : ''}
+                onClick={() => navigate('visits')}
+              >
+                <span>📍</span>Visits
               </button>
             )}
             {isPageAllowed('customers') && (
