@@ -1,4 +1,28 @@
 /**
+ * Escape a value for safe use inside HTML text or a double/single-quoted HTML attribute.
+ * Use for EVERY value interpolated into an HTML string (Leaflet popups, divIcon html, title attributes).
+ * React JSX already escapes; this is only needed where HTML is built as a string.
+ */
+export function escapeHtml(value) {
+  if (value === undefined || value === null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
+}
+
+/**
+ * Phone number for a tel: link: keeps only digits and a leading +. Returns '' if nothing usable remains.
+ */
+export function safeTel(value) {
+  const cleaned = String(value || '').replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+  return /\d{6,}/.test(cleaned) ? cleaned : '';
+}
+
+/**
  * Formats a shop ID into a stable, unique short ID with prefix 'S'
  * Matches the required format, e.g. shop ID 33 -> 'S033', shop ID 345 -> 'S345'
  */

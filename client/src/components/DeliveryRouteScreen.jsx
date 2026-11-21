@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../api';
 import { planRoadDeliveryRoute } from '../routing';
-import { getGoogleMapsUrl, getPaymentSummary } from '../utils';
+import { getGoogleMapsUrl, getPaymentSummary, escapeHtml, safeTel } from '../utils';
 import { createMapTileLayer, getMapTileConfig } from '../mapConfig';
 import { queueDeliveryStatusUpdate } from '../offline/syncEngine';
 import { updateLocalDeliveryOrderStatus, getDeliveryOrders, saveDeliveryOrders } from '../offline/offlineDb';
@@ -461,22 +461,22 @@ export default function DeliveryRouteScreen({
 
       const mapsUrl = getGoogleMapsUrl(stop);
       const openMapsBtn = mapsUrl
-        ? `<a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 5px 10px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px; margin-top: 6px;">🗺️ Open Maps</a>`
+        ? `<a href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 5px 10px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px; margin-top: 6px;">🗺️ Open Maps</a>`
         : '';
 
       marker.bindPopup(`
         <div style="font-family: inherit; font-size: 13px; min-width: 180px;">
           ${sharedNotice}
-          <div style="font-weight: 800; font-size: 14px; margin-bottom: 2px;">#${index + 1} ${stop.shopName}</div>
-          <div style="color: #64748b; font-size: 11px; margin-bottom: 6px;">${stop.address || ''}</div>
+          <div style="font-weight: 800; font-size: 14px; margin-bottom: 2px;">#${index + 1} ${escapeHtml(stop.shopName)}</div>
+          <div style="color: #64748b; font-size: 11px; margin-bottom: 6px;">${escapeHtml(stop.address)}</div>
           <div style="font-size: 11px; font-weight: 700; color: ${pinColor}; margin-bottom: 6px;">
-            ${pinIcon} ${stop.status}
+            ${pinIcon} ${escapeHtml(stop.status)}
           </div>
           <div style="font-size: 11px; color: #475569; margin-bottom: 6px;">
-            Order #${stop.id} • ₹${Number(stop.total || 0).toLocaleString()}
+            Order #${escapeHtml(stop.id)} • ₹${Number(stop.total || 0).toLocaleString()}
           </div>
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            ${stop.contactPhone ? `<a href="tel:${stop.contactPhone}" style="display: inline-block; padding: 5px 10px; background: #0284c7; color: white; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px;">📞 Call</a>` : ''}
+            ${stop.contactPhone ? `<a href="tel:${safeTel(stop.contactPhone)}" style="display: inline-block; padding: 5px 10px; background: #0284c7; color: white; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px;">📞 Call</a>` : ''}
             ${openMapsBtn}
           </div>
         </div>
@@ -516,12 +516,12 @@ export default function DeliveryRouteScreen({
         const hubPopupContent = `
           <div style="font-family: inherit; font-size: 13px; min-width: 220px;">
             <div style="font-weight: 800; font-size: 14px; margin-bottom: 4px; color: #0f172a;">🏢 Shared Address (${count} Deliveries)</div>
-            <div style="color: #64748b; font-size: 11px; margin-bottom: 8px;">${groupItems[0].stop.address || ''}</div>
+            <div style="color: #64748b; font-size: 11px; margin-bottom: 8px;">${escapeHtml(groupItems[0].stop.address)}</div>
             <div style="border-top: 1px solid #e2e8f0; padding-top: 6px; display: grid; gap: 6px;">
               ${groupItems.map(gi => `
                 <div style="display: flex; align-items: center; justify-content: space-between; font-size: 12px;">
-                  <b>#${gi.index + 1} ${gi.stop.shopName}</b>
-                  <span style="font-size: 11px; font-weight: 700; color: ${getStatusColor(gi.stop.status)};">${gi.stop.status}</span>
+                  <b>#${gi.index + 1} ${escapeHtml(gi.stop.shopName)}</b>
+                  <span style="font-size: 11px; font-weight: 700; color: ${getStatusColor(gi.stop.status)};">${escapeHtml(gi.stop.status)}</span>
                 </div>
               `).join('')}
             </div>

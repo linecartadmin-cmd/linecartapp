@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../api';
 import { createMapTileLayer } from '../mapConfig';
+import { escapeHtml, safeTel } from '../utils';
 
 export default function ShopMapScreen({ user, clusters, showToast }) {
   const [loading, setLoading] = useState(true);
@@ -271,7 +272,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
           const fannedIcon = L.divIcon({
             className: 'custom-map-pin',
             html: `
-              <div class="pin-marker ${isOrdered ? 'pin-ordered' : 'pin-idle'}" title="${shop.shopName}">
+              <div class="pin-marker ${isOrdered ? 'pin-ordered' : 'pin-idle'}" title="${escapeHtml(shop.shopName)}">
                 <div class="spiderfy-pin-bubble" style="background: ${markerColor}">
                   <span class="pin-symbol">${badgeIcon}</span>
                 </div>
@@ -287,13 +288,13 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
           const popupHtml = `
             <div class="map-popup-card">
               <div class="popup-header">
-                <span class="popup-title">${shop.shopName}</span>
-                <span class="popup-category">${shop.shopCategory || 'Retail'}</span>
+                <span class="popup-title">${escapeHtml(shop.shopName)}</span>
+                <span class="popup-category">${escapeHtml(shop.shopCategory || 'Retail')}</span>
               </div>
               <div class="popup-details">
-                ${shop.ownerName ? `<div class="popup-row">👤 <span>${shop.ownerName}</span></div>` : ''}
-                ${shop.contact1 ? `<div class="popup-row">📞 <a href="tel:${shop.contact1}" class="popup-tel">${shop.contact1}</a></div>` : ''}
-                ${shop.address ? `<div class="popup-row muted-row">📍 <span>${shop.address}</span></div>` : ''}
+                ${shop.ownerName ? `<div class="popup-row">👤 <span>${escapeHtml(shop.ownerName)}</span></div>` : ''}
+                ${shop.contact1 ? `<div class="popup-row">📞 <a href="tel:${safeTel(shop.contact1)}" class="popup-tel">${escapeHtml(shop.contact1)}</a></div>` : ''}
+                ${shop.address ? `<div class="popup-row muted-row">📍 <span>${escapeHtml(shop.address)}</span></div>` : ''}
               </div>
               <div class="popup-status-badge ${isOrdered ? 'status-ordered' : 'status-not-ordered'}">
                 ${isOrdered
@@ -301,7 +302,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
                   : '⚠️ No orders recorded in this period'}
               </div>
               <div class="popup-actions" style="display: flex; gap: 6px; margin-top: 8px;">
-                <button onclick="window.__linecartSelectShop(${shop.shopid})" style="flex: 1; padding: 4px 8px; font-size: 0.75rem; background: #0284c7; color: #fff; border: none; border-radius: 4px; cursor: pointer;">
+                <button onclick="window.__linecartSelectShop(${Number(shop.shopid) || 0})" style="flex: 1; padding: 4px 8px; font-size: 0.75rem; background: #0284c7; color: #fff; border: none; border-radius: 4px; cursor: pointer;">
                   Select Shop
                 </button>
                 <button onclick="window.__linecartCollapseSpiderfy()" style="padding: 4px 8px; font-size: 0.75rem; background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; border-radius: 4px; cursor: pointer;">
@@ -349,11 +350,11 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
             <div class="group-popup-header">
               <div>
                 <div class="group-popup-title">📍 ${count} Stores at this Location</div>
-                <div class="group-popup-subtitle">${group.orderedCount} Ordered · ${group.notOrderedCount} Idle</div>
+                <div class="group-popup-subtitle">${Number(group.orderedCount) || 0} Ordered · ${Number(group.notOrderedCount) || 0} Idle</div>
               </div>
             </div>
 
-            <button class="btn-spiderfy-action" onclick="window.__linecartSpiderfyGroup('${group.id}')">
+            <button class="btn-spiderfy-action" onclick="window.__linecartSpiderfyGroup('${String(group.id).replace(/[^A-Za-z0-9_.:-]/g, '')}')">
               🕸️ Fan Out ${count} Pins on Map
             </button>
 
@@ -361,16 +362,16 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
               ${group.shops.map((s) => `
                 <div class="group-shop-row-card">
                   <div class="group-shop-header-row">
-                    <span class="group-shop-name">${s.shopName}</span>
+                    <span class="group-shop-name">${escapeHtml(s.shopName)}</span>
                     <span class="group-shop-badge ${s.hasOrdered ? 'badge-ordered-chip' : 'badge-idle-chip'}">
                       ${s.hasOrdered ? `✓ ₹${(s.orderTotal || 0).toLocaleString('en-IN')}` : 'No orders'}
                     </span>
                   </div>
                   <div style="font-size: 0.72rem; color: #64748b;">
-                    ${s.ownerName ? `<span>👤 ${s.ownerName}</span> · ` : ''}
-                    ${s.contact1 ? `<a href="tel:${s.contact1}" style="color: #0284c7; text-decoration: none;">📞 ${s.contact1}</a>` : 'No phone'}
+                    ${s.ownerName ? `<span>👤 ${escapeHtml(s.ownerName)}</span> · ` : ''}
+                    ${s.contact1 ? `<a href="tel:${safeTel(s.contact1)}" style="color: #0284c7; text-decoration: none;">📞 ${escapeHtml(s.contact1)}</a>` : 'No phone'}
                   </div>
-                  <button onclick="window.__linecartSelectShop(${s.shopid})" style="margin-top: 4px; padding: 3px 6px; font-size: 0.7rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; cursor: pointer; align-self: flex-start;">
+                  <button onclick="window.__linecartSelectShop(${Number(s.shopid) || 0})" style="margin-top: 4px; padding: 3px 6px; font-size: 0.7rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; cursor: pointer; align-self: flex-start;">
                     Inspect Store Details ➔
                   </button>
                 </div>
@@ -398,7 +399,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
       const singleIcon = L.divIcon({
         className: 'custom-map-pin',
         html: `
-          <div class="pin-marker ${isOrdered ? 'pin-ordered' : 'pin-idle'}" title="${singleShop.shopName}">
+          <div class="pin-marker ${isOrdered ? 'pin-ordered' : 'pin-idle'}" title="${escapeHtml(singleShop.shopName)}">
             <div class="pin-bubble" style="background: ${markerColor}">
               <span class="pin-symbol">${badgeIcon}</span>
             </div>
@@ -414,13 +415,13 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
       const singlePopupHtml = `
         <div class="map-popup-card">
           <div class="popup-header">
-            <span class="popup-title">${singleShop.shopName}</span>
-            <span class="popup-category">${singleShop.shopCategory || 'Retail'}</span>
+            <span class="popup-title">${escapeHtml(singleShop.shopName)}</span>
+            <span class="popup-category">${escapeHtml(singleShop.shopCategory || 'Retail')}</span>
           </div>
           <div class="popup-details">
-            ${singleShop.ownerName ? `<div class="popup-row">👤 <span>${singleShop.ownerName}</span></div>` : ''}
-            ${singleShop.contact1 ? `<div class="popup-row">📞 <a href="tel:${singleShop.contact1}" class="popup-tel">${singleShop.contact1}</a></div>` : ''}
-            ${singleShop.address ? `<div class="popup-row muted-row">📍 <span>${singleShop.address}</span></div>` : ''}
+            ${singleShop.ownerName ? `<div class="popup-row">👤 <span>${escapeHtml(singleShop.ownerName)}</span></div>` : ''}
+            ${singleShop.contact1 ? `<div class="popup-row">📞 <a href="tel:${safeTel(singleShop.contact1)}" class="popup-tel">${escapeHtml(singleShop.contact1)}</a></div>` : ''}
+            ${singleShop.address ? `<div class="popup-row muted-row">📍 <span>${escapeHtml(singleShop.address)}</span></div>` : ''}
           </div>
           <div class="popup-status-badge ${isOrdered ? 'status-ordered' : 'status-not-ordered'}">
             ${isOrdered
@@ -428,7 +429,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
               : '⚠️ No orders recorded in this period'}
           </div>
           <div class="popup-actions">
-            <a href="https://www.google.com/maps?q=${singleShop.latitude},${singleShop.longitude}" target="_blank" rel="noopener noreferrer" class="popup-maps-link">
+            <a href="https://www.google.com/maps?q=${Number(singleShop.latitude)},${Number(singleShop.longitude)}" target="_blank" rel="noopener noreferrer" class="popup-maps-link">
               Open in Google Maps ↗
             </a>
           </div>
