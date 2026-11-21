@@ -4,6 +4,26 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
 import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+// Tracks whether the current async call chain is already inside an embedded-SQLite transaction
+const sqliteTxContext = new AsyncLocalStorage();
+
+/**
+ * Advisory lock ids used to serialise MAX()+1 identifier allocation in PostgreSQL.
+ * pg_advisory_xact_lock(LOCK_NAMESPACE, id) is held until the transaction commits or rolls back.
+ * Always take them in this order when a transaction needs more than one (orders before order_items).
+ */
+const LOCK_NAMESPACE = 0x4c43; // "LC"
+export const ALLOCATION_LOCKS = Object.freeze({
+  orders: 1,
+  order_items: 2,
+  shops: 3,
+  users: 4,
+  items: 5,
+  sales_targets: 6,
+  login_attempts: 7
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,6 +79,7 @@ class DatabaseAdapter {
     this.sqlite = null;
     this.dbPath = null;
     this.inTx = false;
+    this.sqliteTxQueue = Promise.resolve();
   }
 
   async init() {
@@ -251,27 +272,44 @@ class DatabaseAdapter {
         client.release();
       }
     } else {
-      const isOuter = !this.inTx;
-      if (isOuter) {
+      const txRunner = { query: (sql, params) => this.query(sql, params) };
+      // Nested call from inside a running transaction: join it
+      if (sqliteTxContext.getStore()) {
+        return await fn(txRunner);
+      }
+      // The embedded engine has one connection, so transactions from concurrent requests must run
+      // one after another; otherwise their statements interleave inside a single BEGIN/COMMIT.
+      const run = async () => {
         this.sqlite.exec('BEGIN IMMEDIATE');
         this.inTx = true;
-      }
-      try {
-        const result = await fn({ query: (sql, params) => this.query(sql, params) });
-        if (isOuter) {
+        try {
+          const result = await sqliteTxContext.run({ inTx: true }, () => fn(txRunner));
           this.sqlite.exec('COMMIT');
-          this.inTx = false;
-        }
-        return result;
-      } catch (err) {
-        if (isOuter && this.inTx) {
+          return result;
+        } catch (err) {
           try {
             this.sqlite.exec('ROLLBACK');
           } catch {}
+          throw err;
+        } finally {
           this.inTx = false;
         }
-        throw err;
-      }
+      };
+      const pending = this.sqliteTxQueue.then(run, run);
+      this.sqliteTxQueue = pending.catch(() => {});
+      return await pending;
+    }
+  }
+
+  /**
+   * Serialise identifier allocation (SELECT MAX()+1 ... INSERT) inside a transaction.
+   * PostgreSQL: transaction-scoped advisory lock. Embedded SQLite: transactions already run one at a time.
+   */
+  async lockAllocation(tx, name) {
+    const lockId = ALLOCATION_LOCKS[name];
+    if (!lockId) throw new Error(`Unknown allocation lock '${name}'`);
+    if (this.mode === 'postgres') {
+      await tx.query('SELECT pg_advisory_xact_lock($1, $2)', [LOCK_NAMESPACE, lockId]);
     }
   }
 

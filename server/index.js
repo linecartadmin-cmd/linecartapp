@@ -394,11 +394,15 @@ async function isLoginRateLimited(ipAddress, phoneKey) {
 async function recordFailedLoginAttempt(ipAddress, phoneKey) {
   try {
     if (db.mode === 'postgres') {
-      await db.query(
-        `INSERT INTO login_attempts (id, identifier, ip_address, attempted_at, success)
-         VALUES (COALESCE((SELECT MAX(id) FROM login_attempts), 0) + 1, $1, $2, $3, 0)`,
-        [String(phoneKey || 'unknown').slice(0, 32), String(ipAddress || 'unknown'), Date.now()]
-      );
+      // Serialised so concurrent failed logins cannot collide on the same id and go uncounted
+      await db.withTransaction(async (tx) => {
+        await db.lockAllocation(tx, 'login_attempts');
+        await tx.query(
+          `INSERT INTO login_attempts (id, identifier, ip_address, attempted_at, success)
+           VALUES (COALESCE((SELECT MAX(id) FROM login_attempts), 0) + 1, $1, $2, $3, 0)`,
+          [String(phoneKey || 'unknown').slice(0, 32), String(ipAddress || 'unknown'), Date.now()]
+        );
+      });
     } else {
       await db.query(
         'INSERT INTO login_attempts (identifier, ip_address, attempted_at, success) VALUES ($1, $2, $3, 0)',
@@ -2211,6 +2215,7 @@ const handleAddCustomer = async (req, res) => {
     let savedPhotoName = 'no_image.jpg';
 
     await db.withTransaction(async (tx) => {
+      await db.lockAllocation(tx, 'shops');
       const maxRes = await tx.query('SELECT COALESCE(MAX(shop_id), 400) + 1 AS next_id FROM shops');
       savedShopId = Number(maxRes.rows[0]?.next_id || 401);
 
@@ -2603,6 +2608,11 @@ const handleCreateOrder = async (req, res) => {
     let resultPayload = null;
 
     await db.withTransaction(async (tx) => {
+      // 0. Serialise order creation: makes the idempotency/duplicate checks and the
+      //    MAX()+1 serial and line-id allocation safe under concurrent requests (PostgreSQL).
+      await db.lockAllocation(tx, 'orders');
+      await db.lockAllocation(tx, 'order_items');
+
       // 1. Check explicit idempotency key
       if (idempotencyKey) {
         const existingIdemp = await tx.query(
@@ -3308,6 +3318,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   let nextId = 0;
 
   await db.withTransaction(async (tx) => {
+    await db.lockAllocation(tx, 'users');
     const idRes = await tx.query('SELECT COALESCE(MAX(id), 100) + 1 AS next_id FROM users');
     nextId = Math.max(Number(idRes.rows[0]?.next_id || 101), 101);
     await tx.query(
@@ -4110,6 +4121,7 @@ app.post('/api/admin/targets', requireAdmin, async (req, res) => {
   let isUpdate = false;
 
   await db.withTransaction(async (tx) => {
+    await db.lockAllocation(tx, 'sales_targets');
     const existingRes = id
       ? await tx.query('SELECT id FROM sales_targets WHERE id = $1', [Number(id)])
       : await tx.query('SELECT id FROM sales_targets WHERE agent_id = $1 AND period = $2', [Number(agentId), targetPeriod]);
@@ -4307,6 +4319,7 @@ app.post('/api/items', requireAdmin, async (req, res) => {
 
     let createdItem = null;
     await db.withTransaction(async (tx) => {
+      await db.lockAllocation(tx, 'items');
       const maxRes = await tx.query('SELECT COALESCE(MAX(item_id), 0) + 1 AS next_id FROM items');
       const nextItemId = Number(maxRes.rows[0]?.next_id || 1);
 
@@ -5238,6 +5251,8 @@ app.post('/api/admin/orders', requireAdmin, async (req, res) => {
     let orderTotal = 0;
 
     await db.withTransaction(async (tx) => {
+      await db.lockAllocation(tx, 'orders');
+      await db.lockAllocation(tx, 'order_items');
       const serialRes = await tx.query('SELECT COALESCE(MAX(serial_no), 24000) + 1 AS next_serial FROM orders');
       newSerial = Number(serialRes.rows[0].next_serial);
       newOrderId = `S${String(shop.shopid).padStart(3, '0')}-${newSerial}`;
@@ -5354,6 +5369,7 @@ app.put('/api/admin/orders/:id', requireAdmin, async (req, res) => {
 
     await db.withTransaction(async (tx) => {
       if (hasNewLines) {
+        await db.lockAllocation(tx, 'order_items');
         // Delete old line items
         await tx.query('DELETE FROM order_items WHERE order_id = $1', [order.orderId]);
 
@@ -5988,6 +6004,7 @@ app.post('/api/manager/targets', async (req, res) => {
 
   let savedTargetId = 0;
   await db.withTransaction(async (tx) => {
+    await db.lockAllocation(tx, 'sales_targets');
     const existing = await tx.query(
       'SELECT id FROM sales_targets WHERE agent_id = $1 AND period = $2',
       [agentId, targetPeriod]
