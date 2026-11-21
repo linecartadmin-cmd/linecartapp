@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { subscribeSyncState, triggerSync, getNetworkState } from '../offline/syncEngine';
+import { subscribeSyncState, triggerSync, getNetworkState, discardQueueEntry } from '../offline/syncEngine';
 import { getSyncQueue } from '../offline/offlineDb';
 
 export default function SyncStatusBar({ userId, userName, showToast }) {
@@ -44,6 +44,12 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
     }
     if (showToast) showToast('Syncing pending changes with cloud...');
     await triggerSync(userId);
+    refreshQueue();
+  };
+
+  const handleDiscard = async (item) => {
+    await discardQueueEntry(item.mutationId, userId);
+    if (showToast) showToast('Entry removed from this device.');
     refreshQueue();
   };
 
@@ -176,7 +182,7 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
                   <div style={{ fontSize: '32px', marginBottom: '8px' }}>✅</div>
                   <p style={{ margin: 0, fontWeight: 600 }}>No changes waiting to sync.</p>
                   <p style={{ margin: '4px 0 0', fontSize: '12px' }}>
-                    All orders and delivery status updates have been safely received by the cloud server.
+                    All delivery and price updates have been received by the server. Orders are always sent directly and need an internet connection.
                   </p>
                 </div>
               ) : (
@@ -184,6 +190,7 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
                   {queueItems.map((item) => {
                     const isOrder = item.type === 'CREATE_ORDER';
                     const isDel = item.type === 'UPDATE_DELIVERY_STATUS';
+                    const isPrice = item.type === 'UPDATE_ITEM_PRICE';
                     const status = item.status;
 
                     let badgeColor = '#ed6c02';
@@ -201,7 +208,7 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
                     } else if (status === 'failed') {
                       badgeColor = '#d32f2f';
                       badgeBg = '#ffebee';
-                      badgeText = 'Needs attention';
+                      badgeText = isOrder ? 'Not sent' : 'Needs attention';
                     }
 
                     return (
@@ -219,7 +226,7 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ fontWeight: 700, fontSize: '13px', color: '#1e293b' }}>
-                            {isOrder ? `📦 New Order (${item.payload.tempRef})` : `🚚 Delivery Update`}
+                            {isOrder ? '📦 Order saved by an older app version' : isPrice ? '🏷️ Price Update' : '🚚 Delivery Update'}
                           </span>
                           <span style={{
                             fontSize: '11px',
@@ -238,7 +245,21 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
                         <div style={{ fontSize: '12px', color: '#475569' }}>
                           {isOrder && (
                             <div>
-                              <strong>{item.payload.shopName}</strong> • {item.payload.itemsCount} items • ₹{Number(item.payload.total).toLocaleString('en-IN')}
+                              <strong>{item.payload?.shopName}</strong> • {item.payload?.itemsCount} items
+                              {Array.isArray(item.payload?.orderList) && (
+                                <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
+                                  {item.payload.orderList
+                                    .filter((l) => Number(l.qty) > 0)
+                                    .map((l, i) => (
+                                      <li key={i}>{l.itemName || `Item ${l.itemid}`}: {l.qty} {l.unitType || ''}</li>
+                                    ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
+                          {isPrice && (
+                            <div>
+                              <strong>{item.payload?.itemName}</strong> ({item.payload?.clusterName}) ➔ ₹{item.payload?.newPrice}
                             </div>
                           )}
                           {isDel && (
@@ -263,6 +284,18 @@ export default function SyncStatusBar({ userId, userName, showToast }) {
                             marginTop: '4px'
                           }}>
                             <strong>Sync notice:</strong> {item.syncError}
+                          </div>
+                        )}
+                        {isOrder && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              style={{ padding: '4px 12px', fontSize: '12px' }}
+                              onClick={() => handleDiscard(item)}
+                            >
+                              I placed it again. Discard
+                            </button>
                           </div>
                         )}
                       </div>

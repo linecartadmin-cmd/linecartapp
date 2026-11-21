@@ -22,38 +22,8 @@ describe('Issue 1: Order Idempotency & Duplicate Elimination', () => {
     assert.strictEqual(filtered[0].id, 'S033-24019');
   });
 
-  test('handleOrderPlaced deduplicates temp order and real server order in-place', () => {
-    let orders = [
-      { id: 'TEMP-123456', orderId: 'TEMP-123456', clientMutationId: 'mut-abc', customer: 'Shop A', total: 1000, syncStatus: 'pending' }
-    ];
-
-    const handleOrderPlaced = (newOrder) => {
-      const existingIdx = orders.findIndex(
-        (o) => (newOrder.id && o.id === newOrder.id) ||
-               (newOrder.orderId && (o.orderId === newOrder.orderId || o.id === newOrder.orderId)) ||
-               (newOrder.clientMutationId && o.clientMutationId === newOrder.clientMutationId)
-      );
-      if (existingIdx >= 0) {
-        orders[existingIdx] = { ...orders[existingIdx], ...newOrder };
-      } else {
-        orders = [newOrder, ...orders];
-      }
-    };
-
-    // Simulate sync engine returning real orderId for TEMP-123456
-    handleOrderPlaced({
-      id: 'S033-24019',
-      orderId: 'S033-24019',
-      clientMutationId: 'mut-abc',
-      customer: 'Shop A',
-      total: 1000,
-      syncStatus: 'synced'
-    });
-
-    assert.strictEqual(orders.length, 1, 'Should NOT create a duplicate order when syncing');
-    assert.strictEqual(orders[0].id, 'S033-24019');
-    assert.strictEqual(orders[0].syncStatus, 'synced');
-  });
+  // The former 'TEMP- offline order replaced by synced order' case was removed with offline order
+  // creation (orders are online-only). See tests/online-only-orders.test.js.
 
   test('Server idempotency returns identical orderId without creating second record', () => {
     const ordersDb = new Map();

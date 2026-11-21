@@ -190,7 +190,10 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           const demoIds = new Set(['S101-24018', 'S103-24017', 'S039-24018', 'S042-24017', 'S043-24016', 'S046-24015', 'S047-24014', 'S048-24013', 'S049-24012']);
-          return parsed.filter((o) => !demoIds.has(o.id) && !demoIds.has(o.orderId));
+          // TEMP- entries were offline orders from older app versions; they are not real orders
+          return parsed.filter(
+            (o) => !demoIds.has(o.id) && !demoIds.has(o.orderId) && !String(o.id || o.orderId || '').startsWith('TEMP-')
+          );
         }
       }
       return [];
@@ -365,18 +368,15 @@ export default function App() {
     if (!user || isDelivery) return;
     api.getOrders().then((res) => {
       if (res && res.status === 200 && Array.isArray(res.orders)) {
-        setOrders((prev) => {
-          // Keep any local un-synced offline temporary orders at the top
-          const pendingLocal = prev.filter((o) => String(o.id || '').startsWith('TEMP-') || o.syncStatus === 'pending');
-          const merged = [...pendingLocal];
-          for (const srvOrder of res.orders) {
-            if (!merged.some((m) => m.id === srvOrder.id || (srvOrder.orderId && m.orderId === srvOrder.orderId))) {
-              merged.push(srvOrder);
-            }
+        // The server list is authoritative (orders are online-only; there are no local temporary orders)
+        const merged = [];
+        for (const srvOrder of res.orders) {
+          if (!merged.some((m) => m.id === srvOrder.id || (srvOrder.orderId && m.orderId === srvOrder.orderId))) {
+            merged.push(srvOrder);
           }
-          localStorage.setItem('linecart_orders', JSON.stringify(merged));
-          return merged;
-        });
+        }
+        localStorage.setItem('linecart_orders', JSON.stringify(merged));
+        setOrders(merged);
       }
     }).catch(() => {});
   }, [user?.id, isDelivery]);

@@ -915,7 +915,8 @@ app.use((req, res, next) => {
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-Token, X-Idempotency-Key');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-Token, X-Idempotency-Key, X-Device-Event-Time, X-LineCart-Client, X-Request-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id');
     if (req.method === 'OPTIONS') {
       return res.status(204).end();
     }
@@ -978,6 +979,12 @@ app.use(express.static(clientDist));
 // ============================================================================
 // PUBLIC SYSTEM & AUTHENTICATION ENDPOINTS
 // ============================================================================
+
+// Reachability probe used by the apps before submitting orders (no database work)
+app.get('/api/ping', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: 200, ok: true, time: new Date().toISOString() });
+});
 
 // Cloud & Service Health Check Endpoint (public, lightweight, verified against live database)
 app.get(['/health', '/api/health'], async (req, res) => {
@@ -2434,6 +2441,16 @@ const handleCreateOrder = async (req, res) => {
       return res.status(401).json({
         status: 401,
         message: 'Authentication required: valid Bearer session token must be provided.'
+      });
+    }
+
+    // Optional cut-off for app versions that could queue orders offline (switch on after the new APK is rolled out)
+    const minClientLevel = Number(process.env.MIN_ORDER_CLIENT_LEVEL || 0);
+    if (minClientLevel > 0 && Number(req.headers['x-linecart-client'] || 0) < minClientLevel) {
+      return res.status(426).json({
+        status: 426,
+        message: 'Please update the LineCart app to place orders. This version is no longer supported for ordering.',
+        id: '0'
       });
     }
 

@@ -16,6 +16,7 @@ import {
   getSyncQueue,
   getPendingMutations,
   updateMutation,
+  deleteMutation,
   getUnsyncedCount
 } from './offlineDb';
 
@@ -79,39 +80,22 @@ export function initSyncEngine(getUserId) {
   };
 }
 
+// Order creation is online-only. Orders are never queued on the device. Entries of type
+// CREATE_ORDER can only exist if an older app version saved them; they are never sent automatically.
+export const LEGACY_OFFLINE_ORDER_NOTICE =
+  'Not sent. An older version of the app saved this order offline. Orders now need an internet connection: ' +
+  'place it again from the Orders screen, then discard this entry.';
+
 /**
- * Enqueue an order creation mutation for local-first storage and eventual cloud sync
+ * Remove a queue entry (used to discard legacy offline orders after the agent has re-entered them).
  */
-export async function queueOrderCreation(userId, orderList, currentShop, activeItems, extraMeta = {}) {
-  const deviceEventTime = new Date().toISOString();
-  const idempotencyKey = `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const tempRef = `TEMP-${Date.now().toString().slice(-6)}`;
-
-  const mutation = await enqueueMutation({
-    userId,
-    type: 'CREATE_ORDER',
-    idempotencyKey,
-    deviceEventTime,
-    payload: {
-      orderList,
-      tempRef,
-      shopName: currentShop?.shopName || 'Customer Store',
-      shopId: currentShop?.shopid,
-      total: activeItems.reduce(
-        (sum, item) => sum + (Number(item.qty) || 0) * (Number(item.price || item.catalogPrice || item.custprice) || 0),
-        0
-      ),
-      itemsCount: activeItems.length,
-      extraMeta: extraMeta || {}
-    }
-  });
-
-  // Attempt sync immediately if online
-  if (navigator.onLine) {
-    triggerSync(userId).catch(() => {});
+export async function discardQueueEntry(mutationId, userId) {
+  await deleteMutation(mutationId);
+  if (userId) {
+    const counts = await getUnsyncedCount(userId);
+    const queue = await getSyncQueue(userId);
+    notifyListeners({ isOnline, isSyncing, pendingCount: counts.waiting, failedCount: counts.failed, queue });
   }
-
-  return { mutation, tempRef, idempotencyKey };
 }
 
 /**
@@ -242,64 +226,13 @@ export async function triggerSync(userId) {
 
       try {
         if (item.type === 'CREATE_ORDER') {
-          const res = await api.createOrder(
-            item.payload.orderList,
-            item.idempotencyKey,
-            item.deviceEventTime,
-            item.payload.extraMeta || {}
-          );
-
-          if (res && (res.status === 200 || res.status === 1)) {
-            await updateMutation(item.mutationId, {
-              status: 'synced',
-              syncError: null,
-              syncedAt: new Date().toISOString(),
-              syncedResult: {
-                orderId: res.orderId,
-                serialNo: res.id,
-                expectedDeliveryDate: res.expectedDeliveryDate || null,
-                visitPhotoStatus: res.visitPhotoStatus || null,
-                idempotentReplay: Boolean(res.idempotentReplay)
-              }
-            });
-
-            // Update local orders list in-place so TEMP-XXXXXX becomes real orderId without duplicating
-            try {
-              const raw = localStorage.getItem('linecart_orders');
-              if (raw) {
-                const list = JSON.parse(raw);
-                if (Array.isArray(list)) {
-                  let changed = false;
-                  const updatedList = list.map((ord) => {
-                    if (ord.id === item.payload?.tempRef || ord.orderId === item.payload?.tempRef || ord.idempotencyKey === item.idempotencyKey) {
-                      changed = true;
-                      return {
-                        ...ord,
-                        id: res.orderId || ord.id,
-                        orderId: res.orderId || ord.orderId,
-                        expectedDeliveryDate: res.expectedDeliveryDate || ord.expectedDeliveryDate,
-                        visitPhotoStatus: ord.visitPhoto ? 'synced' : (res.visitPhotoStatus || ord.visitPhotoStatus),
-                        syncStatus: 'synced'
-                      };
-                    }
-                    return ord;
-                  });
-                  if (changed) {
-                    localStorage.setItem('linecart_orders', JSON.stringify(updatedList));
-                    window.dispatchEvent(new CustomEvent('linecart:orders_updated'));
-                  }
-                }
-              }
-            } catch {}
-          } else {
-            // Server returned business rejection (e.g. 400, 403, validation)
-            // Mark as 'failed' (Needs attention) and CONTINUE to next item
-            const errMsg = res?.message || 'Server rejected order creation.';
-            await updateMutation(item.mutationId, {
-              status: 'failed',
-              syncError: errMsg
-            });
-          }
+          // Legacy entry from an older app version: never sent automatically (orders are online-only).
+          await updateMutation(item.mutationId, {
+            status: 'failed',
+            legacyOfflineOrder: true,
+            syncError: LEGACY_OFFLINE_ORDER_NOTICE
+          });
+          continue;
         } else if (item.type === 'UPDATE_DELIVERY_STATUS') {
           const { orderId, status, reason, note, paymentAmountCollected, paymentNotes } = item.payload;
           const res = await api.updateDeliveryStatus(

@@ -790,11 +790,6 @@ export default function ReportsScreen({
                         >
                           <td data-label="Order ID">
                             <strong className="order-id-tag">{o.id}</strong>
-                            {(o.syncState === 'waiting' || (typeof o.id === 'string' && o.id.startsWith('TEMP-'))) && (
-                              <span style={{ display: 'block', fontSize: '11px', color: '#ed6c02', fontWeight: 600 }}>
-                                ⏳ Waiting to sync
-                              </span>
-                            )}
                           </td>
                           <td data-label="Customer">
                             <div className="customer-cell">

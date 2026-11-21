@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { formatShopId, getGoogleMapsUrl, getPaymentSummary } from '../utils';
-import { queueOrderCreation } from '../offline/syncEngine';
+import useServerReachability from '../hooks/useServerReachability';
 
 const REMARKS_OPTIONS = [
   'Not Connected',
@@ -124,10 +124,13 @@ export default function OrderEntryScreen({
 
   // In-App Camera / Visit Photo State
   const [visitPhoto, setVisitPhoto] = useState(null);
-  const [visitPhotoStatus, setVisitPhotoStatus] = useState(null); // 'ready' | 'waiting_offline' | 'synced'
+  const [visitPhotoStatus, setVisitPhotoStatus] = useState(null); // 'ready' | 'synced'
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
-  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+  // Orders can only be placed while the server is reachable
+  const { isConnected, recheck: recheckServer } = useServerReachability();
+  const isOffline = !isConnected;
+  const submitKeyRef = useRef(null); // { key, fingerprint } reused across retries of the same order
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -150,24 +153,6 @@ export default function OrderEntryScreen({
       .map((x) => x[0])
       .join('')
       .toUpperCase();
-
-  // Monitor online/offline status for photo sync indicator
-  useEffect(() => {
-    const onOnline = () => {
-      setIsOffline(false);
-      setVisitPhotoStatus((prev) => (prev === 'waiting_offline' ? 'ready' : prev));
-    };
-    const onOffline = () => {
-      setIsOffline(true);
-      setVisitPhotoStatus((prev) => (prev === 'ready' ? 'waiting_offline' : prev));
-    };
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
 
   // Automatically enforce single assigned cluster when agent has only one assigned cluster
   useEffect(() => {
@@ -336,7 +321,7 @@ export default function OrderEntryScreen({
     ctx.drawImage(video, 0, 0, w, h);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
     setVisitPhoto(dataUrl);
-    setVisitPhotoStatus(navigator.onLine ? 'ready' : 'waiting_offline');
+    setVisitPhotoStatus('ready');
     stopCameraStream();
     setCameraOpen(false);
     if (showToast) {
@@ -370,7 +355,7 @@ export default function OrderEntryScreen({
         ctx.drawImage(img, 0, 0, w, h);
         const compressed = canvas.toDataURL('image/jpeg', 0.78);
         setVisitPhoto(compressed);
-        setVisitPhotoStatus(navigator.onLine ? 'ready' : 'waiting_offline');
+        setVisitPhotoStatus('ready');
         if (showToast) {
           showToast(navigator.onLine ? 'Visit photo attached to order.' : 'Visit photo attached (waiting to sync offline).');
         }
@@ -606,76 +591,55 @@ export default function OrderEntryScreen({
       };
     });
 
-    // If offline, queue locally immediately without attempting remote fetch
+    // Orders are online-only: never queue or save an order on the device.
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      try {
-        const { tempRef, idempotencyKey } = await queueOrderCreation(
-          user?.id || spersonid,
-          orderList,
-          currentShop,
-          activeItems,
-          extraMeta
-        );
-        if (visitPhoto) setVisitPhotoStatus('waiting_offline');
-        showToast(
-          hasPriceReq
-            ? 'Order & price request saved locally (Offline). Waiting to sync.'
-            : 'Order saved locally (Offline). Waiting to sync.'
-        );
-        const placedObj = {
-          id: tempRef,
-          orderId: tempRef,
-          tempRef,
-          idempotencyKey,
-          customer: currentShop.shopName,
-          shopName: currentShop.shopName,
-          shopCategory: currentShop.shopCategory || 'Retail',
-          shopId: shortId,
-          shopid: currentShop.shopid,
-          clusterId: finalClusterId,
-          date: orderDate,
-          expectedDeliveryDate,
-          items: savedItemsSnapshot.length,
-          itemsCount: savedItemsSnapshot.length,
-          total: subtotal,
-          status: finalStatus,
-          priceApprovalPending: hasPriceReq,
-          locationLat: extraMeta.locationLat,
-          locationLng: extraMeta.locationLng,
-          locationAccuracy: extraMeta.locationAccuracy,
-          locationText: extraMeta.locationText,
-          visitPhoto: visitPhoto || null,
-          visitPhotoStatus: visitPhoto ? 'waiting_offline' : null,
-          syncState: 'waiting',
-          syncStatus: 'waiting',
-          orderList: savedItemsSnapshot,
-          itemsList: savedItemsSnapshot
-        };
-        setLastSavedOrder(placedObj);
-        if (onOrderPlaced) {
-          onOrderPlaced(placedObj);
-        }
-        onNavigate('reports');
-      } catch (err) {
-        showToast(`Failed to save offline order: ${err.message}`);
-      } finally {
-        setSubmitting(false);
-      }
+      showToast('No internet connection. The order was not placed. Connect to the internet and try again.');
+      setSubmitting(false);
+      return;
+    }
+    const reachable = await recheckServer();
+    if (!reachable) {
+      showToast('Cannot reach the LineCart server. The order was not placed. Check your connection and try again.');
+      setSubmitting(false);
       return;
     }
 
+    // One idempotency key per order: retries of the SAME order reuse it, so the server never creates a duplicate.
+    const fingerprint = JSON.stringify({ orderList, extraMeta: { ...extraMeta, visitPhoto: visitPhoto ? visitPhoto.length : 0 } });
+    if (!submitKeyRef.current || submitKeyRef.current.fingerprint !== fingerprint) {
+      submitKeyRef.current = {
+        key: `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        fingerprint
+      };
+    }
+    const idempotencyKey = submitKeyRef.current.key;
+
     try {
-      const res = await api.createOrder(orderList, null, null, extraMeta);
+      let res;
+      try {
+        res = await api.createOrder(orderList, idempotencyKey, null, extraMeta);
+      } catch (firstErr) {
+        if (!firstErr?.uncertain) throw firstErr;
+        // We cannot tell whether the server saved it. Ask again with the same key: an existing order is returned, never duplicated.
+        showToast('Connection interrupted. Confirming the order with the server...');
+        await new Promise((r) => setTimeout(r, 1500));
+        res = await api.createOrder(orderList, idempotencyKey, null, extraMeta);
+      }
+
       if (res && (res.status === 200 || res.status === 1)) {
+        submitKeyRef.current = null;
         if (visitPhoto) setVisitPhotoStatus('synced');
+        const serverTotal = Number.isFinite(Number(res.orderTotal)) ? Number(res.orderTotal) : subtotal;
+        const pending = res.priceApprovalPending ?? hasPriceReq;
         showToast(
-          hasPriceReq
-            ? 'Order placed at catalog price! Customer price request sent for approval.'
+          res.idempotentReplay
+            ? `Order ${res.orderId} was already placed. Showing the confirmed order.`
+            : pending
+            ? 'Order placed at catalog price. Customer price request sent for approval.'
             : `Order for ${currentShop.shopName} placed successfully!`
         );
         fetchOrderHistory(selectedShopId);
-        const serial = res.id || Math.floor(Math.random() * 90000 + 10000);
-        const orderId = res.orderId || `${shortId}-${serial}`;
+        const orderId = res.orderId;
         const placedObj = {
           id: orderId,
           orderId,
@@ -685,21 +649,21 @@ export default function OrderEntryScreen({
           shopId: shortId,
           shopid: currentShop.shopid,
           clusterId: finalClusterId,
-          date: orderDate,
+          date: res.orderDate || orderDate,
           expectedDeliveryDate: res.expectedDeliveryDate || expectedDeliveryDate,
           items: savedItemsSnapshot.length,
           itemsCount: savedItemsSnapshot.length,
-          total: subtotal,
+          total: serverTotal,
           status: res.statusName || finalStatus,
-          priceApprovalPending: res.priceApprovalPending ?? hasPriceReq,
+          priceApprovalPending: pending,
           locationLat: extraMeta.locationLat,
           locationLng: extraMeta.locationLng,
           locationAccuracy: extraMeta.locationAccuracy,
           locationText: extraMeta.locationText,
-          visitPhoto: visitPhoto || null,
+          // The photo stays on the server; never keep the image itself in the device order list
+          visitPhoto: null,
+          hasVisitPhoto: Boolean(visitPhoto),
           visitPhotoStatus: visitPhoto ? 'synced' : null,
-          syncState: 'synced',
-          syncStatus: 'synced',
           orderList: savedItemsSnapshot,
           itemsList: savedItemsSnapshot
         };
@@ -708,57 +672,16 @@ export default function OrderEntryScreen({
           onOrderPlaced(placedObj);
         }
         onNavigate('reports');
+      } else if (res && res.status === 401) {
+        showToast('Your session has expired. Sign in again to place the order. The order was not placed.');
       } else {
-        showToast(res?.message || 'Failed to place order.');
+        showToast(`The order was not placed: ${res?.message || 'the server rejected it.'}`);
       }
-    } catch (networkErr) {
-      // If network fails during online submission, fall back gracefully to offline queue
-      try {
-        const { tempRef, idempotencyKey } = await queueOrderCreation(
-          user?.id || spersonid,
-          orderList,
-          currentShop,
-          activeItems,
-          extraMeta
-        );
-        if (visitPhoto) setVisitPhotoStatus('waiting_offline');
-        showToast('Network drop: Order & photo queued locally. Waiting to sync.');
-        const placedObj = {
-          id: tempRef,
-          orderId: tempRef,
-          tempRef,
-          idempotencyKey,
-          customer: currentShop.shopName,
-          shopName: currentShop.shopName,
-          shopCategory: currentShop.shopCategory || 'Retail',
-          shopId: shortId,
-          shopid: currentShop.shopid,
-          clusterId: finalClusterId,
-          date: orderDate,
-          expectedDeliveryDate,
-          items: savedItemsSnapshot.length,
-          itemsCount: savedItemsSnapshot.length,
-          total: subtotal,
-          status: finalStatus,
-          priceApprovalPending: hasPriceReq,
-          locationLat: extraMeta.locationLat,
-          locationLng: extraMeta.locationLng,
-          locationAccuracy: extraMeta.locationAccuracy,
-          locationText: extraMeta.locationText,
-          visitPhoto: visitPhoto || null,
-          visitPhotoStatus: visitPhoto ? 'waiting_offline' : null,
-          syncState: 'waiting',
-          syncStatus: 'waiting',
-          orderList: savedItemsSnapshot,
-          itemsList: savedItemsSnapshot
-        };
-        setLastSavedOrder(placedObj);
-        if (onOrderPlaced) {
-          onOrderPlaced(placedObj);
-        }
-        onNavigate('reports');
-      } catch {
-        showToast('Failed to connect or save offline order.');
+    } catch (err) {
+      if (err?.uncertain) {
+        showToast('The connection dropped before the server confirmed. The order is NOT confirmed. Tap "Place order" again when you are online; it will not be duplicated.');
+      } else {
+        showToast(`The order was not placed: ${err?.message || 'unexpected error'}.`);
       }
     } finally {
       setSubmitting(false);
@@ -1070,11 +993,11 @@ export default function OrderEntryScreen({
                     </strong>
                     <span style={{ fontSize: '12px', color: '#475569' }}>
                       {visitPhoto
-                        ? isOffline || visitPhotoStatus === 'waiting_offline'
-                          ? '⏳ Waiting to sync offline (saved locally with order)'
-                          : visitPhotoStatus === 'synced'
-                          ? '✓ Photo saved & synced to server'
-                          : '✓ Photo ready — will save & sync when order is placed'
+                        ? visitPhotoStatus === 'synced'
+                          ? '✓ Photo saved to the server with the order'
+                          : isOffline
+                          ? '📷 Photo attached. Connect to the internet to place the order.'
+                          : '✓ Photo ready. It is saved when the order is placed.'
                         : 'Take a photo using the in-app camera to attach to this order/visit record.'}
                     </span>
                     {cameraError && (
@@ -1750,10 +1673,8 @@ export default function OrderEntryScreen({
               <span>Visit photo status</span>
               <b>
                 {visitPhoto
-                  ? isOffline || visitPhotoStatus === 'waiting_offline'
-                    ? '⏳ Waiting to sync offline'
-                    : visitPhotoStatus === 'synced'
-                    ? '✓ Saved & synced'
+                  ? visitPhotoStatus === 'synced'
+                    ? '✓ Saved with order'
                     : '📷 Attached (ready)'
                   : 'None attached'}
               </b>
@@ -1879,13 +1800,32 @@ export default function OrderEntryScreen({
             </div>
           )}
 
+          {isOffline && (
+            <div
+              role="alert"
+              style={{
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                margin: '12px 0',
+                color: '#991b1b',
+                fontSize: '12.5px',
+                lineHeight: 1.45
+              }}
+            >
+              <b>No connection to the LineCart server.</b> Orders can only be placed online. Your entries stay on this screen; place the order when you are connected again.
+            </div>
+          )}
+
           <button
             type="button"
             className="primary-button"
-            disabled={submitting || activeItems.length === 0 || !currentShop}
+            disabled={submitting || isOffline || activeItems.length === 0 || !currentShop}
             onClick={handleSubmitOrder}
+            aria-disabled={submitting || isOffline || activeItems.length === 0 || !currentShop}
           >
-            {submitting ? 'Placing order...' : 'Place order →'}
+            {submitting ? 'Placing order...' : isOffline ? 'Offline: cannot place order' : 'Place order →'}
           </button>
 
           <p className="summary-note">

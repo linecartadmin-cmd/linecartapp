@@ -26,6 +26,10 @@ const isCapacitorNative = typeof window !== 'undefined' && (
 );
 const BASE_URL = ENV_API_URL || (isCapacitorNative ? 'https://linecart-staging.onrender.com' : (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:3001' : ''));
 
+// Client capability level sent with orders. Level 2 = online-only ordering (no offline order queue).
+// The server can require a minimum level via MIN_ORDER_CLIENT_LEVEL to stop older app versions.
+export const ORDER_CLIENT_LEVEL = '2';
+
 export const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
 
 export function isValidIndianMobile(phone) {
@@ -182,26 +186,69 @@ export const api = {
     }
   },
 
-  // 4. POST /createorder
-  async createOrder(orderList, idempotencyKey = null, deviceEventTime = null, extraMeta = {}) {
+  // Lightweight reachability check (no database work on the server)
+  async ping(timeoutMs = 6000) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    try {
+      const res = await fetch(`${BASE_URL}/api/ping`, { cache: 'no-store', signal: ctrl?.signal });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // 4. POST /createorder (online only)
+  // Resolves with the server's JSON for any definite answer (2xx/4xx).
+  // Throws an Error with `uncertain = true` when we cannot tell whether the server created the order
+  // (network failure, timeout, gateway error, non-JSON body). Callers retry with the SAME idempotency
+  // key, and the server returns the existing order instead of creating a duplicate.
+  async createOrder(orderList, idempotencyKey = null, deviceEventTime = null, extraMeta = {}, timeoutMs = 30000) {
     const key = idempotencyKey || `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const eventTime = deviceEventTime || new Date().toISOString();
-    const res = await fetch(`${BASE_URL}/createorder`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Idempotency-Key': key,
-        'X-Device-Event-Time': eventTime,
-        ...getAuthHeaders()
-      },
-      body: JSON.stringify({
-        orderList,
-        idempotencyKey: key,
-        deviceEventTime: eventTime,
-        ...(extraMeta || {})
-      })
-    });
-    return res.json();
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    const uncertain = (message) => {
+      const err = new Error(message);
+      err.uncertain = true;
+      return err;
+    };
+    let res;
+    try {
+      res = await fetch(`${BASE_URL}/createorder`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': key,
+          'X-Device-Event-Time': eventTime,
+          'X-LineCart-Client': ORDER_CLIENT_LEVEL,
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          orderList,
+          idempotencyKey: key,
+          deviceEventTime: eventTime,
+          ...(extraMeta || {})
+        }),
+        signal: ctrl?.signal
+      });
+    } catch (err) {
+      throw uncertain(err?.name === 'AbortError' ? 'The server did not answer in time.' : 'The connection was interrupted.');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    if (!body || [502, 503, 504].includes(res.status)) {
+      throw uncertain(`The server is temporarily unavailable (HTTP ${res.status}).`);
+    }
+    return body;
   },
 
   // 4b. GET /api/orders (Authoritative orders scoped by caller role)

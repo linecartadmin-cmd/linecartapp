@@ -466,12 +466,16 @@ export async function enqueueMutation({ userId, type, idempotencyKey, payload, d
   if (!userId || !type || !idempotencyKey) {
     throw new Error('Invalid mutation parameters');
   }
+  if (type === 'CREATE_ORDER') {
+    // Orders are online-only and must never be stored for later synchronisation
+    throw new Error('Orders cannot be queued offline. An internet connection is required to place an order.');
+  }
 
   const store = await getStore('sync_queue', 'readwrite');
   const mutation = {
     mutationId: `mut-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     userId: Number(userId),
-    type, // 'CREATE_ORDER' | 'UPDATE_DELIVERY_STATUS'
+    type, // 'UPDATE_DELIVERY_STATUS' | 'UPDATE_ITEM_PRICE'
     idempotencyKey: String(idempotencyKey),
     payload,
     deviceEventTime: deviceEventTime || new Date().toISOString(),
@@ -508,6 +512,12 @@ export async function updateMutation(mutationId, updates) {
 
   const merged = { ...existing, ...updates };
   return promisifyRequest(store.put(merged));
+}
+
+export async function deleteMutation(mutationId) {
+  if (!mutationId) return;
+  const store = await getStore('sync_queue', 'readwrite');
+  await promisifyRequest(store.delete(mutationId));
 }
 
 export async function getUnsyncedCount(userId) {
