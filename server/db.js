@@ -1054,7 +1054,18 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
   return await db.withClient(async (runner) => {
     const usersRes = await runner.query('SELECT * FROM users ORDER BY id ASC');
     const shopsRes = await runner.query('SELECT * FROM shops ORDER BY shop_id ASC');
-    const ordersRes = await runner.query('SELECT * FROM orders ORDER BY serial_no DESC, order_id DESC');
+    // Visit photos (base64 images) are deliberately NOT loaded here: they are fetched one at a time
+    // through GET /api/orders/:id/visit-photo. Only a has_visit_photo flag is projected.
+    const ordersRes = await runner.query(
+      `SELECT order_id, serial_no, shop_short_id, customer_id, customer_name, shop_category, sperson_id, agent_name,
+              cluster_id, order_date, created_at, status, items_count, total, delivery_agent_id, delivery_reason,
+              delivery_note, delivery_updated_at, delivery_updated_by, idempotency_key, payment_status,
+              payment_amount_collected, payment_balance_due, payment_collected_at, payment_collected_by,
+              payment_collected_by_name, location_lat, location_lng, location_accuracy, location_text,
+              visit_photo_status, visit_photo_updated_at, expected_delivery_date,
+              CASE WHEN visit_photo IS NOT NULL AND visit_photo <> '' THEN 1 ELSE 0 END AS has_visit_photo
+       FROM orders ORDER BY serial_no DESC, order_id DESC`
+    );
     const orderItemsRes = await runner.query('SELECT * FROM order_items ORDER BY id ASC');
     const assignRes = await runner.query('SELECT * FROM manager_assignments ORDER BY manager_id ASC, agent_id ASC');
     const targetsRes = await runner.query('SELECT * FROM sales_targets ORDER BY id ASC');
@@ -1191,8 +1202,9 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       locationLng: r.location_lng !== null && r.location_lng !== undefined ? Number(r.location_lng) : null,
       locationAccuracy: r.location_accuracy !== null && r.location_accuracy !== undefined ? Number(r.location_accuracy) : null,
       locationText: r.location_text || null,
-      visitPhoto: r.visit_photo || null,
-      visitPhotoStatus: r.visit_photo_status || (r.visit_photo ? 'synced' : null),
+      visitPhoto: null,
+      hasVisitPhoto: Number(r.has_visit_photo) === 1,
+      visitPhotoStatus: r.visit_photo_status || (Number(r.has_visit_photo) === 1 ? 'synced' : null),
       visitPhotoUpdatedAt: r.visit_photo_updated_at || null,
       idempotencyKey: r.idempotency_key || null,
       orderList

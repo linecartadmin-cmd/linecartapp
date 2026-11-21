@@ -5224,6 +5224,37 @@ app.get(['/api/manager/assigned-agents', '/api/manager/:managerId/assigned-agent
   });
 });
 
+// Visit photo for one order (photos are not included in list responses)
+app.get('/api/orders/:id/visit-photo', requireAuth, async (req, res) => {
+  const caller = getCaller(req);
+  const orderId = String(req.params.id || '').slice(0, 64);
+  const r = await db.query(
+    'SELECT order_id, sperson_id, delivery_agent_id, visit_photo, visit_photo_updated_at FROM orders WHERE order_id = $1',
+    [orderId]
+  );
+  if (r.rowCount === 0) {
+    return res.status(404).json({ status: 404, message: 'Order not found.' });
+  }
+  const row = r.rows[0];
+  const role = (caller.role || '').toLowerCase();
+  const allowed =
+    role === 'admin' ||
+    (role === 'field sales agent' && Number(row.sperson_id) === Number(caller.id)) ||
+    (role === 'delivery agent' && Number(row.delivery_agent_id) === Number(caller.id)) ||
+    (role === 'sales manager' && getAssignedAgentIds(caller.id).includes(Number(row.sperson_id)));
+  if (!allowed) {
+    return res.status(403).json({ status: 403, message: 'Access Denied: you cannot view this order.' });
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({
+    status: 200,
+    orderId: row.order_id,
+    hasVisitPhoto: Boolean(row.visit_photo),
+    visitPhoto: row.visit_photo || null,
+    visitPhotoUpdatedAt: row.visit_photo_updated_at || null
+  });
+});
+
 // Standard Authenticated Orders Endpoint for Field Sales Agents, Managers, and Admins
 app.get('/api/orders', requireAuth, async (req, res) => {
   await refreshStateFromDb();
@@ -5280,7 +5311,8 @@ app.get('/api/orders', requireAuth, async (req, res) => {
       locationLng: o.locationLng ?? null,
       locationAccuracy: o.locationAccuracy ?? null,
       locationText: o.locationText || null,
-      visitPhoto: o.visitPhoto || null,
+      visitPhoto: null, // fetch with GET /api/orders/:id/visit-photo
+      hasVisitPhoto: Boolean(o.hasVisitPhoto),
       visitPhotoStatus: o.visitPhotoStatus || null,
       visitPhotoUpdatedAt: o.visitPhotoUpdatedAt || null,
       paymentStatus: o.paymentStatus || 'Not collected',

@@ -5,7 +5,8 @@ import LoginScreen from './components/LoginScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncStatusBar from './components/SyncStatusBar';
 import { initSyncEngine } from './offline/syncEngine';
-import { signOutAppSession } from './offline/biometricAuth';
+import { signOutAppSession, removeSavedAccount, ACTIVE_USER_KEY } from './offline/biometricAuth';
+import { saveOrdersCache, loadOrdersCache, clearOrdersCache } from './offline/ordersCache';
 import {
   seedPilotDataIfEmpty,
   saveClusters,
@@ -13,7 +14,9 @@ import {
   saveCatalog,
   getClusters,
   getShops,
-  getCatalog
+  getCatalog,
+  clearUserCachedData,
+  hasUnsyncedMutations
 } from './offline/offlineDb';
 
 // Lazy-loaded secondary screens for reduced initial bundle and fast APK startup
@@ -184,22 +187,15 @@ export default function App() {
   const [shops, setShops] = useState([]);
   const [catalogItems, setCatalogItems] = useState([]);
   const [orders, setOrders] = useState(() => {
+    let cachedUserId = null;
     try {
-      const saved = localStorage.getItem('linecart_orders');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const demoIds = new Set(['S101-24018', 'S103-24017', 'S039-24018', 'S042-24017', 'S043-24016', 'S046-24015', 'S047-24014', 'S048-24013', 'S049-24012']);
-          // TEMP- entries were offline orders from older app versions; they are not real orders
-          return parsed.filter(
-            (o) => !demoIds.has(o.id) && !demoIds.has(o.orderId) && !String(o.id || o.orderId || '').startsWith('TEMP-')
-          );
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
+      cachedUserId = JSON.parse(localStorage.getItem('LineCartPref_user') || 'null')?.id ?? null;
+    } catch {}
+    const demoIds = new Set(['S101-24018', 'S103-24017', 'S039-24018', 'S042-24017', 'S043-24016', 'S046-24015', 'S047-24014', 'S048-24013', 'S049-24012']);
+    // Only this user's cached list; TEMP- entries were offline orders from older app versions
+    return loadOrdersCache(cachedUserId).filter(
+      (o) => !demoIds.has(o.id) && !demoIds.has(o.orderId) && !String(o.id || o.orderId || '').startsWith('TEMP-')
+    );
   });
 
   const showToast = (msg) => {
@@ -375,7 +371,7 @@ export default function App() {
             merged.push(srvOrder);
           }
         }
-        localStorage.setItem('linecart_orders', JSON.stringify(merged));
+        saveOrdersCache(merged, user.id);
         setOrders(merged);
       }
     }).catch(() => {});
@@ -384,13 +380,8 @@ export default function App() {
   // Listen for sync engine updates to orders
   useEffect(() => {
     const handleOrdersSync = () => {
-      try {
-        const raw = localStorage.getItem('linecart_orders');
-        if (raw) {
-          const list = JSON.parse(raw);
-          if (Array.isArray(list)) setOrders(list);
-        }
-      } catch {}
+      setOrders(loadOrdersCache());
+
     };
     window.addEventListener('linecart:orders_updated', handleOrdersSync);
     return () => window.removeEventListener('linecart:orders_updated', handleOrdersSync);
@@ -434,7 +425,7 @@ export default function App() {
       } else {
         updated = [newOrder, ...prev];
       }
-      localStorage.setItem('linecart_orders', JSON.stringify(updated));
+      saveOrdersCache(updated, user?.id);
       return updated;
     });
   };
@@ -448,12 +439,39 @@ export default function App() {
     navigate('orders');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const leavingUserId = user?.id;
+    // Unsent delivery/price updates stay on the device and are sent at this user's next sign-in
+    try {
+      if (leavingUserId && (await hasUnsyncedMutations(leavingUserId))) {
+        const ok = window.confirm(
+          'Some delivery or price updates have not been sent yet. They will stay on this device and be sent the next time you sign in. Sign out now?'
+        );
+        if (!ok) return;
+      }
+    } catch {}
+
     api.logout();
+    // Shared-device privacy: remove this user's biometric credential, cached data and order list
+    try {
+      if (leavingUserId) await removeSavedAccount(leavingUserId);
+      else await signOutAppSession();
+    } catch {}
+    try {
+      if (leavingUserId) await clearUserCachedData(leavingUserId);
+    } catch {}
+    clearOrdersCache();
+    try {
+      localStorage.removeItem(ACTIVE_USER_KEY);
+    } catch {}
     signOutAppSession();
     localStorage.removeItem('LineCartPref_token');
     localStorage.removeItem('LineCartPref_userid');
     localStorage.removeItem('LineCartPref_user');
+    setOrders([]);
+    setShops([]);
+    setCatalogItems([]);
+    setClusters([]);
     setUser(null);
     setNavHistory([]);
     setPage('overview');

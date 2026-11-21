@@ -128,6 +128,29 @@ function promisifyRequest(request) {
   });
 }
 
+/**
+ * Remove a user's cached private data from this device (used on sign-out).
+ * The sync_queue is intentionally kept: unsent delivery/price updates are sent the next time
+ * that user signs in, so signing out never loses work.
+ */
+export async function clearUserCachedData(userId) {
+  if (!userId) return;
+  const uid = Number(userId);
+  const db = await openOfflineDB();
+  const scopedStores = ['shops', 'catalog', 'clusters', 'order_history', 'delivery_orders', 'price_history', 'price_requests'];
+  for (const name of scopedStores) {
+    if (!db.objectStoreNames.contains(name)) continue;
+    const store = db.transaction(name, 'readwrite').objectStore(name);
+    const keys = await promisifyRequest(store.index('userId').getAllKeys(uid));
+    for (const key of keys) {
+      await promisifyRequest(db.transaction(name, 'readwrite').objectStore(name).delete(key));
+    }
+  }
+  if (db.objectStoreNames.contains('profiles')) {
+    await promisifyRequest(db.transaction('profiles', 'readwrite').objectStore('profiles').delete(uid));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 1. User Profile Scoping & Caching
 // ---------------------------------------------------------------------------
