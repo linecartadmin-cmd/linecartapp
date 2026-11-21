@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { db, runMigrationsAndSeed, loadDatabaseState, isKnownDemoPassword } from './db.js';
+import { createBackupSnapshot, validateSnapshot, restoreSnapshot, isLegacySnapshot, listTables, tableCounts, BACKUP_FORMAT } from './backup.js';
 import * as seedData from './data.loader.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,7 +32,10 @@ for (const envPath of envCandidates) {
   }
 }
 
-const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+// Staging and Render are protected like production (restore needs explicit flags there)
+const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
+  (process.env.APP_ENV || '').toLowerCase() === 'staging' ||
+  Boolean(process.env.RENDER);
 
 const hashPassword = (password) => {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -231,6 +235,7 @@ async function main() {
   }
 
   if (args.includes('--backup')) {
+    // READ-ONLY: no migrations, no seeding, no writes to the database.
     const backupDir = path.join(__dirname, 'backups');
     if (!fs.existsSync(backupDir)) {
       fs.mkdirSync(backupDir, { recursive: true });
@@ -241,23 +246,16 @@ async function main() {
       ? path.resolve(args[customIdx])
       : path.join(backupDir, `linecart-backup-${timestamp}.json`);
 
-    await runMigrationsAndSeed({
-      seedData,
-      legacyAdminConfigPath,
-      hashPassword,
-      verifyPassword,
-      isProduction,
-      defaultRolePermissions: DEFAULT_ROLE_PERMISSIONS
-    });
-
-    const state = await loadDatabaseState(DEFAULT_ROLE_PERMISSIONS);
-    const snapshot = {
-      createdAt: new Date().toISOString(),
-      mode: db.mode,
-      tables: state
-    };
-    fs.writeFileSync(outPath, JSON.stringify(snapshot, null, 2), 'utf8');
-    console.log(`[Backup] Saved database snapshot to ${outPath}`);
+    const snapshot = await createBackupSnapshot(db);
+    const tmpPath = `${outPath}.partial`;
+    fs.writeFileSync(tmpPath, JSON.stringify(snapshot, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmpPath, outPath);
+    console.log(`[Backup] Saved full backup (format v${snapshot.version}) to ${outPath}`);
+    for (const [table, count] of Object.entries(snapshot.counts)) {
+      console.log(`  ${table.padEnd(22)} ${String(count).padStart(8)} rows`);
+    }
+    console.log(`  checksum sha256 ${snapshot.checksum}`);
+    console.warn('[Backup] This file contains customer data and password hashes. Store it privately and never commit it.');
     await db.close();
     return;
   }
@@ -318,6 +316,49 @@ async function main() {
     }
 
     const snapshot = JSON.parse(fs.readFileSync(path.resolve(restoreFile), 'utf8'));
+
+    if (snapshot && snapshot.format === BACKUP_FORMAT) {
+      // Full-fidelity restore (format v2): validate, then replace everything in ONE transaction.
+      if (!(await listTables(db)).includes('users')) {
+        // Fresh database: create the schema first (restore then replaces any seed rows)
+        await runMigrationsAndSeed({ seedData, legacyAdminConfigPath, hashPassword, verifyPassword, isProduction, defaultRolePermissions: DEFAULT_ROLE_PERMISSIONS });
+      }
+      const check = await validateSnapshot(db, snapshot);
+      for (const w of check.warnings) console.warn(`[Restore Warning] ${w}`);
+      if (!check.ok) {
+        for (const e of check.errors) console.error(`[Restore Error] ${e}`);
+        console.error('[Restore Aborted] No changes were made.');
+        await db.close();
+        process.exit(1);
+      }
+      const restored = await restoreSnapshot(db, snapshot);
+      const after = await tableCounts(db);
+      let mismatch = false;
+      for (const [table, count] of Object.entries(restored)) {
+        const ok = after[table] === count;
+        if (!ok) mismatch = true;
+        console.log(`  ${table.padEnd(22)} ${String(count).padStart(8)} rows ${ok ? 'OK' : `MISMATCH (table has ${after[table]})`}`);
+      }
+      console.log(mismatch ? '[Restore] Completed with count mismatches. Investigate before use.' : `[Restore] Restored ${restoreFile}. All users must sign in again.`);
+      await db.close();
+      return;
+    }
+
+    if (!isLegacySnapshot(snapshot)) {
+      console.error('[Restore Error] Unrecognised backup file. No changes were made.');
+      await db.close();
+      process.exit(1);
+    }
+    if (!args.includes('--accept-lossy')) {
+      console.error('[RESTORE BLOCKED] This is an old-format backup. Restoring it LOSES data:');
+      console.error('  - payment status, amounts collected and balances; GPS, visit photos and expected delivery dates');
+      console.error('  - shop-to-agent assignments and customer price requests; items, daily prices and price history');
+      console.error('  - audit entries beyond the newest 500');
+      console.error('Use a backup made with the current `--backup`. To restore this file anyway, add --accept-lossy.');
+      await db.close();
+      process.exit(1);
+    }
+    console.warn('[Restore] --accept-lossy given: restoring an old-format backup with known data loss.');
     const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '001_initial_schema.sql'), 'utf8');
     await db.execRaw(migrationSql);
 
@@ -421,6 +462,21 @@ async function main() {
 
     // STRICTLY READ-ONLY: Never execute DDL (schema setup) or write operations in verify mode.
     // If schema setup is needed, run `node server/migrate.js` separately.
+    if (baseline && baseline.format === BACKUP_FORMAT) {
+      const current = await tableCounts(db);
+      let allOk = true;
+      console.log(`\n[DB Verification - READ ONLY] ${db.mode.toUpperCase()} vs ${backupFile}`);
+      for (const table of new Set([...Object.keys(baseline.counts || {}), ...Object.keys(current)])) {
+        const expected = baseline.counts?.[table];
+        const actual = current[table];
+        const ok = expected === actual;
+        if (!ok) allOk = false;
+        console.log(`  ${table.padEnd(22)} db ${String(actual ?? 'MISSING').padStart(8)}  backup ${String(expected ?? 'N/A').padStart(8)}  ${ok ? 'MATCH' : 'MISMATCH'}`);
+      }
+      console.log(allOk ? 'All table counts match the backup.' : 'Differences found.');
+      await db.close();
+      return;
+    }
     const counts = {};
     const tables = [
       'users', 'shops', 'orders', 'order_items',
