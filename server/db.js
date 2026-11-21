@@ -187,7 +187,8 @@ class DatabaseAdapter {
       }
       if (lastErr) throw lastErr;
     } else {
-      if (isCloudOrStaging) {
+      // Test mode may run production settings against a disposable local file (DATABASE_URL is refused above)
+      if (isCloudOrStaging && !isTestContext) {
         throw new Error(
           '[DB FATAL] DATABASE_URL is required in cloud/staging/production mode. Silently falling back to local SQLite on cloud hosting is prohibited.'
         );

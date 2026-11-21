@@ -1033,43 +1033,94 @@ app.get(['/health', '/api/health'], async (req, res) => {
   }
 });
 
-// System environment & setup status endpoint (minimal public info, no private data)
-app.get('/api/system/mode', async (req, res) => {
-  await refreshStateFromDb();
-  const activeValidAdmins = salesPersons.filter(
+// ---------------------------------------------------------------------------
+// One-time initial Admin setup
+// In production/staging the request must carry the SETUP_TOKEN environment value as
+//   Authorization: Setup <token>
+// Without SETUP_TOKEN configured, setup is disabled in production (use INITIAL_ADMIN_* or migrate.js).
+// The endpoint never modifies an existing account; it only creates a new Admin.
+// ---------------------------------------------------------------------------
+const SETUP_TOKEN_MIN_LENGTH = 24;
+
+function getConfiguredSetupToken() {
+  const token = String(process.env.SETUP_TOKEN || '').trim();
+  return token.length >= SETUP_TOKEN_MIN_LENGTH ? token : '';
+}
+
+function isSetupTokenRequired() {
+  return isProduction || Boolean(getConfiguredSetupToken());
+}
+
+function extractSetupToken(req) {
+  const header = String(req.headers['authorization'] || '');
+  return header.toLowerCase().startsWith('setup ') ? header.slice(6).trim() : '';
+}
+
+function setupTokenMatches(provided, expected) {
+  if (!provided || !expected) return false;
+  const a = crypto.createHash('sha256').update(provided).digest();
+  const b = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+function findActiveValidAdmins() {
+  return salesPersons.filter(
     (s) =>
       (s.role || '').toLowerCase() === 'admin' &&
       Number(s.active) === 1 &&
       s.phoneValid &&
       Boolean(s.passwordHash)
   );
+}
+
+// System environment & setup status endpoint (minimal public info, no private data)
+app.get('/api/system/mode', async (req, res) => {
+  await refreshStateFromDb();
+  const activeValidAdmins = findActiveValidAdmins();
+  const requiresAdminSetup = activeValidAdmins.length === 0;
   res.json({
     status: 200,
     production: isProduction,
     demoMode: !isProduction,
-    hasActiveAdmin: activeValidAdmins.length > 0,
-    requiresAdminSetup: activeValidAdmins.length === 0
+    hasActiveAdmin: !requiresAdminSetup,
+    requiresAdminSetup,
+    setupTokenRequired: requiresAdminSetup && isSetupTokenRequired(),
+    setupAvailable: requiresAdminSetup && (!isProduction || Boolean(getConfiguredSetupToken()))
   });
 });
 
 // One-time Initial Admin Setup endpoint (ONLY available when no active Admin has a valid password & mobile)
 app.post('/api/system/setup-admin', async (req, res) => {
+  const clientIp = req.ip || req.socket?.remoteAddress || 'unknown';
+  const SETUP_RATE_KEY = 'setup-admin';
+
+  if (isSetupTokenRequired()) {
+    const expected = getConfiguredSetupToken();
+    if (!expected) {
+      return res.status(403).json({
+        status: 403,
+        message: 'Administrator setup is disabled on this server. Configure SETUP_TOKEN, or use INITIAL_ADMIN_PHONE / INITIAL_ADMIN_PASSWORD, or `npm run admin:reset-password --prefix server`.'
+      });
+    }
+    if (await isLoginRateLimited(clientIp, SETUP_RATE_KEY)) {
+      return res.status(429).json({ status: 429, message: 'Too many failed setup attempts. Please wait 15 minutes.' });
+    }
+    if (!setupTokenMatches(extractSetupToken(req), expected)) {
+      await recordFailedLoginAttempt(clientIp, SETUP_RATE_KEY);
+      logEvent('warn', 'admin_setup_denied', { requestId: req.requestId, reason: 'invalid_or_missing_setup_token' });
+      return res.status(403).json({ status: 403, message: 'A valid setup token is required to configure the Administrator.' });
+    }
+  }
+
   await refreshStateFromDb();
-  const activeValidAdmins = salesPersons.filter(
-    (s) =>
-      (s.role || '').toLowerCase() === 'admin' &&
-      Number(s.active) === 1 &&
-      s.phoneValid &&
-      Boolean(s.passwordHash)
-  );
-  if (activeValidAdmins.length > 0) {
+  if (findActiveValidAdmins().length > 0) {
     return res.status(403).json({
       status: 403,
       message: 'Initial Administrator is already configured. Sign in as Admin to manage accounts.'
     });
   }
 
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : 'LineCart Administrator';
+  const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim().slice(0, 80) : 'LineCart Administrator';
   const phone = typeof req.body?.phone === 'string' ? req.body.phone : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
@@ -1087,35 +1138,45 @@ app.post('/api/system/setup-admin', async (req, res) => {
     });
   }
 
-  const duplicate = salesPersons.find((s) => s.phone === phone && (s.role || '').toLowerCase() !== 'admin');
-  if (duplicate) {
+  // Never take over an existing account (Admin or otherwise)
+  if (salesPersons.some((s) => s.phone === phone)) {
     return res.status(400).json({
       status: 400,
-      message: 'That mobile number is already assigned to another account.'
+      message: 'That mobile number already belongs to an existing account. Use a different number.'
     });
   }
 
   const newHash = hashPassword(password);
-  const existingAdmin = salesPersons.find((s) => (s.role || '').toLowerCase() === 'admin');
-  let adminId = existingAdmin ? Number(existingAdmin.id) : 900;
+  let adminId = 0;
+  let alreadyConfigured = false;
 
   await db.withTransaction(async (tx) => {
-    if (existingAdmin) {
-      await tx.query(
-        `UPDATE users
-         SET name = $1, phone = $2, phone_valid = 1, password_hash = $3, must_change_password = 0, active = 1
-         WHERE id = $4`,
-        [name || existingAdmin.name, phone, newHash, adminId]
-      );
-    } else {
-      await tx.query(
-        `INSERT INTO users (id, name, role, phone, phone_valid, password_hash, must_change_password, cluster_id, active, created_on)
-         VALUES ($1, $2, 'Admin', $3, 1, $4, 0, 1, 1, $5)`,
-        [adminId, name, phone, newHash, new Date().toISOString().slice(0, 19).replace('T', ' ')]
-      );
+    await db.lockAllocation(tx, 'users');
+    // Re-check inside the lock so two simultaneous setups cannot both succeed
+    const adminCheck = await tx.query(
+      "SELECT COUNT(*) AS cnt FROM users WHERE role = 'Admin' AND active = 1 AND phone_valid = 1 AND password_hash IS NOT NULL"
+    );
+    if (Number(adminCheck.rows[0]?.cnt || 0) > 0) {
+      alreadyConfigured = true;
+      return;
     }
+    const idRes = await tx.query('SELECT COALESCE(MAX(id), 899) + 1 AS next_id FROM users');
+    adminId = Math.max(Number(idRes.rows[0]?.next_id || 900), 900);
+    await tx.query(
+      `INSERT INTO users (id, name, role, phone, phone_valid, password_hash, must_change_password, cluster_id, active, created_on)
+       VALUES ($1, $2, 'Admin', $3, 1, $4, 0, 1, 1, $5)`,
+      [adminId, name, phone, newHash, new Date().toISOString().slice(0, 19).replace('T', ' ')]
+    );
   });
 
+  if (alreadyConfigured) {
+    return res.status(403).json({
+      status: 403,
+      message: 'Initial Administrator is already configured. Sign in as Admin to manage accounts.'
+    });
+  }
+
+  await clearLoginAttempts(SETUP_RATE_KEY);
   await refreshStateFromDb();
   await addAuditLog(req, 'ADMIN_INITIAL_SETUP', 'User', adminId, `Configured initial Administrator (${name})`);
 

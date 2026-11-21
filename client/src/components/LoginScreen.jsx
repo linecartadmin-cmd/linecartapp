@@ -47,6 +47,7 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
   const [setupName, setSetupName] = useState('LineCart Administrator');
   const [setupPhone, setSetupPhone] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
+  const [setupToken, setSetupToken] = useState('');
 
   // Initial load
   useEffect(() => {
@@ -230,19 +231,27 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
       if (showToast) showToast(msg);
       return;
     }
+    if (systemMode.setupTokenRequired && !setupToken.trim()) {
+      const msg = 'Enter the setup token provided by the server administrator.';
+      setFormError(msg);
+      if (showToast) showToast(msg);
+      return;
+    }
 
     setLoading(true);
     try {
       const res = await api.setupInitialAdmin({
         name: setupName.trim() || 'LineCart Administrator',
         phone: setupPhone,
-        password: setupPassword
+        password: setupPassword,
+        setupToken: setupToken.trim()
       });
       if (res && (res.status === 201 || res.status === 200)) {
         if (showToast) showToast(res.message || 'Initial Administrator configured.');
         setSystemMode((prev) => ({ ...prev, hasActiveAdmin: true, requiresAdminSetup: false }));
         setPhone(setupPhone);
         setPassword('');
+        setSetupToken('');
       } else {
         const errMsg = res?.message || 'Failed to configure initial Administrator.';
         setFormError(errMsg);
@@ -291,11 +300,33 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
           </div>
         )}
 
-        {systemMode.requiresAdminSetup ? (
+        {systemMode.requiresAdminSetup && systemMode.setupAvailable === false ? (
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+            <strong>Administrator not configured.</strong> Setup from this screen is disabled on this server. Ask the server
+            administrator to configure the first Administrator account.
+          </div>
+        ) : systemMode.requiresAdminSetup ? (
           <form onSubmit={handleFirstAdminSetup} className="space-y-4">
             <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-800">
               <strong>First-Time Setup:</strong> Configure the initial Administrator account with a 10-digit Indian mobile number and strong password.
             </div>
+            {systemMode.setupTokenRequired && (
+              <div className="field-group">
+                <label htmlFor="setupAdminToken" className="text-xs font-semibold text-slate-700">
+                  Setup token *
+                </label>
+                <input
+                  id="setupAdminToken"
+                  type="password"
+                  autoComplete="off"
+                  required
+                  className="field"
+                  placeholder="Provided by the server administrator"
+                  value={setupToken}
+                  onChange={(e) => setSetupToken(e.target.value)}
+                />
+              </div>
+            )}
             <div className="field-group">
               <label htmlFor="setupAdminName" className="text-xs font-semibold text-slate-700">
                 Administrator Name *

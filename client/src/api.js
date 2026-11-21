@@ -80,10 +80,12 @@ export const api = {
   },
 
   // One-time Initial Admin Setup when no active Admin has a configured password
-  async setupInitialAdmin({ name, phone, password }) {
+  async setupInitialAdmin({ name, phone, password, setupToken }) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (setupToken) headers['Authorization'] = `Setup ${setupToken}`;
     const res = await fetch(`${BASE_URL}/api/system/setup-admin`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ name, phone, password })
     });
     return res.json();
