@@ -14,6 +14,13 @@ import {
   isKnownDemoPassword,
   INDIAN_MOBILE_REGEX
 } from './db.js';
+import {
+  wrapAsyncRoutes,
+  requestIdMiddleware,
+  errorMiddleware,
+  installProcessHandlers,
+  logEvent
+} from './http-errors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -819,7 +826,11 @@ function validateShopPhotoUpload(file) {
 // ============================================================================
 
 const app = express();
+// Every handler registered below is wrapped so rejected promises reach the error middleware
+wrapAsyncRoutes(app);
 const port = process.env.PORT || 3001;
+
+app.use(requestIdMiddleware);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -921,7 +932,16 @@ app.use((req, res, next) => {
     req.url = req.url.replace('http://freshcubes.in', '');
   }
   const safePath = req.path || req.url.split('?')[0];
-  console.log(`[${new Date().toISOString()}] ${req.method} ${safePath}`);
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    logEvent(res.statusCode >= 500 ? 'error' : 'info', 'request', {
+      requestId: req.requestId,
+      method: req.method,
+      path: safePath,
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt
+    });
+  });
   next();
 });
 
@@ -6130,29 +6150,12 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-// Global error handler (handles multer file size limit & JSON parse errors cleanly)
-app.use((err, req, res, next) => {
-  if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({
-      status: 400,
-      message: 'Uploaded image exceeds maximum allowed size of 5 MB.'
-    });
-  }
-  if (err && err.type === 'entity.parse.failed') {
-    return res.status(400).json({
-      status: 400,
-      message: 'Invalid JSON request payload.'
-    });
-  }
-  console.error('[Server Error]', err?.message || err);
-  res.status(500).json({
-    status: 500,
-    message: 'Internal server error.'
-  });
-});
+// Global error handler (multer size limit, JSON parse errors, and every failed async route)
+app.use(errorMiddleware);
 
 // Initialize Database, Run Repeatable Migrations, and Start HTTP Server
 async function startServer() {
+  installProcessHandlers();
   await db.init();
   const migResult = await runMigrationsAndSeed({
     seedData,
