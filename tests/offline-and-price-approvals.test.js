@@ -15,6 +15,7 @@
  */
 
 import { test, describe, before } from 'node:test';
+import { insertTestUser } from './helpers/session.mjs';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { db, runMigrationsAndSeed, loadDatabaseState } from '../server/db.js';
@@ -67,17 +68,12 @@ describe('Offline-First & Customer Price Requests Verification Suite', async () 
     deliveryUser = state.users.find((u) => (u.role || '').toLowerCase() === 'delivery agent');
 
     // Create a secondary manager to test out-of-scope authorization denial
-    const otherManagerRes = await db.query(
-      `INSERT INTO users (name, password_hash, role, active, created_on, cluster_id)
-       VALUES ('Other Regional Manager', 'hash', 'Sales Manager', 1, datetime('now'), 999)
-       RETURNING id, name, role, cluster_id`
-    );
-    otherManagerUser = otherManagerRes.rows[0];
+    otherManagerUser = await insertTestUser(db, { name: 'Other Regional Manager', role: 'Sales Manager', clusterId: 999 });
 
     // Ensure managerUser is assigned to agentUser
     await db.query(
-      `INSERT OR REPLACE INTO manager_assignments (manager_id, agent_id)
-       VALUES ($1, $2)`,
+      `INSERT INTO manager_assignments (manager_id, agent_id)
+       VALUES ($1, $2) ON CONFLICT (manager_id, agent_id) DO NOTHING`,
       [managerUser.id, agentUser.id]
     );
 

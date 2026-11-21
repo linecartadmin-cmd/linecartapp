@@ -68,6 +68,22 @@ const { Pool } = pg;
 
 export const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
 
+/**
+ * True only for an automated test run that explicitly opted in to a PostgreSQL server on THIS machine
+ * (LINECART_TEST_MODE=1 + LINECART_ALLOW_LOCAL_PG=1 + DATABASE_URL host localhost/127.0.0.1/::1).
+ * Such a database is treated like the local development database (demo seed data allowed).
+ */
+export function isLocalTestPostgres() {
+  if (process.env.LINECART_TEST_MODE !== '1' && !process.env.NODE_TEST_CONTEXT) return false;
+  if (process.env.LINECART_ALLOW_LOCAL_PG !== '1') return false;
+  try {
+    const host = new URL((process.env.DATABASE_URL || '').trim()).hostname.replace(/^\[|\]$/g, '');
+    return ['localhost', '127.0.0.1', '::1'].includes(host);
+  } catch {
+    return false;
+  }
+}
+
 export const KNOWN_DEMO_PASSWORDS = new Set([
   'admin123',
   'password123',
@@ -126,11 +142,13 @@ class DatabaseAdapter {
     const isTestContext = Boolean(process.env.NODE_TEST_CONTEXT) || process.env.LINECART_TEST_MODE === '1';
     if (isTestContext) {
       if (dbUrl) {
-        throw new Error(
-          '[DB FATAL] Refusing to run tests with DATABASE_URL set. Tests delete data and must only use a disposable local SQLite database (LOCAL_DB_PATH).'
-        );
-      }
-      if (!process.env.LOCAL_DB_PATH) {
+        // The only remote-style URL accepted in tests: an explicitly allowed PostgreSQL on this machine
+        if (!isLocalTestPostgres()) {
+          throw new Error(
+            '[DB FATAL] Refusing to run tests with DATABASE_URL set. Tests delete data and must only use a disposable local SQLite database (LOCAL_DB_PATH).'
+          );
+        }
+      } else if (!process.env.LOCAL_DB_PATH) {
         throw new Error(
           '[DB FATAL] Tests require LOCAL_DB_PATH pointing to a disposable database file. Run tests with `npm test`.'
         );
@@ -692,7 +710,7 @@ export async function runMigrationsAndSeed({
     }
   }
 
-  const isCloudOrPostgres = db.mode === 'postgres' ||
+  const isCloudOrPostgres = (db.mode === 'postgres' && !isLocalTestPostgres()) ||
                            Boolean(isProduction) ||
                            (process.env.APP_ENV || '').toLowerCase() === 'staging' ||
                            Boolean(process.env.RENDER);

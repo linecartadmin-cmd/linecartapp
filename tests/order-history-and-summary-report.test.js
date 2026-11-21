@@ -11,6 +11,7 @@
  */
 
 import { test, describe, before, after } from 'node:test';
+import { insertTestUser } from './helpers/session.mjs';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { db, runMigrationsAndSeed, loadDatabaseState } from '../server/db.js';
@@ -61,17 +62,12 @@ describe('Order History & Summary Report Test Suite', async () => {
     agentUser = state.users.find((u) => (u.role || '').toLowerCase() === 'field sales agent');
 
     // Create an unassigned field agent
-    const unassignedRes = await db.query(
-      `INSERT INTO users (name, password_hash, role, active, created_on, cluster_id)
-       VALUES ('Unassigned Agent', 'hash', 'Field Sales Agent', 1, datetime('now'), 1)
-       RETURNING id, name, role, cluster_id`
-    );
-    unauthorizedAgent = unassignedRes.rows[0];
+    unauthorizedAgent = await insertTestUser(db, { name: 'Unassigned Agent', role: 'Field Sales Agent', clusterId: 1 });
 
     // Ensure manager is assigned to agentUser
     await db.query(
-      `INSERT OR REPLACE INTO manager_assignments (manager_id, agent_id)
-       VALUES ($1, $2)`,
+      `INSERT INTO manager_assignments (manager_id, agent_id)
+       VALUES ($1, $2) ON CONFLICT (manager_id, agent_id) DO NOTHING`,
       [managerUser.id, agentUser.id]
     );
 

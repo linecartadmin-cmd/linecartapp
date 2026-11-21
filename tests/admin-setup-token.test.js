@@ -25,6 +25,8 @@ async function startServer(port, extraEnv = {}) {
       ...process.env,
       PORT: String(port),
       LOCAL_DB_PATH: dbPath,
+      DATABASE_URL: '', // these scenarios inspect their own SQLite file directly
+      LINECART_ALLOW_LOCAL_PG: '',
       NODE_ENV: 'production',
       SETUP_TOKEN: '',
       INITIAL_ADMIN_PHONE: '',

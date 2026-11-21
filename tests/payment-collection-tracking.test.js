@@ -19,6 +19,7 @@
  */
 
 import { test, describe, before, after } from 'node:test';
+import { insertTestUser } from './helpers/session.mjs';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { db, runMigrationsAndSeed, loadDatabaseState } from '../server/db.js';
@@ -79,12 +80,7 @@ describe('Payment Collection Tracking Verification Suite', async () => {
 
     let otherDeliv = users.filter(u => (u.role || '').toLowerCase() === 'delivery agent')[1];
     if (!otherDeliv) {
-      const ins = await db.query(
-        `INSERT INTO users (name, role, phone, phone_valid, active, password_hash, created_on)
-         VALUES ('Other Delivery Agent', 'Delivery Agent', '9999988888', 1, 1, 'hash', datetime('now'))
-         RETURNING *`
-      );
-      otherDeliv = ins.rows[0];
+      otherDeliv = await insertTestUser(db, { name: 'Other Delivery Agent', role: 'Delivery Agent', phone: '9999988888', phoneValid: 1 });
     }
     otherDeliveryUser = otherDeliv;
 

@@ -46,6 +46,23 @@ export async function api(pathname, { token, method = 'GET', body, headers = {} 
   return { res, status: res.status, json };
 }
 
+/**
+ * Insert a user for a test, portable across SQLite and PostgreSQL (explicit id; suites run one at a time).
+ * Returns the inserted row (id, name, role, cluster_id, ...).
+ */
+// phoneValid defaults to 1 (the column default): sessions of users without a valid phone are refused
+export async function insertTestUser(dbConn, { name, role, clusterId = 1, phone = null, phoneValid = 1, passwordHash = 'hash' }) {
+  const next = await dbConn.query('SELECT COALESCE(MAX(id), 1000) + 1 AS id FROM users');
+  const id = Math.max(Number(next.rows[0].id), 2000);
+  await dbConn.query(
+    `INSERT INTO users (id, name, role, phone, phone_valid, password_hash, must_change_password, cluster_id, active, created_on)
+     VALUES ($1, $2, $3, $4, $5, $6, 0, $7, 1, $8)`,
+    [id, name, role, phone, phoneValid, passwordHash, clusterId, new Date().toISOString().slice(0, 19).replace('T', ' ')]
+  );
+  const r = await dbConn.query('SELECT * FROM users WHERE id = $1', [id]);
+  return r.rows[0];
+}
+
 // Well-known ids from server/data.demo.js, DEV_DEMO_ACCOUNTS and tests/fixtures
 export const IDS = {
   admin: 950,

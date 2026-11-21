@@ -37,10 +37,23 @@ if (await portInUse(PORT)) {
   process.exit(1);
 }
 
+// Optional: run the whole suite against a disposable PostgreSQL on THIS machine (never a remote database).
+// LINECART_TEST_PG_URL=postgresql://user:pass@127.0.0.1:54329/linecart_test npm test
+const testPgUrl = (process.env.LINECART_TEST_PG_URL || '').trim();
+if (testPgUrl) {
+  let host = '';
+  try { host = new URL(testPgUrl).hostname.replace(/^\[|\]$/g, ''); } catch {}
+  if (!['localhost', '127.0.0.1', '::1'].includes(host)) {
+    console.error('[test] LINECART_TEST_PG_URL must point to a PostgreSQL on this machine (localhost).');
+    process.exit(1);
+  }
+}
+
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'linecart-test-'));
 const testEnv = {
   ...process.env,
-  DATABASE_URL: '',
+  DATABASE_URL: testPgUrl,
+  LINECART_ALLOW_LOCAL_PG: testPgUrl ? '1' : '',
   NODE_ENV: 'test',
   APP_ENV: '',
   RENDER: '',
@@ -71,7 +84,7 @@ async function waitForHealth(timeoutMs = 30000) {
       const res = await fetch(`http://127.0.0.1:${PORT}/health`);
       if (res.ok) {
         const body = await res.json();
-        if (body?.database?.mode !== 'embedded-postgres-compat') {
+        if (body?.database?.mode !== (testPgUrl ? 'postgres' : 'embedded-postgres-compat')) {
           throw new Error(`Test server is not using the disposable SQLite database (mode: ${body?.database?.mode}).`);
         }
         return;
@@ -106,6 +119,15 @@ async function resetOrders() {
 
 const results = [];
 try {
+  if (testPgUrl) {
+    // Start from an empty schema every run (local disposable database only, checked above)
+    const pg = (await import('../server/node_modules/pg/lib/index.js')).default;
+    const client = new pg.Client({ connectionString: testPgUrl });
+    await client.connect();
+    await client.query('DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;');
+    await client.end();
+    console.log('[test] Using local PostgreSQL (schema reset)');
+  }
   const logPath = path.join(tmpDir, 'server.log');
   const log = fs.openSync(logPath, 'w');
   server = spawn(process.execPath, ['server/index.js'], { cwd: repoRoot, env: testEnv, stdio: ['ignore', log, log] });

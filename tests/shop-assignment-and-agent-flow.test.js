@@ -25,6 +25,7 @@
  */
 
 import { test, describe, before, after } from 'node:test';
+import { insertTestUser } from './helpers/session.mjs';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { db, runMigrationsAndSeed, loadDatabaseState } from '../server/db.js';
@@ -84,12 +85,8 @@ describe('Shop Assignment & Field Sales Agent Scoping Test Suite', async () => {
     // Create an agent with zero shops assigned
     let zeroAgent = state.users.find((u) => u.name === 'Agent With Zero Shops');
     if (!zeroAgent) {
-      const res = await db.query(
-        `INSERT INTO users (name, phone, role, active, created_on, cluster_id)
-         VALUES ('Agent With Zero Shops', '9199999999', 'Field Sales Agent', 1, '2026-04-01 10:00:00', 1)
-         RETURNING id`
-      );
-      zeroShopsAgentUser = { id: Number(res.rows[0].id), role: 'Field Sales Agent', name: 'Agent With Zero Shops' };
+      const row = await insertTestUser(db, { name: 'Agent With Zero Shops', role: 'Field Sales Agent', phone: '9199999999', phoneValid: 1, passwordHash: null });
+      zeroShopsAgentUser = { id: Number(row.id), role: 'Field Sales Agent', name: 'Agent With Zero Shops' };
     } else {
       zeroShopsAgentUser = zeroAgent;
     }

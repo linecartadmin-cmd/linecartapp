@@ -1,4 +1,5 @@
 import { test, describe, before, after } from 'node:test';
+import { insertTestUser } from './helpers/session.mjs';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { db, runMigrationsAndSeed, loadDatabaseState } from '../server/db.js';
@@ -49,25 +50,15 @@ describe('Price Approval Queue & 7-Day Shop Order History Verification', async (
       || state.users.find((u) => (u.role || '').toLowerCase() === 'field sales agent');
 
     // Create a second manager with a different cluster
-    const otherMgrRes = await db.query(
-      `INSERT INTO users (name, password_hash, role, active, created_on, cluster_id)
-       VALUES ('Out-of-Scope Manager', 'hash', 'Sales Manager', 1, datetime('now'), 99)
-       RETURNING id, name, role, cluster_id`
-    );
-    otherManagerUser = otherMgrRes.rows[0];
+    otherManagerUser = await insertTestUser(db, { name: 'Out-of-Scope Manager', role: 'Sales Manager', clusterId: 99 });
 
     // Create a second agent assigned to otherManagerUser
-    const otherAgentRes = await db.query(
-      `INSERT INTO users (name, password_hash, role, active, created_on, cluster_id)
-       VALUES ('Other Agent', 'hash', 'Field Sales Agent', 1, datetime('now'), 99)
-       RETURNING id, name, role, cluster_id`
-    );
-    otherAgentUser = otherAgentRes.rows[0];
+    otherAgentUser = await insertTestUser(db, { name: 'Other Agent', role: 'Field Sales Agent', clusterId: 99 });
 
     // Ensure managerUser supervises agentUser
     await db.query(
-      `INSERT OR REPLACE INTO manager_assignments (manager_id, agent_id)
-       VALUES ($1, $2)`,
+      `INSERT INTO manager_assignments (manager_id, agent_id)
+       VALUES ($1, $2) ON CONFLICT (manager_id, agent_id) DO NOTHING`,
       [managerUser.id, agentUser.id]
     );
 

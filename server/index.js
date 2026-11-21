@@ -12,7 +12,8 @@ import {
   loadDatabaseState,
   isValidIndianMobile,
   isKnownDemoPassword,
-  INDIAN_MOBILE_REGEX
+  INDIAN_MOBILE_REGEX,
+  isLocalTestPostgres
 } from './db.js';
 import {
   wrapAsyncRoutes,
@@ -1229,7 +1230,7 @@ const DEV_DEMO_ACCOUNTS = [
 ];
 
 async function ensureDevelopmentDemoAccounts() {
-  if (isProduction || db.mode === 'postgres') return;
+  if (isProduction || (db.mode === 'postgres' && !isLocalTestPostgres())) return;
 
   await db.withTransaction(async (tx) => {
     for (const acc of DEV_DEMO_ACCOUNTS) {
@@ -1260,7 +1261,7 @@ async function ensureDevelopmentDemoAccounts() {
 
 // Demo users helper endpoint (strictly disabled in cloud/staging/production mode)
 app.get('/api/demo-users', async (req, res) => {
-  if (isProduction || db.mode === 'postgres') {
+  if (isProduction || (db.mode === 'postgres' && !isLocalTestPostgres())) {
     return res.status(403).json({
       status: 403,
       message: 'Demo accounts are disabled in cloud/staging/production mode.',
