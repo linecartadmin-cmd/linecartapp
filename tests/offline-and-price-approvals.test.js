@@ -582,7 +582,9 @@ describe('Offline-First & Customer Price Requests Verification Suite', async () 
       // Verify item price retained catalog price in DB
       const itemDb = await db.query(`SELECT price, requested_price, price_request_status FROM order_items WHERE order_id = $1`, [orderData.orderId]);
       assert.strictEqual(itemDb.rows[0].price_request_status, 'rejected');
-      assert.strictEqual(Number(itemDb.rows[0].price), 50.0, 'Must retain catalog rate of 50.0');
+      // The catalog rate is resolved on the server (client-sent custprice 50.0 is ignored)
+      const catalogRow = await db.query('SELECT price FROM items WHERE item_id = 1');
+      assert.strictEqual(Number(itemDb.rows[0].price), Number(catalogRow.rows[0].price), 'Must retain the server catalog rate');
 
       // Verify audit log has rejection record
       const auditDb = await db.query(

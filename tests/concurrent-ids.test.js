@@ -60,6 +60,21 @@ describe('Concurrent identifier allocation', () => {
     assert.strictEqual(Number(rows.rows[0].cnt), 1);
   });
 
+  test('keyless double tap within 5 s is merged; keyed orders with identical totals are not', async () => {
+    const keyless = { orderList: [{ customerid: 101, itemid: 1, qty: 61, spersonid: IDS.agent1, clusterid: 1 }] };
+    const a = await api('/createorder', { token: agentToken, method: 'POST', body: keyless });
+    const b = await api('/createorder', { token: agentToken, method: 'POST', body: keyless });
+    assert.strictEqual(a.status, 200);
+    assert.strictEqual(b.json.orderId, a.json.orderId, 'keyless double tap returns the first order');
+    assert.strictEqual(b.json.idempotentReplay, true);
+
+    const k1 = await api('/createorder', { token: agentToken, method: 'POST', body: orderBody(62, `k1-${Date.now()}`) });
+    const k2 = await api('/createorder', { token: agentToken, method: 'POST', body: orderBody(62, `k2-${Date.now()}`) });
+    assert.strictEqual(k1.status, 200);
+    assert.strictEqual(k2.status, 200);
+    assert.notStrictEqual(k1.json.orderId, k2.json.orderId, 'two genuine orders are both kept');
+  });
+
   test('5 simultaneous admin user creations get unique ids', async () => {
     const base = 9000000000 + (Date.now() % 100000000);
     const results = await Promise.all(

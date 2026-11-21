@@ -2515,53 +2515,56 @@ const handleCreateOrder = async (req, res) => {
     const spersonid = requestedSpersonId;
     const agent = salesPersons.find((s) => Number(s.id) === Number(spersonid));
 
-    // Helper: resolve official catalog price for an item
-    const resolveCatalogPrice = (item, clusterId) => {
-      const req = (item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '')
-        ? parseFloat(item.requestedPrice)
-        : null;
-
-      // 1. Check explicit catalogPrice / price / actprice passed by caller
-      if (item.catalogPrice !== undefined && item.catalogPrice !== null && !isNaN(Number(item.catalogPrice)) && Number(item.catalogPrice) > 0) {
-        return Number(item.catalogPrice);
-      }
-      if (item.actprice !== undefined && item.actprice !== null && !isNaN(Number(item.actprice)) && Number(item.actprice) > 0 && (req === null || Math.abs(Number(item.actprice) - req) > 0.001)) {
-        return Number(item.actprice);
-      }
-      if (item.price !== undefined && item.price !== null && !isNaN(Number(item.price)) && Number(item.price) > 0 && (req === null || Math.abs(Number(item.price) - req) > 0.001)) {
-        return Number(item.price);
-      }
-      if (item.custprice !== undefined && item.custprice !== null && !isNaN(Number(item.custprice)) && Number(item.custprice) > 0 && (req === null || Math.abs(Number(item.custprice) - req) > 0.001)) {
-        return Number(item.custprice);
-      }
-
-      // 2. Fall back to clusterItemPrices, orderItemsCatalog, or defaultOrderItems
+    // Official price for an item, resolved ONLY from server state (never from client-sent price fields):
+    // cluster-specific daily price -> catalog base price -> default seed catalog.
+    // Returns null when the item is unknown, archived, or has no positive price.
+    const resolveServerPrice = (item, clusterId) => {
       const itemId = Number(item.itemid || item.itemId || 0);
-      const effCluster = Number(clusterId || item.clusterid || 1);
+      if (!Number.isInteger(itemId) || itemId <= 0) return null;
+      const catalogItem = orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === itemId);
+      if (catalogItem && Number(catalogItem.active ?? 1) !== 1) return null;
       const clusterPriceRow = clusterItemPrices.find(
-        (cip) => Number(cip.clusterId) === effCluster && Number(cip.itemId) === itemId
+        (cip) => Number(cip.clusterId) === Number(clusterId) && Number(cip.itemId) === itemId
       );
       if (clusterPriceRow && Number(clusterPriceRow.price) > 0) {
         return Number(clusterPriceRow.price);
       }
-      const catalogItem = orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === itemId);
-      if (catalogItem && Number(catalogItem.price) > 0) {
-        return Number(catalogItem.price);
+      if (catalogItem) {
+        return Number(catalogItem.price) > 0 ? Number(catalogItem.price) : null;
       }
-      const defaultItem = defaultOrderItems.find((d) => Number(d.itemid || d.itemId) === itemId);
-      if (defaultItem && Number(defaultItem.price) > 0) {
-        return Number(defaultItem.price);
+      if (orderItemsCatalog.length === 0) {
+        const defaultItem = defaultOrderItems.find((d) => Number(d.itemid || d.itemId) === itemId);
+        if (defaultItem && Number(defaultItem.price) > 0) return Number(defaultItem.price);
       }
-      return Number(item.custprice || item.price || 0);
+      return null;
     };
+
+    // Every line with a quantity must be a valid, priced catalog item
+    const resolvedPrices = new Map();
+    for (const item of activeItems) {
+      const qtyNum = Number(item.qty);
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+        return res.status(400).json({ status: 400, message: `Invalid quantity for item '${item.itemName || item.itemid}'.`, id: '0' });
+      }
+      const serverPrice = resolveServerPrice(item, clusterid);
+      if (serverPrice === null) {
+        return res.status(400).json({
+          status: 400,
+          message: `Item '${item.itemName || item.itemid}' is not available for ordering in this cluster. Refresh the catalog and try again.`,
+          id: '0'
+        });
+      }
+      resolvedPrices.set(item, serverPrice);
+    }
+    const resolveCatalogPrice = (item) => resolvedPrices.get(item);
 
     // Validate requested prices and identify if price approval is pending
     let hasPriceRequest = false;
     for (const item of activeItems) {
       const hasReq = item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '';
       if (hasReq) {
-        const reqPrice = parseFloat(item.requestedPrice);
-        if (isNaN(reqPrice) || reqPrice < 0) {
+        const reqPrice = Number(item.requestedPrice);
+        if (!Number.isFinite(reqPrice) || reqPrice < 0) {
           return res.status(400).json({
             status: 400,
             message: `Invalid requested price for item '${item.itemName || item.itemid}'. Price must be a non-negative number.`,
@@ -2640,9 +2643,11 @@ const handleCreateOrder = async (req, res) => {
         }
       }
 
-      // 2. Check rapid duplicate submission within 5 seconds (same customer, agent, total, items_count)
+      // 2. Keyless clients only: treat a near-identical submission within 5 seconds as a double tap.
+      //    Requests with an idempotency key are de-duplicated by the key alone, so two genuine orders
+      //    with the same total are never merged.
       const fiveSecAgoIso = new Date(Date.now() - 5000).toISOString();
-      const recentDup = await tx.query(
+      const recentDup = idempotencyKey ? { rowCount: 0, rows: [] } : await tx.query(
         `SELECT order_id, serial_no, shop_short_id, status, expected_delivery_date, visit_photo_status, location_text, total
          FROM orders
          WHERE customer_id = $1 AND sperson_id = $2 AND total = $3 AND items_count = $4 AND created_at >= $5
@@ -2723,10 +2728,11 @@ const handleCreateOrder = async (req, res) => {
       const maxItemRes = await tx.query('SELECT COALESCE(MAX(id), 0) AS max_id FROM order_items');
       let nextItemRowId = Number(maxItemRes.rows[0]?.max_id || 0);
 
-      for (const item of orderList) {
+      // Only lines with a quantity are stored (zero-quantity lines were never counted in items_count or totals)
+      for (const item of activeItems) {
         nextItemRowId += 1;
         const hasReq = item.requestedPrice !== undefined && item.requestedPrice !== null && item.requestedPrice !== '';
-        const reqPrice = hasReq ? parseFloat(item.requestedPrice) : null;
+        const reqPrice = hasReq ? Number(item.requestedPrice) : null;
         const catPrice = resolveCatalogPrice(item, clusterid);
         const isReq = hasReq && reqPrice !== null && !isNaN(reqPrice) && Math.abs(reqPrice - catPrice) > 0.001;
         const itemPriceStatus = isReq ? 'pending' : null;
@@ -2734,8 +2740,8 @@ const handleCreateOrder = async (req, res) => {
         const catalogItemRef =
           orderItemsCatalog.find((d) => Number(d.itemId || d.itemid) === Number(item.itemid)) ||
           defaultOrderItems.find((d) => Number(d.itemid) === Number(item.itemid));
-        const itemName = item.itemName || catalogItemRef?.itemName || `Item ${item.itemid}`;
-        const unitType = item.unitType || item.unit || catalogItemRef?.unitType || 'kg';
+        const itemName = catalogItemRef?.itemName || item.itemName || `Item ${item.itemid}`;
+        const unitType = catalogItemRef?.unitType || item.unitType || item.unit || 'kg';
         const enrichedLine = {
           ...item,
           itemName,
