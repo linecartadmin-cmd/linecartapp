@@ -1,0 +1,3637 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LineCart API",
+    "version": "phase0-stage-a",
+    "description": "Generated from server/access.js by scripts/generate-openapi.mjs. Do not edit by hand. Send the session token as Authorization: Bearer and/or X-Session-Token (X-Token is also accepted); every header sent must carry the same token. Cookies are not used."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/addcustomer": {
+      "post": {
+        "operationId": "postAddcustomer",
+        "summary": "POST /addcustomer",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/admin_panel/public/api/linecart/addcustomer": {
+      "post": {
+        "operationId": "postAdminPanelPublicApiLinecartAddcustomer",
+        "summary": "POST /admin_panel/public/api/linecart/addcustomer",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/admin_panel/public/api/linecart/clusterinfo": {
+      "get": {
+        "operationId": "getAdminPanelPublicApiLinecartClusterinfo",
+        "summary": "GET /admin_panel/public/api/linecart/clusterinfo",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/admin_panel/public/api/linecart/createorder": {
+      "post": {
+        "operationId": "postAdminPanelPublicApiLinecartCreateorder",
+        "summary": "POST /admin_panel/public/api/linecart/createorder",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/admin_panel/public/api/linecart/gethomereport": {
+      "get": {
+        "operationId": "getAdminPanelPublicApiLinecartGethomereport",
+        "summary": "GET /admin_panel/public/api/linecart/gethomereport",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/admin_panel/public/api/linecart/getitemsorder": {
+      "get": {
+        "operationId": "getAdminPanelPublicApiLinecartGetitemsorder",
+        "summary": "GET /admin_panel/public/api/linecart/getitemsorder",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/admin_panel/public/api/linecart/login": {
+      "post": {
+        "operationId": "postAdminPanelPublicApiLinecartLogin",
+        "summary": "POST /admin_panel/public/api/linecart/login",
+        "description": "No session needed. Credentials sent here are ignored. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/admin/audit": {
+      "get": {
+        "operationId": "getApiAdminAudit",
+        "summary": "GET /api/admin/audit",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/dashboard": {
+      "get": {
+        "operationId": "getApiAdminDashboard",
+        "summary": "GET /api/admin/dashboard",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/items": {
+      "get": {
+        "operationId": "getApiAdminItems",
+        "summary": "GET /api/admin/items",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/orders": {
+      "get": {
+        "operationId": "getApiAdminOrders",
+        "summary": "GET /api/admin/orders",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postApiAdminOrders",
+        "summary": "POST /api/admin/orders",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/orders/{id}": {
+      "put": {
+        "operationId": "putApiAdminOrdersId",
+        "summary": "PUT /api/admin/orders/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiAdminOrdersId",
+        "summary": "DELETE /api/admin/orders/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/orders/{id}/cancel": {
+      "post": {
+        "operationId": "postApiAdminOrdersIdCancel",
+        "summary": "POST /api/admin/orders/:id/cancel",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/permissions": {
+      "get": {
+        "operationId": "getApiAdminPermissions",
+        "summary": "GET /api/admin/permissions",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putApiAdminPermissions",
+        "summary": "PUT /api/admin/permissions",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/reports": {
+      "get": {
+        "operationId": "getApiAdminReports",
+        "summary": "GET /api/admin/reports",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/settings": {
+      "get": {
+        "operationId": "getApiAdminSettings",
+        "summary": "GET /api/admin/settings",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putApiAdminSettings",
+        "summary": "PUT /api/admin/settings",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/shops/{shopId}/assign": {
+      "post": {
+        "operationId": "postApiAdminShopsShopIdAssign",
+        "summary": "POST /api/admin/shops/:shopId/assign",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/targets": {
+      "get": {
+        "operationId": "getApiAdminTargets",
+        "summary": "GET /api/admin/targets",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postApiAdminTargets",
+        "summary": "POST /api/admin/targets",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/targets/{id}": {
+      "delete": {
+        "operationId": "deleteApiAdminTargetsId",
+        "summary": "DELETE /api/admin/targets/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "operationId": "getApiAdminUsers",
+        "summary": "GET /api/admin/users",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postApiAdminUsers",
+        "summary": "POST /api/admin/users",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/admin/users/{id}": {
+      "put": {
+        "operationId": "putApiAdminUsersId",
+        "summary": "PUT /api/admin/users/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiAdminUsersId",
+        "summary": "DELETE /api/admin/users/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/users/{id}/status": {
+      "post": {
+        "operationId": "postApiAdminUsersIdStatus",
+        "summary": "POST /api/admin/users/:id/status",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "operationId": "postApiAuthChangePassword",
+        "summary": "POST /api/auth/change-password",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent, Customer.",
+        "x-linecart-audience": "account",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "postApiAuthLogout",
+        "summary": "POST /api/auth/logout",
+        "description": "No session needed. Credentials sent here are ignored.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout-all": {
+      "post": {
+        "operationId": "postApiAuthLogoutAll",
+        "summary": "POST /api/auth/logout-all",
+        "description": "Any valid session, whatever the role.",
+        "x-linecart-audience": "self",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "operationId": "getApiAuthMe",
+        "summary": "GET /api/auth/me",
+        "description": "Any valid session, whatever the role.",
+        "x-linecart-audience": "self",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/delivery/orders": {
+      "get": {
+        "operationId": "getApiDeliveryOrders",
+        "summary": "GET /api/delivery/orders",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/delivery/orders/{id}/status": {
+      "post": {
+        "operationId": "postApiDeliveryOrdersIdStatus",
+        "summary": "POST /api/delivery/orders/:id/status",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/demo-users": {
+      "get": {
+        "operationId": "getApiDemoUsers",
+        "summary": "GET /api/demo-users",
+        "description": "No session needed. Credentials sent here are ignored.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "getApiHealth",
+        "summary": "GET /api/health",
+        "description": "No session needed. Credentials sent here are ignored.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/items": {
+      "get": {
+        "operationId": "getApiItems",
+        "summary": "GET /api/items",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postApiItems",
+        "summary": "POST /api/items",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/items/price": {
+      "post": {
+        "operationId": "postApiItemsPrice",
+        "summary": "POST /api/items/price",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/items/{id}": {
+      "put": {
+        "operationId": "putApiItemsId",
+        "summary": "PUT /api/items/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiItemsId",
+        "summary": "DELETE /api/items/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/items/{id}/archive": {
+      "post": {
+        "operationId": "postApiItemsIdArchive",
+        "summary": "POST /api/items/:id/archive",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/items/{id}/history": {
+      "get": {
+        "operationId": "getApiItemsIdHistory",
+        "summary": "GET /api/items/:id/history",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/linecart/addcustomer": {
+      "post": {
+        "operationId": "postApiLinecartAddcustomer",
+        "summary": "POST /api/linecart/addcustomer",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/linecart/clusterinfo": {
+      "get": {
+        "operationId": "getApiLinecartClusterinfo",
+        "summary": "GET /api/linecart/clusterinfo",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/linecart/createorder": {
+      "post": {
+        "operationId": "postApiLinecartCreateorder",
+        "summary": "POST /api/linecart/createorder",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/linecart/gethomereport": {
+      "get": {
+        "operationId": "getApiLinecartGethomereport",
+        "summary": "GET /api/linecart/gethomereport",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/linecart/getitemsorder": {
+      "get": {
+        "operationId": "getApiLinecartGetitemsorder",
+        "summary": "GET /api/linecart/getitemsorder",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/linecart/login": {
+      "post": {
+        "operationId": "postApiLinecartLogin",
+        "summary": "POST /api/linecart/login",
+        "description": "No session needed. Credentials sent here are ignored. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/linecart/shops/{shopId}/order-history": {
+      "get": {
+        "operationId": "getApiLinecartShopsShopIdOrderHistory",
+        "summary": "GET /api/linecart/shops/:shopId/order-history",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/api/manager/assigned-agents": {
+      "get": {
+        "operationId": "getApiManagerAssignedAgents",
+        "summary": "GET /api/manager/assigned-agents",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/manager/assignments": {
+      "get": {
+        "operationId": "getApiManagerAssignments",
+        "summary": "GET /api/manager/assignments",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postApiManagerAssignments",
+        "summary": "POST /api/manager/assignments",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/manager/orders": {
+      "get": {
+        "operationId": "getApiManagerOrders",
+        "summary": "GET /api/manager/orders",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/manager/reports": {
+      "get": {
+        "operationId": "getApiManagerReports",
+        "summary": "GET /api/manager/reports",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/manager/shops": {
+      "get": {
+        "operationId": "getApiManagerShops",
+        "summary": "GET /api/manager/shops",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/manager/targets": {
+      "get": {
+        "operationId": "getApiManagerTargets",
+        "summary": "GET /api/manager/targets",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postApiManagerTargets",
+        "summary": "POST /api/manager/targets",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/manager/{managerId}/assigned-agents": {
+      "get": {
+        "operationId": "getApiManagerManagerIdAssignedAgents",
+        "summary": "GET /api/manager/:managerId/assigned-agents",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "managerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/orders": {
+      "get": {
+        "operationId": "getApiOrders",
+        "summary": "GET /api/orders",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/orders/{id}/visit-photo": {
+      "get": {
+        "operationId": "getApiOrdersIdVisitPhoto",
+        "summary": "GET /api/orders/:id/visit-photo",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/ping": {
+      "get": {
+        "operationId": "getApiPing",
+        "summary": "GET /api/ping",
+        "description": "No session needed. Credentials sent here are ignored.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/price-requests": {
+      "get": {
+        "operationId": "getApiPriceRequests",
+        "summary": "GET /api/price-requests",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/price-requests/{id}/approve": {
+      "post": {
+        "operationId": "postApiPriceRequestsIdApprove",
+        "summary": "POST /api/price-requests/:id/approve",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/price-requests/{id}/decision": {
+      "post": {
+        "operationId": "postApiPriceRequestsIdDecision",
+        "summary": "POST /api/price-requests/:id/decision",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/price-requests/{id}/reject": {
+      "post": {
+        "operationId": "postApiPriceRequestsIdReject",
+        "summary": "POST /api/price-requests/:id/reject",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/role-permissions": {
+      "get": {
+        "operationId": "getApiRolePermissions",
+        "summary": "GET /api/role-permissions",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/shops": {
+      "get": {
+        "operationId": "getApiShops",
+        "summary": "GET /api/shops",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/shops/{shopId}/assign": {
+      "put": {
+        "operationId": "putApiShopsShopIdAssign",
+        "summary": "PUT /api/shops/:shopId/assign",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/shops/{shopId}/assign-agent": {
+      "post": {
+        "operationId": "postApiShopsShopIdAssignAgent",
+        "summary": "POST /api/shops/:shopId/assign-agent",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/shops/{shopId}/location": {
+      "put": {
+        "operationId": "putApiShopsShopIdLocation",
+        "summary": "PUT /api/shops/:shopId/location",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/shops/{shopId}/location-history": {
+      "get": {
+        "operationId": "getApiShopsShopIdLocationHistory",
+        "summary": "GET /api/shops/:shopId/location-history",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/shops/{shopId}/order-history": {
+      "get": {
+        "operationId": "getApiShopsShopIdOrderHistory",
+        "summary": "GET /api/shops/:shopId/order-history",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/system/mode": {
+      "get": {
+        "operationId": "getApiSystemMode",
+        "summary": "GET /api/system/mode",
+        "description": "No session needed. Credentials sent here are ignored.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/setup-admin": {
+      "post": {
+        "operationId": "postApiSystemSetupAdmin",
+        "summary": "POST /api/system/setup-admin",
+        "description": "No session needed. Credentials sent here are ignored.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/shops/{filename}": {
+      "get": {
+        "operationId": "getApiUploadsShopsFilename",
+        "summary": "GET /api/uploads/shops/:filename",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/users/{id}": {
+      "get": {
+        "operationId": "getApiUsersId",
+        "summary": "GET /api/users/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/visits": {
+      "get": {
+        "operationId": "getApiVisits",
+        "summary": "GET /api/visits",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/visits/my-shops": {
+      "get": {
+        "operationId": "getApiVisitsMyShops",
+        "summary": "GET /api/visits/my-shops",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/visits/settings": {
+      "get": {
+        "operationId": "getApiVisitsSettings",
+        "summary": "GET /api/visits/settings",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/visits/shop-locations": {
+      "get": {
+        "operationId": "getApiVisitsShopLocations",
+        "summary": "GET /api/visits/shop-locations",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/visits/summary": {
+      "get": {
+        "operationId": "getApiVisitsSummary",
+        "summary": "GET /api/visits/summary",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/visits/verify": {
+      "post": {
+        "operationId": "postApiVisitsVerify",
+        "summary": "POST /api/visits/verify",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/visits/{id}/review": {
+      "post": {
+        "operationId": "postApiVisitsIdReview",
+        "summary": "POST /api/visits/:id/review",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/clusterinfo": {
+      "get": {
+        "operationId": "getClusterinfo",
+        "summary": "GET /clusterinfo",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/createorder": {
+      "post": {
+        "operationId": "postCreateorder",
+        "summary": "POST /createorder",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/gethomereport": {
+      "get": {
+        "operationId": "getGethomereport",
+        "summary": "GET /gethomereport",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/getitemsorder": {
+      "get": {
+        "operationId": "getGetitemsorder",
+        "summary": "GET /getitemsorder",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "GET /health",
+        "description": "No session needed. Credentials sent here are ignored. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/login": {
+      "post": {
+        "operationId": "postLogin",
+        "summary": "POST /login",
+        "description": "No session needed. Credentials sent here are ignored. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "public",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          }
+        },
+        "x-linecart-legacy-alias": true
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "operationId": "getUsersId",
+        "summary": "GET /users/:id",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks. Legacy alias kept for installed apps.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-linecart-legacy-alias": true
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "sessionToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Session-Token"
+      },
+      "legacyToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Token"
+      }
+    },
+    "schemas": {
+      "StatusBody": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "description": "Mirrors the HTTP status (legacy field; /health reports \"healthy\").",
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "code"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "AUTH_REQUIRED",
+              "AUTH_MALFORMED",
+              "AUTH_CONFLICT",
+              "SESSION_INVALID",
+              "SESSION_EXPIRED",
+              "ROLE_NOT_ALLOWED",
+              "FORBIDDEN"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "No usable session. code is one of AUTH_REQUIRED, AUTH_MALFORMED, AUTH_CONFLICT, SESSION_INVALID, SESSION_EXPIRED.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The session may not do this. code is ROLE_NOT_ALLOWED (role outside the route audience) or FORBIDDEN (handler check).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-linecart-fallback": {
+    "method": "GET",
+    "audience": "public",
+    "description": "Any other GET serves the web app (text/html); unknown /api/* paths answer 404 JSON."
+  }
+}
