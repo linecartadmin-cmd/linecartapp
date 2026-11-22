@@ -1,7 +1,7 @@
 /**
  * Build the LineCart Android app.
  *
- *   node scripts/build-android.mjs debug            -> debug APK,   in.linecart.suite.debug, PRODUCTION server, "DEBUG BUILD" on every screen
+ *   node scripts/build-android.mjs debug            -> debug APK,   in.linecart.suite.debug, PRODUCTION server, launcher name "LineCart DEBUG"
  *   node scripts/build-android.mjs release [--aab]  -> release APK (or AAB), in.linecart.suite, PRODUCTION server,
  *                                                      signed only with the owner's keystore (otherwise UNSIGNED)
  *   node scripts/build-android.mjs local            -> debug APK,   in.linecart.suite.local, local server http://10.0.2.2:3001

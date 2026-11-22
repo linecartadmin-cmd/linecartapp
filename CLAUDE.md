@@ -34,7 +34,7 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 ## Business decisions (final)
 - **Order creation is online only.** No offline order queue, no TEMP order ids. The sync queue still carries delivery-status and price updates.
 - Admin setup in production requires a `SETUP_TOKEN`.
-- Production = the existing Render service (`https://linecart-staging.onrender.com`) and its Supabase database. No separate staging environment exists. Both the debug and the release APK use it; the debug APK shows "DEBUG BUILD · LIVE DATA" on every screen and must never be given to field staff.
+- Production = the existing Render service (`https://linecart-staging.onrender.com`) and its Supabase database. No separate staging environment exists. Both the debug and the release APK use it; the debug APK has no on-screen badge (owner decision, 22 Nov 2026); it is identified by its launcher name "LineCart DEBUG" and app id, and must never be given to field staff.
 
 ## Environment on this machine
 Git 2.56, Node 22.23 LTS, gh 2.105, Temurin JDK 21, Android SDK at `%LOCALAPPDATA%\Android\Sdk` (platform 36, build-tools 36.0.0). New shells may need PATH refreshed from the Machine and User values.

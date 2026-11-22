@@ -294,11 +294,6 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
           </a>
         </div>
 
-        {APP_BUILD_ENV === 'debug' && (
-          <div className="mb-4 p-2 rounded-xl bg-rose-50 border border-rose-300 text-xs text-rose-900 font-semibold text-center">
-            DEBUG BUILD · live production data · {API_BASE_URL.replace(/^https?:\/\//, '')}
-          </div>
-        )}
         {APP_BUILD_ENV === 'local' && (
           <div className="mb-4 p-2 rounded-xl bg-blue-50 border border-blue-300 text-xs text-blue-900 font-semibold text-center">
             LOCAL TEST SERVER · development data only · {API_BASE_URL.replace(/^https?:\/\//, '')}

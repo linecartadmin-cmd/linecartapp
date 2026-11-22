@@ -1,10 +1,10 @@
 import React from 'react';
 import { APP_BUILD_ENV } from '../api';
 
-// Always-visible marker for non-release Android builds. Rendered at the app root (outside the error boundary)
-// so it shows on every screen, including sign-in and error screens. Release and web builds render nothing.
+// Always-visible marker for the local development build only (it talks to a local server, never production).
+// Rendered at the app root (outside the error boundary) so it shows on every screen. Release, debug and web
+// builds render nothing; the debug build is identified by its launcher name "LineCart DEBUG".
 const BADGES = {
-  debug: { text: 'DEBUG BUILD · LIVE DATA', bg: '#b91c1c' },
   local: { text: 'LOCAL TEST SERVER', bg: '#1d4ed8' }
 };
 

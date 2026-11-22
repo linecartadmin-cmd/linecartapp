@@ -72,7 +72,7 @@ What the tests cover:
 - `node scripts/build-android.mjs debug | release | local`:
   - **debug** (`in.linecart.suite.debug`) and **release** (`in.linecart.suite`) both use the production server.
   - **local** (`in.linecart.suite.local`) uses a local server on the emulator host.
-- The debug app shows "DEBUG BUILD · LIVE DATA" on every screen; release builds are not debuggable.
+- The debug app shows no on-screen badge (owner decision); it is named "LineCart DEBUG" on the launcher. Only the local build shows a "LOCAL TEST SERVER" badge. Release builds are not debuggable.
 - A Gradle check refuses stale or mismatched web bundles. Every output is inspected for package id, debuggable flag, backend addresses and secrets.
 - Verified on the emulator: the debug and local apps install side by side. The unsigned release is refused by Android (no certificate). The debug app reaches production (316 shops, 7 orders) without signing in. The badge is on all 21 screens of the four roles (local build).
 - Not done: signed release (waiting for the owner's keystore); signed-in checks of the debug and release apps against production.
