@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { ROUTE_DECLARATIONS } from '../server/access.js';
 import { startIsolatedServer } from './helpers/isolated-server.mjs';
 import { sweep } from './helpers/route-probes.mjs';
+import { expectedAudience } from './helpers/expected-audiences.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BASELINE = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'route-access-baseline.json'), 'utf8'));
@@ -24,7 +25,8 @@ const BASELINE = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'route-a
 /** Expected status for one probe: baseline, adjusted by the intended Stage A changes. */
 function expectedStatus(who, method, routePath) {
   const key = `${method} ${routePath}`;
-  const audience = ROUTE_DECLARATIONS[key];
+  // M1: the audience comes from the independent list, never from server/access.js
+  const audience = expectedAudience(key);
   const explicit = INTENDED[`${who} ${key}`];
   if (explicit !== undefined) return explicit;
   // T0.1: the closed role list. Unknown roles and the reserved Customer role are refused on staff routes;
