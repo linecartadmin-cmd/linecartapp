@@ -23,6 +23,7 @@ import {
   logEvent
 } from './http-errors.js';
 import { registerVisitRoutes } from './visits.js';
+import { installRouteDeclarations, STAFF_ROLES } from './access.js';
 import { validateVisitSettingUpdates } from './geo.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -835,6 +836,8 @@ function validateShopPhotoUpload(file) {
 const app = express();
 // Every handler registered below is wrapped so rejected promises reach the error middleware
 wrapAsyncRoutes(app);
+// Every route must be declared in server/access.js (startup refusal) and passes its audience gate first
+const routeAccess = installRouteDeclarations(app, { getCaller });
 const port = process.env.PORT || 3001;
 
 app.use(requestIdMiddleware);
@@ -3380,7 +3383,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     });
   }
 
-  const validRoles = ['Admin', 'Sales Manager', 'Field Sales Agent', 'Delivery Agent'];
+  const validRoles = STAFF_ROLES;
   if (role && !validRoles.includes(role)) {
     return res.status(400).json({
       status: 400,
@@ -3477,7 +3480,7 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
   let updatedRole = targetUser.role;
   if (role !== undefined) {
-    const validRoles = ['Admin', 'Sales Manager', 'Field Sales Agent', 'Delivery Agent'];
+    const validRoles = STAFF_ROLES;
     if (!validRoles.includes(role)) {
       return res.status(400).json({
         status: 400,
@@ -6313,6 +6316,8 @@ app.use(errorMiddleware);
 // Initialize Database, Run Repeatable Migrations, and Start HTTP Server
 async function startServer() {
   installProcessHandlers();
+  // Refuse to start if a declared route was never registered
+  routeAccess.assertComplete();
   await db.init();
   const migResult = await runMigrationsAndSeed({
     seedData,
