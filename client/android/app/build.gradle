@@ -15,6 +15,9 @@ if (!(lcTarget in ['production', 'local'])) {
     throw new GradleException("[LineCart] linecartTarget must be 'production' or 'local', not '${lcTarget}'.")
 }
 def lcIsLocal = lcTarget == 'local'
+// scripts/build-android.mjs copies the synced web assets outside OneDrive (which can briefly turn freshly written
+// files into placeholders Gradle cannot read) and points the build at that copy. Unset = src/main/assets.
+def lcAssetsDir = System.getenv('LINECART_ASSETS_DIR')
 
 // ---------------------------------------------------------------------------
 // Version: passed by scripts/build-android.mjs (-PlinecartVersionCode / -PlinecartVersionName),
@@ -59,6 +62,9 @@ android {
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+    }
+    if (lcAssetsDir) {
+        sourceSets.main.assets.srcDirs = [lcAssetsDir]
     }
     signingConfigs {
         if (hasReleaseSigning) {
@@ -109,7 +115,7 @@ android.applicationVariants.all { variant ->
     def expectedEnv = isRelease ? 'production' : (lcIsLocal ? 'local' : 'debug')
     def buildCmd = "node scripts/build-android.mjs ${isRelease ? 'release' : expectedEnv}"
     def taskSuffix = variant.name.substring(0, 1).toUpperCase() + variant.name.substring(1)
-    def publicDir = file('src/main/assets/public')
+    def publicDir = lcAssetsDir ? new File(lcAssetsDir, 'public') : file('src/main/assets/public')
     def verify = tasks.register("verifyLinecartWebBundle${taskSuffix}") {
         group = 'verification'
         description = "Checks the packaged web bundle targets ${expectedEnv}."
@@ -167,6 +173,8 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // Fused location provider for LocationIntegrityPlugin (same library and version @capacitor/geolocation uses)
+    implementation "com.google.android.gms:play-services-location:${rootProject.ext.has('playServicesLocationVersion') ? rootProject.ext.playServicesLocationVersion : '21.3.0'}"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -53,6 +53,8 @@ export default function VisitsScreen({ user, showToast }) {
   const [phase, setPhase] = useState('idle');
   const [detailText, setDetailText] = useState('');
   const [result, setResult] = useState(null); // server visit + reading
+  const [reading, setReading] = useState(null); // device GPS fix, shown as soon as it arrives
+  const [locSeconds, setLocSeconds] = useState(0);
   const [shopVisits, setShopVisits] = useState([]);
   const busyRef = useRef(false);
   const { isConnected, recheck } = useServerReachability();
@@ -78,6 +80,7 @@ export default function VisitsScreen({ user, showToast }) {
   useEffect(() => {
     setPhase('idle');
     setResult(null);
+    setReading(null);
     setDetailText('');
     if (!selectedId) return;
     const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
@@ -86,10 +89,19 @@ export default function VisitsScreen({ user, showToast }) {
     }).catch(() => setShopVisits([]));
   }, [selectedId]);
 
+  // Seconds counter while waiting for a GPS fix (slow acquisition is visible, not a frozen button)
+  useEffect(() => {
+    if (phase !== 'locating') return undefined;
+    setLocSeconds(0);
+    const t = setInterval(() => setLocSeconds((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+
   const markVisited = async () => {
     if (!selected || busyRef.current) return;
     busyRef.current = true;
     setResult(null);
+    setReading(null);
     setDetailText('');
     try {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -101,12 +113,15 @@ export default function VisitsScreen({ user, showToast }) {
         return;
       }
       setPhase('locating');
-      const loc = await getFreshVisitLocation({ timeoutMs: 20000 });
+      const maxAccuracyM = Number(data.settings?.visitMaxGpsAccuracyM) || 30;
+      const loc = await getFreshVisitLocation({ timeoutMs: 20000, desiredAccuracyM: maxAccuracyM });
       if (!loc.ok) {
         setPhase('location_error');
         setDetailText(loc.message);
         return;
       }
+      setReading({ latitude: loc.latitude, longitude: loc.longitude, accuracy: loc.accuracy, meetsAccuracy: loc.meetsAccuracy, maxAccuracyM });
+      // A fix that misses the accuracy limit is still sent: the server applies the rule and records the attempt
       setPhase('verifying');
       const reachable = await recheck();
       if (!reachable) {
@@ -197,7 +212,9 @@ export default function VisitsScreen({ user, showToast }) {
           <VisitMap
             shop={{ latitude: selected.latitude, longitude: selected.longitude, shopName: selected.shopName }}
             radiusM={result?.radiusM || settings.visitGeofenceRadiusM}
-            agent={result ? { latitude: result.latitude, longitude: result.longitude, accuracy: result.accuracy, status: result.status, distanceM: result.distanceM } : null}
+            agent={result
+              ? { latitude: result.latitude, longitude: result.longitude, accuracy: result.accuracy, status: result.status, distanceM: result.distanceM }
+              : reading ? { latitude: reading.latitude, longitude: reading.longitude, accuracy: reading.accuracy, status: 'pending', distanceM: null } : null}
             height={240}
           />
         )}
@@ -206,7 +223,7 @@ export default function VisitsScreen({ user, showToast }) {
           <div role={busy ? 'status' : 'alert'} aria-live="polite" style={{ background: tone.bg, border: `1px solid ${tone.border}`, color: tone.fg, borderRadius: 12, padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
               {busy && <span className="sync-spinner" aria-hidden="true">⏳</span>}
-              {p.title}
+              {p.title}{phase === 'locating' && locSeconds > 0 ? ` ${locSeconds} s` : ''}
             </div>
             {(detailText || p.text) && <div style={{ marginTop: 4, fontSize: 14 }}>{detailText || p.text}</div>}
             {result && ['verified', 'flagged', 'too_far', 'poor_accuracy'].includes(phase) && (
@@ -216,6 +233,19 @@ export default function VisitsScreen({ user, showToast }) {
                 <div>GPS accuracy: <b>±{Math.round(result.accuracy)} m</b> (needed ±{result.maxAccuracyM} m or better)</div>
               </div>
             )}
+          </div>
+        )}
+
+        {reading && (
+          <div data-testid="gps-reading" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '10px 14px', fontSize: 13, color: '#334155', display: 'grid', gap: 2 }}>
+            <div style={{ fontWeight: 800, color: '#0f172a' }}>Your GPS reading</div>
+            <div>📍 {reading.latitude.toFixed(6)}, {reading.longitude.toFixed(6)}</div>
+            <div>
+              🎯 Accuracy <b>±{Math.round(reading.accuracy)} m</b>{' '}
+              {reading.meetsAccuracy
+                ? <span style={{ color: '#166534' }}>(within the ±{reading.maxAccuracyM} m limit)</span>
+                : <span style={{ color: '#b45309' }}>(needs ±{reading.maxAccuracyM} m or better: move to an open area for a sharper fix)</span>}
+            </div>
           </div>
         )}
 
@@ -237,7 +267,7 @@ export default function VisitsScreen({ user, showToast }) {
             minHeight: 60
           }}
         >
-          {busy ? (phase === 'locating' ? 'GETTING GPS…' : 'VERIFYING…') : !isConnected ? 'OFFLINE: CONNECT TO MARK VISIT' : !selected.locationRegistered ? 'SHOP LOCATION NOT REGISTERED' : phase === 'verified' ? 'MARK ANOTHER VISIT' : 'MARK AS VISITED'}
+          {busy ? (phase === 'locating' ? `GETTING GPS… ${locSeconds} s` : 'VERIFYING…') : !isConnected ? 'OFFLINE: CONNECT TO MARK VISIT' : !selected.locationRegistered ? 'SHOP LOCATION NOT REGISTERED' : phase === 'verified' ? 'MARK ANOTHER VISIT' : 'MARK AS VISITED'}
         </button>
         <p style={{ margin: 0, fontSize: 12, color: '#64748b', textAlign: 'center' }}>
           You must be within {settings.visitGeofenceRadiusM} m of the shop with GPS accuracy of ±{settings.visitMaxGpsAccuracyM} m or better.

@@ -96,7 +96,15 @@ let gradleBuildRoot = process.env.LINECART_GRADLE_BUILD_ROOT || '';
 if (!gradleBuildRoot && isWin && /onedrive/i.test(repoRoot)) {
   gradleBuildRoot = path.join(process.env.LOCALAPPDATA || repoRoot, 'linecart-gradle-build');
 }
-if (gradleBuildRoot) console.log(`[build-android] Gradle build output: ${gradleBuildRoot}`);
+let assetsDir = '';
+if (gradleBuildRoot) {
+  console.log(`[build-android] Gradle build output: ${gradleBuildRoot}`);
+  // Give Gradle a private copy of the synced web assets outside OneDrive (fresh for every build)
+  assetsDir = path.join(gradleBuildRoot, 'web-assets');
+  fs.rmSync(assetsDir, { recursive: true, force: true });
+  fs.cpSync(path.join(androidDir, 'app', 'src', 'main', 'assets'), assetsDir, { recursive: true });
+  console.log(`[build-android] Web assets for Gradle: ${assetsDir}`);
+}
 const task = wantAab ? 'bundleRelease' : cfg.buildType === 'release' ? 'assembleRelease' : 'assembleDebug';
 run(isWin ? `"${path.join(androidDir, 'gradlew.bat')}"` : './gradlew', [
   task,
@@ -106,7 +114,13 @@ run(isWin ? `"${path.join(androidDir, 'gradlew.bat')}"` : './gradlew', [
   '--no-daemon'
 ], {
   cwd: androidDir,
-  env: { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: androidHome, ...(gradleBuildRoot ? { LINECART_GRADLE_BUILD_ROOT: gradleBuildRoot } : {}) }
+  env: {
+    ...process.env,
+    JAVA_HOME: javaHome,
+    ANDROID_HOME: androidHome,
+    ...(gradleBuildRoot ? { LINECART_GRADLE_BUILD_ROOT: gradleBuildRoot } : {}),
+    ...(assetsDir ? { LINECART_ASSETS_DIR: assetsDir } : {})
+  }
 }, { retryOnce: /onedrive/i.test(repoRoot) });
 
 // 5. Collect output

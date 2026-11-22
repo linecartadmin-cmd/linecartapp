@@ -212,92 +212,145 @@ const LocationIntegrity = registerPlugin('LocationIntegrity');
 
 const VISIT_LOCATION_MESSAGES = {
   permission_denied: {
-    native: 'Location permission is off for LineCart. Allow it in Android Settings → Apps → LineCart Wholesale → Permissions → Location, then try again.',
+    native: 'Location permission is off for LineCart. Allow it in Android Settings → Apps → LineCart → Permissions → Location (choose "Allow only while using the app" and turn on "Use precise location"), then try again.',
     web: 'Location permission is blocked for this site. Allow location in your browser settings, then try again.'
   },
+  precise_required: 'LineCart only has approximate location, which is accurate to about 2 km. Shop visits need precise location: open Android Settings → Apps → LineCart → Permissions → Location and turn on "Use precise location", then try again.',
   services_disabled: 'Your phone\'s Location (GPS) is turned off. Turn it on in Quick Settings, then try again.',
-  timeout: 'Could not get a GPS fix in time. Step outside or near a window and try again.',
-  unavailable: 'Your location is unavailable right now. Check that GPS is on and try again.',
+  timeout: 'No GPS fix yet. Move near a door or window (or outside) with Location on, then try again.',
+  unavailable: 'Your location is unavailable right now. Check that Location is on and try again.',
   insecure: 'Location needs a secure (HTTPS) connection. Open LineCart over HTTPS and try again.'
 };
 
-/**
- * Get a FRESH device location for visit verification. Never returns a cached position.
- * Resolves to { ok: true, latitude, longitude, accuracy, fixTimestamp, mockLocation, platform }
- * or { ok: false, reason, message }.
- */
-export async function getFreshVisitLocation({ timeoutMs = 20000 } = {}) {
-  const isNative =
-    typeof window !== 'undefined' &&
-    typeof Capacitor?.isNativePlatform === 'function' &&
-    Capacitor.isNativePlatform();
-  const platform = isNative ? Capacitor.getPlatform?.() || 'android' : 'web';
-  const fail = (reason) => ({
+const PLUGIN_CODE_REASONS = {
+  PERMISSION_DENIED: 'permission_denied',
+  PRECISE_REQUIRED: 'precise_required',
+  SERVICES_DISABLED: 'services_disabled',
+  TIMEOUT: 'timeout',
+  UNAVAILABLE: 'unavailable'
+};
+
+const isPluginMissing = (err) =>
+  err?.code === 'UNIMPLEMENTED' || /not implemented|does not have an implementation|plugin is not/i.test(String(err?.message || ''));
+
+function visitFail(reason, isNative) {
+  return {
     ok: false,
     reason,
     message:
       reason === 'permission_denied'
         ? VISIT_LOCATION_MESSAGES.permission_denied[isNative ? 'native' : 'web']
         : VISIT_LOCATION_MESSAGES[reason] || VISIT_LOCATION_MESSAGES.unavailable
-  });
+  };
+}
+
+/**
+ * Core of getFreshVisitLocation with its platform dependencies passed in (so it can be tested without a device).
+ * deps: { isNative, platform, geolocation (Capacitor Geolocation), integrity (LocationIntegrity plugin),
+ *         webPosition(options) }
+ */
+export async function getFreshVisitLocationWith(deps, { timeoutMs = 20000, desiredAccuracyM = 30 } = {}) {
+  const { isNative, platform } = deps;
+  const fail = (reason) => visitFail(reason, isNative);
 
   try {
     if (isNative) {
-      let perms = await Geolocation.checkPermissions();
+      // Visits need PRECISE location (the server checks ±30 m by default). Ask for it, and tell the agent
+      // exactly what to change when only approximate location is allowed.
+      let perms = await deps.geolocation.checkPermissions();
       if (perms?.location !== 'granted') {
-        perms = await Geolocation.requestPermissions({ permissions: ['location'] });
+        perms = await deps.geolocation.requestPermissions({ permissions: ['location'] });
       }
-      // Visit verification needs precise location; approximate (coarse) location is not enough
-      if (perms?.location !== 'granted') return fail('permission_denied');
+      if (perms?.location !== 'granted') {
+        return fail(perms?.coarseLocation === 'granted' ? 'precise_required' : 'permission_denied');
+      }
 
-      // 1. Preferred: bundled native plugin (fresh fix + mock-location flag)
+      // 1. Bundled native plugin: fused provider (GPS + Wi-Fi + mobile network, same engine as customer
+      //    "Fetch Location"), fresh fixes only, waits for desiredAccuracyM, reports Android's mock flag.
       try {
-        const r = await LocationIntegrity.getFreshLocation({ timeoutMs });
+        const r = await deps.integrity.getFreshLocation({ timeoutMs, desiredAccuracyM });
         if (Number.isFinite(Number(r?.latitude)) && Number.isFinite(Number(r?.longitude))) {
+          const accuracy = Number(r.accuracy);
           return {
             ok: true,
             latitude: Number(r.latitude),
             longitude: Number(r.longitude),
-            accuracy: Number(r.accuracy),
+            accuracy,
             fixTimestamp: Number(r.time) || Date.now(),
-            mockLocation: r.isMock === true ? 'yes' : r.isMock === false ? 'no' : 'unknown',
+            mockLocation: r.isMock === true || r.anyMock === true ? 'yes' : r.isMock === false ? 'no' : 'unknown',
+            meetsAccuracy: typeof r.meetsAccuracy === 'boolean' ? r.meetsAccuracy : Number.isFinite(accuracy) && accuracy <= desiredAccuracyM,
+            source: r.source || 'plugin',
+            waitedMs: Number(r.waitedMs) || null,
             platform
           };
         }
+        return fail('unavailable');
       } catch (pluginErr) {
-        const msg = String(pluginErr?.message || pluginErr || '');
-        if (/disabled|turned off|provider/i.test(msg)) return fail('services_disabled');
-        if (/timeout|timed out/i.test(msg)) return fail('timeout');
-        // Plugin not present in this build: fall back to Capacitor Geolocation below
+        if (!isPluginMissing(pluginErr)) {
+          return fail(PLUGIN_CODE_REASONS[pluginErr?.code] || classifyLocationError(pluginErr, true).reason);
+        }
+        // Older app build without the plugin: fall through to Capacitor Geolocation
       }
 
-      // 2. Fallback: Capacitor Geolocation, fresh high-accuracy fix only (maximumAge 0, no coarse retry)
-      const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 });
+      // 2. Fallback (plugin missing): Capacitor Geolocation, fresh high-accuracy fix only (maximumAge 0)
+      const pos = await deps.geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0, enableLocationFallback: true });
+      const accuracy = Number(pos.coords.accuracy);
       return {
         ok: true,
         latitude: Number(pos.coords.latitude),
         longitude: Number(pos.coords.longitude),
-        accuracy: Number(pos.coords.accuracy),
+        accuracy,
         fixTimestamp: Number(pos.timestamp) || Date.now(),
         mockLocation: 'unknown',
+        meetsAccuracy: Number.isFinite(accuracy) && accuracy <= desiredAccuracyM,
+        source: 'capacitor-geolocation',
+        waitedMs: null,
         platform
       };
     }
 
     if (typeof window !== 'undefined' && window.isSecureContext === false) return fail('insecure');
-    const pos = await getWebPosition({ enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 });
+    const pos = await deps.webPosition({ enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 });
+    const accuracy = Number(pos.coords.accuracy);
     return {
       ok: true,
       latitude: Number(pos.coords.latitude),
       longitude: Number(pos.coords.longitude),
-      accuracy: Number(pos.coords.accuracy),
+      accuracy,
       fixTimestamp: Number(pos.timestamp) || Date.now(),
       mockLocation: 'unknown',
+      meetsAccuracy: Number.isFinite(accuracy) && accuracy <= desiredAccuracyM,
+      source: 'browser',
+      waitedMs: null,
       platform
     };
   } catch (err) {
     return fail(classifyLocationError(err, isNative).reason);
   }
+}
+
+/**
+ * Get a FRESH device location for visit verification. Never returns a cached position.
+ * Resolves to { ok: true, latitude, longitude, accuracy, fixTimestamp, mockLocation, meetsAccuracy, source, platform }
+ * or { ok: false, reason, message }. reason: permission_denied | precise_required | services_disabled | timeout |
+ * unavailable | insecure. A fix that misses desiredAccuracyM is still returned (meetsAccuracy=false): the server
+ * applies the accuracy rule and records the attempt.
+ */
+export async function getFreshVisitLocation({ timeoutMs = 20000, desiredAccuracyM = 30 } = {}) {
+  const isNative =
+    typeof window !== 'undefined' &&
+    typeof Capacitor?.isNativePlatform === 'function' &&
+    Capacitor.isNativePlatform();
+  return getFreshVisitLocationWith(
+    {
+      isNative,
+      platform: isNative ? Capacitor.getPlatform?.() || 'android' : 'web',
+      geolocation: Geolocation,
+      integrity: LocationIntegrity,
+      webPosition: getWebPosition
+    },
+    { timeoutMs, desiredAccuracyM }
+  );
 }
 
 /**

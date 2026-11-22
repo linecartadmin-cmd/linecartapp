@@ -319,6 +319,14 @@ function LocationsTab({ toast }) {
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [gpsBusy, setGpsBusy] = useState(false);
+  const [gpsInfo, setGpsInfo] = useState(null); // last device reading or error, shown under the button
+  const [maxAccuracyM, setMaxAccuracyM] = useState(30);
+  useEffect(() => {
+    api.getVisitSettings().then((r) => {
+      const v = Number(r?.settings?.visitMaxGpsAccuracyM);
+      if (r?.status === 200 && Number.isFinite(v) && v > 0) setMaxAccuracyM(v);
+    }).catch(() => {});
+  }, []);
 
   const load = () => api.getShopLocations(filter).then((r) => r?.status === 200 && setData(r)).catch(() => toast('Could not load shops.'));
   useEffect(() => { load(); }, [filter]);
@@ -334,13 +342,20 @@ function LocationsTab({ toast }) {
 
   const useMyGps = async () => {
     setGpsBusy(true);
-    const loc = await getFreshVisitLocation({ timeoutMs: 20000 });
+    setGpsInfo(null);
+    const loc = await getFreshVisitLocation({ timeoutMs: 20000, desiredAccuracyM: maxAccuracyM });
     setGpsBusy(false);
-    if (!loc.ok) return toast(loc.message);
+    if (!loc.ok) {
+      setGpsInfo({ error: loc.message });
+      return toast(loc.message);
+    }
     setLat(loc.latitude.toFixed(6));
     setLng(loc.longitude.toFixed(6));
     setSource('device_gps');
-    toast(`Location captured (±${Math.round(loc.accuracy)} m). Check it on the map before saving.`);
+    setGpsInfo({ accuracy: Math.round(loc.accuracy), meetsAccuracy: loc.meetsAccuracy });
+    toast(loc.meetsAccuracy
+      ? `Location captured (±${Math.round(loc.accuracy)} m). Check it on the map before saving.`
+      : `Location captured, but only ±${Math.round(loc.accuracy)} m accurate (visits need ±${maxAccuracyM} m). Stand at the shop entrance with a clear sky view and try again, or check it on the map.`);
   };
 
   const save = async () => {
@@ -398,7 +413,14 @@ function LocationsTab({ toast }) {
             <label style={{ fontSize: 12, fontWeight: 700, display: 'grid', gap: 2 }}>Latitude<input id="shop-lat" className="field" inputMode="decimal" value={lat} onChange={(e) => { setLat(e.target.value); setSource('manual'); }} /></label>
             <label style={{ fontSize: 12, fontWeight: 700, display: 'grid', gap: 2 }}>Longitude<input id="shop-lng" className="field" inputMode="decimal" value={lng} onChange={(e) => { setLng(e.target.value); setSource('manual'); }} /></label>
           </div>
-          <button type="button" className="secondary-button" onClick={useMyGps} disabled={gpsBusy} style={{ justifySelf: 'start', padding: '6px 10px' }}>{gpsBusy ? 'Getting GPS…' : 'Use my current GPS'}</button>
+          <button type="button" className="secondary-button" onClick={useMyGps} disabled={gpsBusy} aria-busy={gpsBusy} style={{ justifySelf: 'start', padding: '6px 10px' }}>{gpsBusy ? '⏳ Getting a fresh GPS fix…' : 'Use my current GPS'}</button>
+          {gpsInfo && (
+            <div data-testid="gps-info" role={gpsInfo.error ? 'alert' : 'status'} style={{ fontSize: 12, color: gpsInfo.error ? '#b91c1c' : gpsInfo.meetsAccuracy ? '#166534' : '#b45309' }}>
+              {gpsInfo.error
+                ? gpsInfo.error
+                : `GPS reading: ${lat}, ${lng} · ±${gpsInfo.accuracy} m${gpsInfo.meetsAccuracy ? '' : ` (needs ±${maxAccuracyM} m or better)`}`}
+            </div>
+          )}
           <label style={{ fontSize: 12, fontWeight: 700, display: 'grid', gap: 2 }}>Reason for change *<input id="shop-location-reason" className="field" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Pinned during site visit" /></label>
           {!valid && (lat || lng) && <div role="alert" style={{ fontSize: 12, color: '#b91c1c' }}>Enter a location inside India (latitude 6 to 37.5, longitude 68 to 97.5).</div>}
           <button type="button" className="primary-button" disabled={!valid || reason.trim().length < 3 || saving} onClick={save}>{saving ? 'Saving…' : 'Save shop location'}</button>

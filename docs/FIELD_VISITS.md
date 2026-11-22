@@ -5,8 +5,15 @@ Field Sales Agents prove they were at an assigned shop. The phone takes a fresh 
 ## How a visit is verified
 
 1. The agent opens **My Visits**, picks an assigned shop and taps **MARK AS VISITED**.
-2. The app asks for foreground location permission (precise location required) and takes a **fresh** fix: `maximumAge: 0`, high accuracy, a 20-second timeout, and no fallback to a cached or approximate position.
-   - **Android:** the app-local `LocationIntegrity` plugin (`client/android/.../LocationIntegrityPlugin.java`) gets a new fix from `LocationManager` and reports Android's mock-location flag. If the plugin is missing, the app falls back to Capacitor Geolocation and the mock state is recorded as `unknown`.
+2. The app asks for foreground location permission (precise location required) and takes a **fresh** fix: high accuracy, nothing older than the request, a 20-second limit, and no fallback to a cached or approximate position.
+   - **Android:** the app-local `LocationIntegrity` plugin (`client/android/.../LocationIntegrityPlugin.java`) uses Google Play services' **fused location provider**. This is the same engine as "Fetch Location" in customer creation; it combines GPS, Wi-Fi and mobile network, so it works indoors.
+     - It keeps reading fixes until one meets the server's accuracy limit (default ±30 m). Otherwise, at the time limit, it returns the best fix it saw, and the server applies the rule (`poor_accuracy`).
+     - It reports Android's mock-location flag; any mock fix during the request marks the visit as mock.
+     - Without Play services it uses the platform GPS and network providers with the same rules.
+     - If the plugin is missing (older builds), the app falls back to Capacitor Geolocation and the mock state is recorded as `unknown`.
+   - **Error messages:** each case has its own message: precise location off (approximate only), permission denied, Location turned off, and no fix in time.
+   - **On screen:** the screen shows the reading (latitude, longitude, accuracy) as soon as it arrives, with a seconds counter while waiting.
+   - **Why this changed (22 Nov 2026):** visits used to ask Android for a satellite-only GPS fix, which often times out indoors, while customer creation used the fused provider. Approximate-only permission was also misreported as "permission off".
    - **Web:** `navigator.geolocation`, with mock state `unknown`.
 3. The app sends `POST /api/visits/verify` with `shopId`, `latitude`, `longitude`, `accuracy`, the fix time, the mock flag, the platform and an idempotency key. Any client-side distance or status is ignored.
 4. The server (`server/visits.js`, `server/geo.js`):

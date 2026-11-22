@@ -49,7 +49,8 @@ Each build writes `<file>.sha256` and updates `dist-android/build-info.json`: ap
 - `npm install --prefix client` once.
 - On this machine the repo is inside OneDrive, which interferes with Gradle:
   - The script puts Gradle output in `%LOCALAPPDATA%\linecart-gradle-build` automatically. To do the same by hand, set `LINECART_GRADLE_BUILD_ROOT`.
-  - It retries Gradle once if OneDrive briefly locks freshly copied web assets.
+  - It gives Gradle a private copy of the synced web assets in `%LOCALAPPDATA%linecart-gradle-buildweb-assets` (`LINECART_ASSETS_DIR`), because OneDrive can briefly turn freshly copied files into placeholders that Gradle cannot read. The stale-bundle check reads that copy.
+  - It retries Gradle once if OneDrive still interferes.
 
 ## Release signing (owner only)
 
