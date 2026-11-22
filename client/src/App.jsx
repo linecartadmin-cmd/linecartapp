@@ -21,6 +21,7 @@ import {
 import { useToast, ConfirmDialog, Skeleton, SkeletonGroup } from './ui';
 import AppShell from './shell/AppShell';
 import { visibleNav, pageTitle, roleKeyFor, ROLE_LABELS } from './shell/navConfig';
+import { useAndroidBackButton } from './shell/useAndroidBackButton';
 
 // The phone-preview frame is a developer aid; import.meta.env.DEV is false in production builds.
 const DEV_PREVIEW_ENABLED = import.meta.env.DEV;
@@ -504,6 +505,10 @@ export default function App() {
     if (item.resetsPreselectedShop) setPrefCustomer('');
     navigate(item.pageId);
   };
+
+  // Android hardware back: open dialog or sheet first, then in-app history, then leave the app
+  // in the background at the role's home screen (never signs out, never clears data).
+  useAndroidBackButton({ enabled: Boolean(user), onBack: handleBack, isAtRoot: page === getRoleHome() && navHistory.length === 0 });
 
   if (!user) {
     return (
