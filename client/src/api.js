@@ -24,7 +24,17 @@ const isCapacitorNative = typeof window !== 'undefined' && (
   window.location.protocol === 'capacitor:' ||
   (window.location.hostname === 'localhost' && window.location.port === '')
 );
-const BASE_URL = ENV_API_URL || (isCapacitorNative ? 'https://linecart-staging.onrender.com' : (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:3001' : ''));
+// The Android app talks ONLY to the server baked in at build time (scripts/build-android.mjs sets
+// VITE_API_BASE_URL per environment). There is deliberately no fallback: a native build without a server
+// URL must show a configuration error rather than silently connect to staging or anywhere else.
+// The web app served by the backend uses the same origin ('').
+const BASE_URL = ENV_API_URL || (isCapacitorNative ? '' : (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:3001' : ''));
+
+// Build environment label shown in the app ('staging' builds are visibly marked).
+export const APP_BUILD_ENV = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_APP_ENV) || '';
+export const API_BASE_URL = BASE_URL;
+// True when this is a native app build that was produced without a server address.
+export const API_NOT_CONFIGURED = Boolean(isCapacitorNative && !ENV_API_URL);
 
 // Client capability level sent with orders. Level 2 = online-only ordering (no offline order queue).
 // The server can require a minimum level via MIN_ORDER_CLIENT_LEVEL to stop older app versions.

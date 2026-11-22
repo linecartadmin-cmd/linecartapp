@@ -62,3 +62,6 @@ scratch/
 Thumbs.db
 .vscode/
 .idea/
+
+# Android build outputs (scripts/build-android.mjs)
+dist-android/

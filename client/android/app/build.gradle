@@ -1,5 +1,32 @@
 apply plugin: 'com.android.application'
 
+// ---------------------------------------------------------------------------
+// Version: passed by scripts/build-android.mjs (-PlinecartVersionCode / -PlinecartVersionName),
+// which reads client/package.json. Every Play/APK upgrade needs a higher versionCode.
+// ---------------------------------------------------------------------------
+def lcVersionCode = (project.findProperty('linecartVersionCode') ?: '2').toString().toInteger()
+def lcVersionName = (project.findProperty('linecartVersionName') ?: '1.1.0').toString()
+
+// ---------------------------------------------------------------------------
+// Release signing: NEVER committed. Read from client/android/keystore.properties (git-ignored) or
+// environment variables. Without them, release outputs are produced UNSIGNED.
+//   storeFile=C:/path/outside/repo/linecart-release.jks
+//   storePassword=...
+//   keyAlias=linecart
+//   keyPassword=...
+// ---------------------------------------------------------------------------
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def signingValue = { String key, String envName -> keystoreProps.getProperty(key) ?: System.getenv(envName) }
+def releaseStoreFile = signingValue('storeFile', 'LINECART_KEYSTORE_FILE')
+def hasReleaseSigning = releaseStoreFile && file(releaseStoreFile).exists() &&
+        signingValue('storePassword', 'LINECART_KEYSTORE_PASSWORD') &&
+        signingValue('keyAlias', 'LINECART_KEY_ALIAS') &&
+        signingValue('keyPassword', 'LINECART_KEY_PASSWORD')
+
 android {
     namespace = "in.linecart.suite"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +34,9 @@ android {
         applicationId "in.linecart.suite"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode lcVersionCode
+        versionName lcVersionName
+        manifestPlaceholders = [appLabel: "LineCart Wholesale"]
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,12 +44,35 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword signingValue('storePassword', 'LINECART_KEYSTORE_PASSWORD')
+                keyAlias signingValue('keyAlias', 'LINECART_KEY_ALIAS')
+                keyPassword signingValue('keyPassword', 'LINECART_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
+        debug {
+            // Test builds install side by side with the production app and are clearly labelled
+            applicationIdSuffix ".staging"
+            versionNameSuffix "-staging"
+            manifestPlaceholders = [appLabel: "LineCart STAGING"]
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
+}
+
+if (!hasReleaseSigning) {
+    logger.lifecycle('[LineCart] No release signing configured (keystore.properties / LINECART_KEYSTORE_*): release outputs will be UNSIGNED.')
 }
 
 repositories {

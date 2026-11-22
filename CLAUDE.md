@@ -15,6 +15,7 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 ## Commands
 - `npm test`: starts a server on :3001 against a temporary SQLite file, seeds fixtures, runs all suites. `npm test -- <file>.test.js` runs one suite.
 - `LINECART_TEST_PG_URL=postgresql://user:pass@127.0.0.1:<port>/<db> npm test`: same suite on a disposable PostgreSQL on this machine (schema is dropped first; localhost only). A throwaway PostgreSQL 17 (UTF-8) can be started with the `embedded-postgres` npm package outside the repo.
+- Android APKs: `node scripts/build-android.mjs --env staging|local|production [--aab]` (output in `dist-android/`, guide in `docs/ANDROID_BUILD.md`). Production needs `LINECART_PRODUCTION_API_URL` and the owner's keystore; never commit signing files.
 - Android compile check: in `client/android`, `gradlew.bat :app:compileDebugJavaWithJavac` (JAVA_HOME = JDK 21, ANDROID_HOME = SDK). Run `npx cap sync android` in `client/` first after client changes.
 - `npm run build`: installs server and client, then runs `vite build` (output in `client/dist`).
 - `npm start`: `node server/index.js`.

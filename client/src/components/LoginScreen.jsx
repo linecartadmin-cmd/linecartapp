@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { api, INDIAN_MOBILE_REGEX } from '../api';
+import { api, INDIAN_MOBILE_REGEX, APP_BUILD_ENV, API_NOT_CONFIGURED, API_BASE_URL } from '../api';
 import {
   registerBiometricSession,
   unlockOfflineSession,
@@ -293,6 +293,18 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
             </span>
           </a>
         </div>
+
+        {APP_BUILD_ENV && APP_BUILD_ENV !== 'production' && (
+          <div className="mb-4 p-2 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-900 font-semibold text-center">
+            {APP_BUILD_ENV.toUpperCase()} BUILD · test data only · {API_BASE_URL.replace(/^https?:\/\//, '')}
+          </div>
+        )}
+
+        {API_NOT_CONFIGURED && (
+          <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">
+            This app was built without a server address and cannot sign in. Install a correctly built LineCart app.
+          </div>
+        )}
 
         {formError && (
           <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">

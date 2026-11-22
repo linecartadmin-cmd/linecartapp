@@ -22,6 +22,12 @@ allprojects {
         google()
         mavenCentral()
     }
+    // Optional: keep Gradle build output outside synced folders (OneDrive turns some generated folders into
+    // read-only placeholders and breaks the build). scripts/build-android.mjs sets this automatically.
+    def externalBuildRoot = System.getenv('LINECART_GRADLE_BUILD_ROOT')
+    if (externalBuildRoot) {
+        layout.buildDirectory = new File(externalBuildRoot, project.name)
+    }
 }
 
 task clean(type: Delete) {

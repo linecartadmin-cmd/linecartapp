@@ -20,7 +20,7 @@ Last updated: 22 Nov 2026. Baseline: commit `380a99c`.
 | T-1 | Test suite runs on a local PostgreSQL as well as SQLite | Done | `4f2db71` |
 | 5 | Functional fixes (delivery, payments, scope, passwords, lockout, demo data, permissions, validation, health, maintenance, logging) | Pending | |
 | 6 | UI and connectivity pass | Pending | |
-| 7 | Android manifest, versioning, signing config, release build | Pending | |
+| 7 | Android manifest, versioning, signing config, staging/production separation, build script; emulator-tested (see `docs/ANDROID_BUILD.md`) | Done except signed release: needs the owner's keystore and a production API URL | this commit |
 | 8 | Final regression and release | Pending | |
 
 ## Behaviour changes to know about
@@ -40,6 +40,7 @@ Last updated: 22 Nov 2026. Baseline: commit `380a99c`.
 | 21 Nov 2026 | `380a99c` unmodified, clean DB | 87 of 95 passed. All 8 failures were missing fixture data from a private `data.js`. |
 | 21 Nov 2026 | `de0a6f2` | 14 of 14 suites passed (all existing tests plus 8 new suites) |
 | 21 Nov 2026 | `b436ccb` | 16 of 16 suites passed |
+| 22 Nov 2026 | Android 1.1.0 changes | 212 of 212 tests on SQLite; client production build passes; staging and local debug APKs built; unsigned release APK built; emulator tests listed below |
 | 22 Nov 2026 | `4f2db71` + docs | 19 of 19 suites, 212 of 212 tests on SQLite and on PostgreSQL 17; client production build passes; Android `:app:compileDebugJavaWithJavac` passes; migration 007 upgrade of a populated pre-007 PostgreSQL database passes |
 
 What the tests cover:
@@ -48,14 +49,19 @@ What the tests cover:
   - Online order placement and blocking when the server is unreachable.
   - XSS payloads on the manager map and the delivery route map.
   - Shop visits with simulated GPS (verified, too far, poor accuracy); manager summary, visit log, map, location editor.
-- **Android:** the app module, including the `LocationIntegrity` plugin, compiles. Not yet run on an emulator or device.
-- **Not yet run:** Android emulator, physical device, production.
+- **Android emulator** (22 Nov 2026, AVD Pixel 7 / API 35, APK 1.1.0):
+  - Staging build: connects to `linecart-staging.onrender.com` from inside the app (`/api/ping` 200, authenticated routes 401 without a token), and the STAGING banner shows.
+  - Local build against `scripts/dev-local.mjs`: all four roles (agent, manager, admin, delivery) sign in, and every bottom-nav screen opens with no error boundary, horizontal overflow or JS error. Sign-out clears the token.
+  - Field visits through the native plugin: fresh GPS fix (fix age under 1 s, `isMock` false) verified at 40 m; mock location (test provider) flagged "sent for review"; Location turned off shows the GPS-off message; permission denied shows the permission message.
+  - Release build without a keystore produces an unsigned APK and logs that signing is missing.
+- **Not yet run:** physical device, visit-photo camera capture on Android, signed release, production.
 
 ## Blockers needing the owner
 - **Production API URL:** no production service exists yet. `linecart-backend.onrender.com` returns 404; only staging is live.
 - **Render Node version:** check the service's Environment (`NODE_VERSION`) or the build log.
-- **Release keystore:** the owner creates it and keeps the passwords.
-- **Device testing:** needs a phone with USB debugging, or an emulator. Field visits need it specifically for: the native fresh-fix and mock-location detection, runtime permission prompts, GPS-off/timeout handling, real accuracy indoors and outdoors, and Android 7-11 versus 12 or later behaviour.
+- **Release keystore:** the owner creates it and keeps the passwords (steps in `docs/ANDROID_BUILD.md`). Until then, release builds are unsigned.
+- **Staging test accounts:** role testing against staging needs the owner's staging logins; emulator role tests used local demo data.
+- **Physical device testing:** emulator tests passed; still needed on a real phone: real GPS accuracy indoors and outdoors, real mock-location apps, camera capture, biometric unlock, and Android 7-11 versus 12 or later behaviour.
 
 ## Behaviour changes from field visits (F-1)
 - New pages: **My Visits** (Field Sales Agent) and **Field Visits** (Sales Manager, Admin). Migration 007 adds them to stored role permissions once; admin customisations are kept.
@@ -68,6 +74,7 @@ What the tests cover:
 - Pushing to `main` auto-deploys `linecart-staging.onrender.com`.
 - Staging stores shop photos on local disk (`storage.provider: local-disk`), so photos are lost on redeploy. Configure Supabase Storage.
 - Staging `/health` publicly returns user, shop and order counts (fix planned in step 5).
-- The current APK has no CAMERA permission, so visit-photo capture (`getUserMedia`) can fail (fix planned in step 7).
+- Older APKs (before 1.1.0) have no CAMERA permission, so visit-photo capture can fail on them. 1.1.0 adds it.
+- Push notifications do not exist in the app (no Firebase configuration).
 - Embedded SQLite (dev only): statements run outside a transaction can still interleave with a concurrent transaction on the single connection. Production uses PostgreSQL.
 - The `INITIAL_ADMIN_PHONE`/`INITIAL_ADMIN_PASSWORD` boot path (`db.js`) can still update an existing admin row. It is operator-controlled (needs server environment access).
