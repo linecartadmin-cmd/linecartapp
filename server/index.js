@@ -5277,7 +5277,8 @@ app.get('/api/orders', requireAuth, async (req, res) => {
     const assignedAgentIds = getAssignedAgentIds(caller.id);
     orders = submittedOrders.filter((o) => assignedAgentIds.includes(Number(o.spersonid)));
   } else if (callerRole === 'delivery agent') {
-    orders = submittedOrders.filter((o) => Number(o.assignedDeliveryAgentId) === Number(caller.id));
+    // Same assignment field as GET /api/delivery/orders (orders.delivery_agent_id)
+    orders = submittedOrders.filter((o) => o.deliveryAgentId !== null && o.deliveryAgentId !== undefined && Number(o.deliveryAgentId) === Number(caller.id));
   } else {
     // Field Sales Agent: strictly scoped to caller.id
     orders = submittedOrders.filter((o) => Number(o.spersonid) === Number(caller.id));

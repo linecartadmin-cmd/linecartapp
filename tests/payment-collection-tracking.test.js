@@ -360,4 +360,26 @@ describe('Payment Collection Tracking Verification Suite', async () => {
     assert.strictEqual(sample.paymentAmountCollected, 200);
     assert.strictEqual(sample.paymentBalanceDue, 300);
   });
+
+  test('11. GET /api/orders for a Delivery Agent lists exactly the orders assigned to them (same as /api/delivery/orders)', async () => {
+    await insertTestOrder({ orderId: 'TEST-DELIV-SCOPE-MINE', total: 300, deliveryAgentId: deliveryUser.id });
+    await insertTestOrder({ orderId: 'TEST-DELIV-SCOPE-OTHER', total: 300, deliveryAgentId: otherDeliveryUser.id });
+
+    const res = await fetch(`${BASE_URL}/api/orders`, { headers: { 'Authorization': `Bearer ${deliveryToken}` } });
+    assert.strictEqual(res.status, 200);
+    const ids = (await res.json()).orders.map((o) => o.id);
+    assert.ok(ids.includes('TEST-DELIV-SCOPE-MINE'), 'own assigned order must be listed');
+    assert.ok(!ids.includes('TEST-DELIV-SCOPE-OTHER'), "another delivery agent's order must not be listed");
+
+    const del = await fetch(`${BASE_URL}/api/delivery/orders`, { headers: { 'Authorization': `Bearer ${deliveryToken}` } });
+    assert.strictEqual(del.status, 200);
+    const delBody = await del.json();
+    const delIds = (delBody.orders || delBody.result || []).map((o) => o.orderId || o.id).sort();
+    assert.deepStrictEqual([...ids].sort(), delIds, 'both routes must agree on the delivery agent\'s orders');
+
+    const other = await fetch(`${BASE_URL}/api/orders`, { headers: { 'Authorization': `Bearer ${otherDeliveryToken}` } });
+    const otherIds = (await other.json()).orders.map((o) => o.id);
+    assert.ok(otherIds.includes('TEST-DELIV-SCOPE-OTHER'));
+    assert.ok(!otherIds.includes('TEST-DELIV-SCOPE-MINE'));
+  });
 });

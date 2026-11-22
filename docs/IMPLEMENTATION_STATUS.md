@@ -68,6 +68,16 @@ What the tests cover:
 - New settings in Admin → Field Visits → Verification settings (defaults: 100 m radius, ±30 m accuracy, 30-minute duplicate window).
 - Shops with no coordinates (stored as 0,0) show "Shop location not registered" until a manager or admin sets their location.
 
+## Production read-only audit (22 Nov 2026)
+The existing Render service (`linecart-staging.onrender.com`) and its Supabase database are production. A read-only audit with the four real role accounts got 64 PASS, 3 FAIL, 2 REVIEW, 3 INFO:
+- **Passed:** sign-in, sessions, sign-out, 36 role-restriction checks, and agent/manager/delivery data scope. Admin totals match the database (316 shops, 7 orders, 5 users). No password or token fields in responses.
+- **Fixed in code (not yet deployed):** `GET /api/orders` returned no orders for Delivery Agents because it filtered on a field that is never set. It now uses `deliveryAgentId`, the same field as `/api/delivery/orders`.
+- **Open:**
+  - Photos are on local disk, and the 313 existing shop photo names are not served by this server.
+  - The service restarts when idle (probably Render's free plan), which also wipes local files.
+  - A Delivery Agent is listed in a Sales Manager's sales team.
+  - Managers see every shop in their cluster, not only their team's (rule to confirm).
+
 ## Known issues found during work
 - The project lives in OneDrive. OneDrive turns some Gradle build output folders into read-only placeholders, which can fail an Android build with `AccessDeniedException`. Delete the named folder and rebuild, or keep the project (or at least `client/node_modules` and `client/android/build`) outside OneDrive.
 - `server/migrate.js` (default command, no flags) seeds an outdated copy of the role permissions on an empty database; the server's own defaults differ. Low impact (insert-only), fix planned in step 5.
