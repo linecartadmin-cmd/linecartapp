@@ -22,9 +22,11 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 
 ## Hard rules
 - Never connect to Supabase or any remote DB from this machine. Tests refuse any `DATABASE_URL` except an explicitly opted-in localhost PostgreSQL (guard in `db.js` init and in `run-tests.mjs`); keep it that way.
-- Pushing to `main` auto-deploys `linecart-staging.onrender.com` (migrations run on staging at boot). The user approved pushing after each verified change; production deploys still need explicit approval.
-- Never deploy to production, change Render settings, or run `migrate.js --restore` against a remote DB without the user's explicit approval.
-- Work on `main`, in small commits. Never force-push or rewrite history. Push only after `npm test` and `npm run build --prefix client` pass.
+- **`linecart-staging.onrender.com` and its Supabase database ARE PRODUCTION** (decided 22 Nov 2026): real business data, despite the name. Pushing to `main` auto-deploys it and runs migrations at boot, so **ask the user before every push**.
+- Production testing is read-only by default. Write tests only with test records the user approved in advance, clearly labelled. Never create, modify or delete existing business records, and never run migrations, seed, reset, restore or cleanup there, without explicit approval. Never change Render or Supabase settings or environment variables.
+- Never type the user's real passwords yourself; credentialed checks run as scripts the user starts in their own terminal. Never print or store tokens, passwords or database URLs.
+- Every production change needs a backup (`npm run db:backup` from the Render shell, run by the user) and a written rollback plan first.
+- Work on `main`, in small commits. Never force-push or rewrite history. Push only after `npm test` and `npm run build --prefix client` pass, and only with the user's go-ahead.
 - Keep API contracts: legacy aliases (`/login`, `/createorder`, `/admin_panel/public/api/linecart/*`, ...) and the `status` field mirrored in JSON bodies. Add response fields; never rename or remove them.
 - No schema change without a reviewed, numbered migration that works on both Postgres and SQLite.
 - The server is the authority for identity, scope, prices and dates. The client only sends intent.
@@ -32,7 +34,7 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 ## Business decisions (final)
 - **Order creation is online only.** No offline order queue, no TEMP order ids. The sync queue still carries delivery-status and price updates.
 - Admin setup in production requires a `SETUP_TOKEN`.
-- Production API URL: not decided yet; only `linecart-staging.onrender.com` exists. The production APK must not use staging.
+- Production = the existing Render service (`https://linecart-staging.onrender.com`) and its Supabase database. No separate staging environment exists. `scripts/build-android.mjs --env production` still refuses URLs containing "staging": open decision (custom domain, rename of the service, or an explicit override).
 
 ## Environment on this machine
 Git 2.56, Node 22.23 LTS, gh 2.105, Temurin JDK 21, Android SDK at `%LOCALAPPDATA%\Android\Sdk` (platform 36, build-tools 36.0.0). New shells may need PATH refreshed from the Machine and User values.
