@@ -1,0 +1,124 @@
+/*
+ * LineCart "Market ledger" design tokens (light theme only in this phase).
+ *
+ * New code uses the --lc-* tokens. Legacy variables (--ink, --blue, --line, --bg, ...) are still
+ * defined in reference-theme.css with their original values so screens that have not been
+ * migrated keep their current look. The legacy alias block at the end of this file only
+ * re-points legacy names whose value is identical to a new token.
+ */
+:root {
+  /* Brand: LineCart blue deepened for AA contrast with white text (5.6:1). */
+  --lc-brand-800: #06475f;
+  --lc-brand-700: #08597a;
+  --lc-brand-600: #0a6f94;
+  --lc-brand-100: #d3ecf6;
+  --lc-brand-50: #e8f5fa;
+  --lc-brand-logo: #12aee2; /* logo and illustrations only, never text on white */
+  --lc-on-brand: #ffffff;
+
+  /* Ink and cool slate neutrals */
+  --lc-ink: #17232c;
+  --lc-ink-2: #34434c;
+  --lc-muted: #5e6e77; /* 5.3:1 on white */
+  --lc-subtle: #7c8b94; /* 3.6:1: icons and large text only */
+  --lc-bg: #f6f8f9;
+  --lc-surface: #ffffff;
+  --lc-surface-2: #eef2f4;
+  --lc-surface-3: #e3e9ec;
+  --lc-border: #e1e7ea;
+  --lc-border-strong: #8796a0; /* inputs and controls: 3.0:1 against white (WCAG 1.4.11) */
+  --lc-scrim: rgba(15, 26, 33, 0.48);
+
+  /* Semantic state colours (always paired with a text label and an icon) */
+  --lc-success: #1c7c4a;
+  --lc-success-bg: #e7f5ec;
+  --lc-warning: #8f5400;
+  --lc-warning-bg: #fff3d9;
+  --lc-danger: #b3261e;
+  --lc-danger-bg: #fdecea;
+  --lc-info: #0a6f94;
+  --lc-info-bg: #e8f5fa;
+  --lc-transit: #5b4bb7;
+  --lc-transit-bg: #efedfb;
+  --lc-focus: rgba(10, 111, 148, 0.45);
+
+  /* Typography */
+  --lc-font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans Tamil', 'Nirmala UI', 'Latha', sans-serif;
+  --lc-font-head: 'Manrope', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans Tamil', 'Nirmala UI', sans-serif;
+  --lc-font-tamil: 'Noto Sans Tamil', 'Nirmala UI', 'Latha', 'Inter', sans-serif;
+  --lc-font-mono: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+
+  --lc-text-xs: 0.75rem;   /* 12px: captions, minimum anywhere */
+  --lc-text-sm: 0.8125rem; /* 13px: labels */
+  --lc-text-md: 0.875rem;  /* 14px: dense desktop text, tables */
+  --lc-text-base: 1rem;    /* 16px: body on phones, all inputs */
+  --lc-text-lg: 1.125rem;  /* 18px: section titles */
+  --lc-text-xl: 1.25rem;   /* 20px: card titles */
+  --lc-text-2xl: 1.5rem;   /* 24px: page titles on phones, metrics */
+  --lc-text-3xl: 1.75rem;  /* 28px: page titles on desktop */
+  --lc-leading-tight: 1.25;
+  --lc-leading-normal: 1.5;
+  --lc-weight-regular: 400;
+  --lc-weight-medium: 500;
+  --lc-weight-semibold: 600;
+  --lc-weight-bold: 700;
+  --lc-weight-heavy: 800;
+
+  /* Spacing: 4px base */
+  --lc-space-0: 0;
+  --lc-space-1: 4px;
+  --lc-space-2: 8px;
+  --lc-space-3: 12px;
+  --lc-space-4: 16px;
+  --lc-space-5: 20px;
+  --lc-space-6: 24px;
+  --lc-space-8: 32px;
+  --lc-space-10: 40px;
+  --lc-space-12: 48px;
+  --lc-space-16: 64px;
+
+  /* Radius */
+  --lc-radius-sm: 4px;
+  --lc-radius-md: 6px;
+  --lc-radius-lg: 8px;
+  --lc-radius-xl: 12px;
+  --lc-radius-full: 999px;
+
+  /* Borders and elevation: borders first, shadows only for floating layers */
+  --lc-border-width: 1px;
+  --lc-shadow-1: 0 1px 2px rgba(23, 35, 44, 0.06);
+  --lc-shadow-2: 0 4px 16px rgba(23, 35, 44, 0.1);
+  --lc-shadow-3: 0 12px 32px rgba(23, 35, 44, 0.18);
+
+  /* Sizing */
+  --lc-control-sm: 36px;
+  --lc-control-md: 44px;
+  --lc-control-lg: 56px;
+  --lc-touch-min: 48px;
+  --lc-topbar-h: 60px;
+  --lc-bottomnav-h: 64px;
+  --lc-sidebar-w: 248px;
+  --lc-rail-w: 76px;
+  --lc-content-max: 1280px;
+
+  /* Layers */
+  --lc-z-nav: 30;
+  --lc-z-sheet: 60;
+  --lc-z-dialog: 70;
+  --lc-z-toast: 80;
+
+  /* Motion */
+  --lc-duration-fast: 120ms;
+  --lc-duration: 200ms;
+  --lc-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Breakpoints (reference values; CSS media queries cannot read variables):
+     phone < 600px, tablet 600-1023px, desktop >= 1024px, wide >= 1440px */
+}
+
+/* Legacy aliases: only names whose original value equals a new token. Unmigrated screens are unchanged. */
+:root {
+  --ink: var(--lc-ink);
+  --bg: var(--lc-bg);
+  --white: var(--lc-surface);
+}

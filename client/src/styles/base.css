@@ -1,0 +1,124 @@
+/*
+ * Base layer for the Market ledger design system.
+ * Fonts are self-hosted in client/public/fonts (works offline inside the Android app).
+ * Rules here use :where() (zero specificity) so legacy screen styles still win where they exist.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/inter-latin-wght-normal.woff2') format('woff2-variations'), url('/fonts/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/inter-latin-ext-wght-normal.woff2') format('woff2-variations'), url('/fonts/inter-latin-ext-wght-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('/fonts/manrope-latin-wght-normal.woff2') format('woff2-variations'), url('/fonts/manrope-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('/fonts/manrope-latin-ext-wght-normal.woff2') format('woff2-variations'), url('/fonts/manrope-latin-ext-wght-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Noto Sans Tamil';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/noto-sans-tamil-tamil-wght-normal.woff2') format('woff2-variations'), url('/fonts/noto-sans-tamil-tamil-wght-normal.woff2') format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--lc-font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:lang(ta),
+.lc-tamil {
+  font-family: var(--lc-font-tamil);
+  line-height: 1.6;
+}
+
+/* Visible keyboard focus on every interactive element that does not define its own. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--lc-focus);
+  outline-offset: 2px;
+}
+
+.lc-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.lc-sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Layout foundations */
+.lc-container {
+  width: 100%;
+  max-width: var(--lc-content-max);
+  margin-inline: auto;
+  padding-inline: var(--lc-space-4);
+}
+@media (min-width: 1024px) {
+  .lc-container { padding-inline: var(--lc-space-6); }
+}
+.lc-stack { display: flex; flex-direction: column; gap: var(--lc-space-4); min-width: 0; }
+.lc-stack--sm { gap: var(--lc-space-2); }
+.lc-stack--lg { gap: var(--lc-space-6); }
+.lc-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lc-space-2); min-width: 0; }
+.lc-grid { display: grid; gap: var(--lc-space-4); grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 600px) {
+  .lc-grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lc-grid--3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .lc-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lc-grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Scroll lock used by Dialog and BottomSheet */
+.lc-scroll-locked {
+  overflow: hidden !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
