@@ -1704,18 +1704,18 @@ function verifyFieldAgentScope(req, res, requestedSpersonId) {
   return { authorized: false };
 }
 
-const CLOSED_DELIVERY_STATUSES = new Set(['delivered', 'cancelled', 'rejected']);
-
 /**
- * Shop ids on the Delivery Agent's own open deliveries (T0.2). Orders are matched to shops the
- * same way as GET /api/delivery/orders (customer id, or the S-prefixed shop id).
+ * Shop ids a Delivery Agent may reach (T0.2, L7 owner decision 23 Nov 2026): every shop with at
+ * least one order assigned to this agent, whatever its status. Closed deliveries (Delivered,
+ * Cancelled, Rejected) keep the shop in scope as history; shops never assigned stay out.
+ * Orders are matched to shops the same way as GET /api/delivery/orders (customer id, or the
+ * S-prefixed shop id).
  */
 function getDeliveryAgentShopIds(deliveryAgentId) {
   const ids = new Set();
   for (const o of submittedOrders) {
     if (o.deliveryAgentId === null || o.deliveryAgentId === undefined) continue;
     if (Number(o.deliveryAgentId) !== Number(deliveryAgentId)) continue;
-    if (CLOSED_DELIVERY_STATUSES.has(String(o.status || '').toLowerCase())) continue;
     if (o.customerId !== undefined && o.customerId !== null && o.customerId !== '') ids.add(Number(o.customerId));
     if (o.shopId) {
       const n = Number(String(o.shopId).replace(/^S0*/, ''));
@@ -1779,7 +1779,7 @@ function canCallerAccessShop(caller, shop) {
     return assignedAgentId === callerId;
   }
 
-  // Delivery Agent: only shops on their own open deliveries (T0.2; was: every shop in their cluster)
+  // Delivery Agent: only shops with a delivery assigned to them, open or closed (T0.2/L7; was: every shop in their cluster)
   if (role === 'delivery agent') {
     return getDeliveryAgentShopIds(callerId).has(Number(shop.shopid ?? shop.shop_id));
   }
@@ -3337,7 +3337,7 @@ app.get('/api/shops', requireAuth, async (req, res) => {
              Number(s.clusterid) === Number(caller.clusterid);
     });
   } else if (callerRole === 'delivery agent') {
-    // R1 (T0.2): was every shop; now only shops on the agent's own open deliveries
+    // R1 (T0.2/L7): was every shop; now only shops with a delivery assigned to the agent, open or closed
     const deliveryShopIds = getDeliveryAgentShopIds(caller.id);
     scopedShops = shops.filter((s) => deliveryShopIds.has(Number(s.shopid)));
   } else {

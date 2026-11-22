@@ -28,7 +28,7 @@ async function removeOrder(orderId = ORDER_ID) {
 
 const shopIdsOf = (json) => new Set((json?.shops || []).map((s) => Number(s.shopid)));
 
-test('R1: a Delivery Agent lists only shops on their own open deliveries', async () => {
+test('R1: a Delivery Agent lists only shops with a delivery assigned to them (open or closed)', async () => {
   const da = await tokenFor(IDS.delivery);
   await removeOrder();
   const before = await api('/api/shops', { token: da });
@@ -40,23 +40,20 @@ test('R1: a Delivery Agent lists only shops on their own open deliveries', async
     const during = await api('/api/shops', { token: da });
     assert.equal(during.status, 200);
     const ids = shopIdsOf(during.json);
-    assert.ok(ids.has(33), 'shop on an open delivery is listed');
+    assert.ok(ids.has(33), 'shop with an assigned delivery is listed');
     for (const id of [34, 36, 40]) assert.ok(!ids.has(id), `shop ${id} without a delivery is not listed`);
     // Response shape unchanged
     const shop = during.json.shops.find((s) => Number(s.shopid) === 33);
     assert.equal(shop.assignedAgentId, IDS.agent2);
     assert.equal(typeof shop.assignedAgentName, 'string');
 
-    // Another delivery agent does not see it
-    const otherDa = await db.query("SELECT id FROM users WHERE role = 'Delivery Agent' AND id <> $1 AND active = 1 LIMIT 1", [IDS.delivery]);
-    if (otherDa.rowCount) {
-      const other = await api('/api/shops', { token: await tokenFor(otherDa.rows[0].id) });
-      assert.ok(!shopIdsOf(other.json).has(33));
-    }
+    // Isolation between two Delivery Agents is covered by tests/delivery-agent-isolation.test.js
 
+    // L7 (owner decision): a closed delivery keeps the shop as history; shops never assigned stay out
     await db.query("UPDATE orders SET status = 'Delivered' WHERE order_id = $1", [ORDER_ID]);
     const after = await api('/api/shops', { token: da });
-    assert.ok(!shopIdsOf(after.json).has(33), 'a delivered order no longer opens the shop');
+    assert.ok(shopIdsOf(after.json).has(33), 'a delivered order keeps the shop listed');
+    for (const id of [34, 36, 40]) assert.ok(!shopIdsOf(after.json).has(id), `shop ${id} never assigned stays out`);
   } finally {
     await removeOrder();
   }

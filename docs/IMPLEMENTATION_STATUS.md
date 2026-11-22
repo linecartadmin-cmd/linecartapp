@@ -87,12 +87,11 @@ The existing Render service (`linecart-staging.onrender.com`) and its Supabase d
   - A Delivery Agent is listed in a Sales Manager's sales team.
   - Managers see every shop in their cluster, not only their team's (rule to confirm).
 
-## Phase 0 Stage A: open owner decisions (branch `phase0-stage-a`, not deployed)
-- **L7: a Delivery Agent's shop access after deliveries close.** Stage A (T0.2/T0.4) scopes a Delivery Agent to shops that have one of their deliveries still open. Open means any status except Delivered, Cancelled or Rejected, so "Picked up", "Could not deliver" and "Pending" keep access for a retry. Once every delivery at a shop is closed, the agent can no longer list that shop or open its order history or shop photo.
-  - **Is this intended?** This was an implementation choice, not a written business rule. The spec says only that a Delivery Agent "sees only assigned shops". Before Stage A, they could see every shop in their cluster.
-  - **What stays:** the agent's delivery list (`/api/delivery/orders`) still shows closed deliveries with the shop name and address, so delivery history is not lost. The delivery app uses only that list and the status update. It never calls the shop list, order history or shop photo, so the app is not affected.
-  - **Options for the owner:** (a) keep this; (b) keep access to shops from any delivery ever assigned to the agent; (c) keep access for a set number of days after the last delivery closes.
-  - **Pinned by:** `tests/delivery-agent-isolation.test.js` holds the current behaviour, so any change must be made on purpose.
+## Phase 0 Stage A: owner decisions (branch `phase0-stage-a`, not deployed)
+- **L7: Delivery Agent shop access (decided 23 Nov 2026).** A Delivery Agent can reach every shop they have been assigned at least one delivery to, whatever the delivery status. Closed deliveries (Delivered, Cancelled, Rejected) keep the shop as history. The shop list, order history and shop photo all follow this rule. Shops never assigned to the agent stay out of reach, and one agent cannot reach another agent's shops.
+  - **Unchanged:** delivery assignment, delivery status, order ownership, and the delivery list (`/api/delivery/orders`).
+  - **Limits (no assignment history is stored):** access comes from the orders as they are now. If an admin reassigns an order to another agent, or deletes the order, the first agent loses that shop unless another of their orders is there. Keeping access in those cases would need a reviewed migration that records past assignments.
+  - **Tested by:** `tests/delivery-agent-isolation.test.js` (two agents, every status, after closure) and `tests/scope-fixes.test.js`.
 - **M2: production role names.** Before deploying, run a read-only `SELECT role, COUNT(*) FROM users GROUP BY role` (owner). Any role other than Admin, Sales Manager, Field Sales Agent or Delivery Agent (letter case and surrounding spaces ignored) would be refused on staff routes.
 
 ## Known issues found during work

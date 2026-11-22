@@ -1,13 +1,14 @@
 /**
- * Delivery Agent isolation (Stage A review, L8a) and closed-delivery behaviour (L7).
+ * Delivery Agent isolation (Stage A review, L8a) and historical shop access (L7).
  *
- * Two Delivery Agents: fixture DA 50 and a synthetic second DA. Each has one open delivery at a
+ * Two Delivery Agents: fixture DA 50 and a synthetic second DA. Each has one delivery at a
  * different fixture shop (33 and 34, both cluster 1, assigned to Agent 2). Neither may reach the
  * other's shop through the shop list, order history or shop photo, nor the other's delivery.
  *
- * L7 is pinned as CURRENT behaviour, pending the owner's decision (docs/IMPLEMENTATION_STATUS.md):
- * once a delivery is closed (Delivered, Cancelled or Rejected), the shop leaves the agent's shop
- * scope, while the delivery itself stays in their delivery list.
+ * L7 (owner decision, 23 Nov 2026): a Delivery Agent keeps historical access to every shop they
+ * have been assigned at least one delivery to, also after every delivery there is Delivered,
+ * Cancelled or Rejected. Shops never assigned to them stay out of reach, and isolation between
+ * agents holds after closure too.
  *
  * Synthetic records only; the two test photos are written to the gitignored local uploads folder
  * and removed afterwards.
@@ -97,25 +98,40 @@ test('L8a: two Delivery Agents cannot reach each other\'s shops or deliveries', 
   assert.ok(unchanged.rows.every((r) => r.status === 'In progress'), 'no delivery was changed by the other agent');
 });
 
-test('L7 (current behaviour, pending owner decision): a closed delivery ends shop access but stays in the delivery list', async (t) => {
-  const { A } = await setup(t);
-  assert.equal((await api(`/api/shops/${A.shop}/order-history`, { token: A.token })).status, 200);
+/** Shop list, order history and photo for one agent and one shop: [listed, historyStatus, photoStatus]. */
+async function shopAccess(me, shopId, photo) {
+  return [
+    shopIds((await api('/api/shops', { token: me.token })).json).has(shopId),
+    (await api(`/api/shops/${shopId}/order-history`, { token: me.token })).status,
+    await photoStatus(me.token, photo)
+  ];
+}
 
-  // Statuses that keep the shop in scope (the delivery may still be retried)
-  for (const status of ['Picked up', 'Could not deliver', 'Pending']) {
+test('L7: historical access to an assigned shop survives every closed status, for list, history and photo', async (t) => {
+  const { A } = await setup(t);
+  assert.deepEqual(await shopAccess(A, A.shop, A.photo), [true, 200, 200], 'open delivery');
+  for (const status of ['Picked up', 'Could not deliver', 'Pending', 'Delivered', 'Cancelled', 'Rejected']) {
     await db.query('UPDATE orders SET status = $1 WHERE order_id = $2', [status, A.order]);
-    assert.equal((await api(`/api/shops/${A.shop}/order-history`, { token: A.token })).status, 200, status);
+    assert.deepEqual(await shopAccess(A, A.shop, A.photo), [true, 200, 200], `${status}: access kept`);
+    // The delivery record itself stays in the agent's delivery list
+    const row = ((await api('/api/delivery/orders', { token: A.token })).json.orders || []).find((o) => (o.orderId || o.id) === A.order);
+    assert.ok(row && row.shopName, `${status}: delivery still listed with its shop`);
   }
-  // Closed statuses end shop access
-  for (const status of ['Delivered', 'Cancelled', 'Rejected']) {
-    await db.query('UPDATE orders SET status = $1 WHERE order_id = $2', [status, A.order]);
-    assert.ok(!shopIds((await api('/api/shops', { token: A.token })).json).has(A.shop), `${status}: shop not listed`);
-    assert.equal((await api(`/api/shops/${A.shop}/order-history`, { token: A.token })).status, 403, `${status}: history`);
-    assert.equal(await photoStatus(A.token, A.photo), 403, `${status}: photo`);
-    // The delivery record itself, with the shop name and address, stays visible to the agent
-    const deliveries = await api('/api/delivery/orders', { token: A.token });
-    const row = (deliveries.json.orders || []).find((o) => (o.orderId || o.id) === A.order);
-    assert.ok(row, `${status}: delivery still listed`);
-    assert.ok(row.shopName, `${status}: delivery keeps its shop name`);
+  // A shop never assigned to this agent is still refused
+  // (the photo check refuses on shop access before looking for the file, so no file is needed)
+  assert.deepEqual(await shopAccess(A, 36, `shop_36_${crypto.randomUUID()}.jpg`), [false, 403, 403], 'never-assigned shop 36');
+});
+
+test('L7: after all deliveries at both shops close, each agent keeps its own history and still cannot reach the other', async (t) => {
+  const { A, B } = await setup(t);
+  for (const [order, status] of [[A.order, 'Delivered'], [B.order, 'Cancelled']]) {
+    await db.query('UPDATE orders SET status = $1 WHERE order_id = $2', [status, order]);
   }
+  for (const [me, label] of [[A, 'DA 50'], [B, 'second DA']]) {
+    assert.deepEqual(await shopAccess(me, me.shop, me.photo), [true, 200, 200], `${label}: own closed shop`);
+    assert.deepEqual(await shopAccess(me, me.otherShop, me.otherPhoto), [false, 403, 403], `${label}: other agent's closed shop`);
+  }
+  // Closing deliveries changed nothing else: assignment and status are exactly what was set
+  const rows = (await db.query('SELECT order_id, status, delivery_agent_id FROM orders WHERE order_id IN ($1, $2) ORDER BY order_id', [A.order, B.order])).rows;
+  assert.deepEqual(rows.map((r) => [r.status, Number(r.delivery_agent_id)]), [['Delivered', A.id], ['Cancelled', B.id]]);
 });
