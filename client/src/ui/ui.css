@@ -157,7 +157,7 @@ button.lc-li:hover, a.lc-li:hover { background: var(--lc-surface-2); }
 .lc-scrim { position: fixed; inset: 0; z-index: var(--lc-z-dialog); background: var(--lc-scrim); display: flex; align-items: center; justify-content: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); animation: lc-fade var(--lc-duration) var(--lc-ease); }
 .lc-scrim--sheet { z-index: var(--lc-z-sheet); align-items: flex-end; padding: 0; }
 @keyframes lc-fade { from { opacity: 0; } }
-@keyframes lc-rise { from { transform: translateY(24px); opacity: 0.6; } }
+@keyframes lc-rise { from { transform: translateY(24px); } }
 .lc-dialog { width: min(480px, 100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; background: var(--lc-surface); border-radius: var(--lc-radius-xl); box-shadow: var(--lc-shadow-3); outline: none; animation: lc-rise var(--lc-duration) var(--lc-ease); }
 .lc-dialog--wide { width: min(720px, 100%); }
 .lc-dialog__head { display: flex; align-items: flex-start; gap: var(--lc-space-3); padding: var(--lc-space-5) var(--lc-space-5) var(--lc-space-2); }

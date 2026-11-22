@@ -1,26 +1,15 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import Icon from './Icon';
+import { inferToastVariant, TOAST_VARIANTS } from './toastVariant';
+
+export { inferToastVariant };
 
 const ToastContext = createContext(null);
 
 const ICONS = { info: Info, success: CheckCircle2, warning: AlertTriangle, error: AlertCircle };
 const DURATION = { info: 4000, success: 4000, warning: 7000, error: null }; // errors stay until dismissed
 const MAX_VISIBLE = 3;
-
-// Existing screens call showToast('message') with no type. To keep that calling convention and
-// still keep failures on screen, the variant is inferred from the wording when none is given.
-const ERROR_RE = /\b(fail(ed|ure)?|error|could ?n[o']t|cannot|can't|unable|denied|invalid|not placed|not saved|not sent|rejected by server|refused|timed? ?out|no internet|no connection)\b/i;
-const WARNING_RE = /\b(warning|notice|pending|queued|will be sent|not yet|unsynced|retry|offline)\b/i;
-const SUCCESS_RE = /\b(success(fully)?|saved|updated|created|placed|approved|deleted|removed|assigned|welcome|synced|verified|delivered|recorded|copied)\b/i;
-
-export function inferToastVariant(message) {
-  const text = String(message || '');
-  if (ERROR_RE.test(text)) return 'error';
-  if (WARNING_RE.test(text)) return 'warning';
-  if (SUCCESS_RE.test(text)) return 'success';
-  return 'info';
-}
 
 function normalizeOptions(opts) {
   if (!opts) return {};
@@ -39,7 +28,7 @@ export function ToastProvider({ children }) {
   const show = useCallback((message, opts) => {
     if (message == null || message === '') return null;
     const o = normalizeOptions(opts);
-    const variant = ['info', 'success', 'warning', 'error'].includes(o.variant) ? o.variant : inferToastVariant(message);
+    const variant = TOAST_VARIANTS.includes(o.variant) ? o.variant : inferToastVariant(message);
     const id = ++seq.current;
     const duration = o.duration !== undefined ? o.duration : DURATION[variant];
     setToasts((list) => {

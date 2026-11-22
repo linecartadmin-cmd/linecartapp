@@ -18,9 +18,14 @@ import {
   clearUserCachedData,
   hasUnsyncedMutations
 } from './offline/offlineDb';
+import { useToast, ConfirmDialog, Skeleton, SkeletonGroup } from './ui';
+import AppShell from './shell/AppShell';
+import { visibleNav, pageTitle, roleKeyFor, ROLE_LABELS } from './shell/navConfig';
+
+// The phone-preview frame is a developer aid; import.meta.env.DEV is false in production builds.
+const DEV_PREVIEW_ENABLED = import.meta.env.DEV;
 
 // Lazy-loaded secondary screens for reduced initial bundle and fast APK startup
-const logoIcon = '/lincart_flashicon.png';
 const OrderEntryScreen = lazy(() => import('./components/OrderEntryScreen'));
 const ReportsScreen = lazy(() => import('./components/ReportsScreen'));
 const CustomersScreen = lazy(() => import('./components/CustomersScreen'));
@@ -42,33 +47,12 @@ const ItemsScreen = lazy(() => import('./components/ItemsScreen'));
 
 function ScreenLoadingSkeleton() {
   return (
-    <div className="screen-loading-skeleton" role="status" aria-label="Loading page content" style={{
-      padding: '28px 20px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '16px',
-      maxWidth: '900px',
-      margin: '0 auto'
-    }}>
-      <div style={{
-        height: '24px',
-        width: '35%',
-        borderRadius: '6px',
-        background: '#e2e8f0',
-        opacity: 0.7
-      }} />
-      <div style={{
-        height: '96px',
-        borderRadius: '12px',
-        background: '#f8fafc',
-        border: '1px solid #e2e8f0'
-      }} />
-      <div style={{
-        height: '180px',
-        borderRadius: '12px',
-        background: '#f8fafc',
-        border: '1px solid #e2e8f0'
-      }} />
+    <div className="screen-loading-skeleton" style={{ maxWidth: '900px', margin: '0 auto', padding: '8px 0' }}>
+      <SkeletonGroup label="Loading page content">
+        <Skeleton width="35%" height={24} />
+        <Skeleton height={96} radius="var(--lc-radius-lg)" />
+        <Skeleton height={180} radius="var(--lc-radius-lg)" />
+      </SkeletonGroup>
     </div>
   );
 }
@@ -179,10 +163,11 @@ export default function App() {
     return 'overview';
   });
 
-  const [androidPreview, setAndroidPreview] = useState(false);
+  // Development-only phone preview frame (never available in production builds)
+  const [androidPreviewState, setAndroidPreview] = useState(false);
+  const androidPreview = DEV_PREVIEW_ENABLED && androidPreviewState;
   const [prefCustomer, setPrefCustomer] = useState('');
-  const [toastMsg, setToastMsg] = useState('');
-  const [toastTimer, setToastTimer] = useState(null);
+  const toastApi = useToast();
 
   // Data from backend
   const [clusters, setClusters] = useState([]);
@@ -200,12 +185,10 @@ export default function App() {
     );
   });
 
-  const showToast = (msg) => {
-    setToastMsg(msg);
-    if (toastTimer) clearTimeout(toastTimer);
-    const timer = setTimeout(() => setToastMsg(''), 2500);
-    setToastTimer(timer);
-  };
+  // Same calling convention as before: showToast(message). An optional second argument
+  // ('success' | 'error' | 'warning' | 'info' or { variant, duration }) is accepted; without it the
+  // type is inferred from the wording, and errors stay on screen until dismissed.
+  const showToast = (msg, opts) => toastApi.show(msg, opts);
 
   // Sync page with hash
   useEffect(() => {
@@ -389,17 +372,33 @@ export default function App() {
     return () => window.removeEventListener('linecart:orders_updated', handleOrdersSync);
   }, []);
 
-  // Live pending price requests count for Admin and Sales Manager queues
-  const [pendingPriceRequestsCount, setPendingPriceRequestsCount] = useState(0);
+  // Live pending price requests count for Admin and Sales Manager queues (existing endpoint, server-scoped).
+  // status: 'idle' (not applicable) | 'loading' | 'ok' | 'error'. A count is shown only when 'ok'.
+  const [approvals, setApprovals] = useState({ status: 'idle', count: 0 });
+  const approvalsRequestRef = React.useRef(0);
+  const approvalsUserId = user?.id;
 
   const refreshPendingPriceRequestsCount = useCallback(() => {
-    if (!user || (!isAdmin && !isManager)) return;
-    api.getPriceRequests('pending', user.id).then((res) => {
-      if (res && res.status === 200 && Array.isArray(res.priceRequests)) {
-        setPendingPriceRequestsCount(res.priceRequests.filter((p) => p.status === 'pending').length);
+    if (!approvalsUserId || (!isAdmin && !isManager)) {
+      setApprovals({ status: 'idle', count: 0 });
+      return;
+    }
+    const requestId = ++approvalsRequestRef.current;
+    // Keep the last successfully loaded count visible while refreshing; never show a guessed number
+    setApprovals((prev) => (prev.status === 'ok' ? prev : { status: 'loading', count: 0 }));
+    api.getPriceRequests('pending', approvalsUserId).then((res) => {
+      if (requestId !== approvalsRequestRef.current) return;
+      // api.getPriceRequests falls back to the device cache when offline (cached: true). That copy may be
+      // stale, so the indicator treats it as "count unavailable" and shows no number.
+      if (res && res.status === 200 && Array.isArray(res.priceRequests) && !res.cached) {
+        setApprovals({ status: 'ok', count: res.priceRequests.filter((p) => p.status === 'pending').length });
+      } else {
+        setApprovals({ status: 'error', count: 0 });
       }
-    }).catch(() => {});
-  }, [user, isAdmin, isManager]);
+    }).catch(() => {
+      if (requestId === approvalsRequestRef.current) setApprovals({ status: 'error', count: 0 });
+    });
+  }, [approvalsUserId, isAdmin, isManager]);
 
   useEffect(() => {
     refreshPendingPriceRequestsCount();
@@ -441,18 +440,25 @@ export default function App() {
     navigate('orders');
   };
 
+  // Sign-out confirmation shown only when unsent updates exist (replaces window.confirm).
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+
   const handleLogout = async () => {
     const leavingUserId = user?.id;
     // Unsent delivery/price updates stay on the device and are sent at this user's next sign-in
     try {
       if (leavingUserId && (await hasUnsyncedMutations(leavingUserId))) {
-        const ok = window.confirm(
-          'Some delivery or price updates have not been sent yet. They will stay on this device and be sent the next time you sign in. Sign out now?'
-        );
-        if (!ok) return;
+        setLogoutConfirmOpen(true);
+        return;
       }
     } catch {}
+    await performLogout();
+  };
 
+  // Runs only after handleLogout decided it may proceed (directly, or from the confirmation dialog).
+  const performLogout = async () => {
+    const leavingUserId = user?.id;
+    setLogoutConfirmOpen(false);
     api.logout();
     // Shared-device privacy: remove this user's biometric credential, cached data and order list
     try {
@@ -487,866 +493,257 @@ export default function App() {
     year: 'numeric'
   });
 
-  const initials = (name) =>
-    (name || 'Admin')
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((x) => x[0])
-      .join('')
-      .toUpperCase();
+  // Navigation for this role, filtered by the same permission check as before
+  const roleKey = roleKeyFor({ isAdmin, isManager, isDelivery });
+  const roleLabel = user?.role || ROLE_LABELS[roleKey];
+  const nav = visibleNav(roleKey, isPageAllowed);
+  // The approvals indicator follows the same rule as the Price approvals nav entry
+  const showApprovals = Boolean(user) && (isAdmin || (isManager && isPageAllowed('orders')));
 
-  const pageLabels = {
-    overview: isAdmin ? 'Executive Command Center' : isManager ? 'Performance Reports' : 'Overview',
-    orders: isAdmin ? 'All Company Orders' : isManager ? 'Team Orders' : 'Order entry',
-    reports: isAdmin ? 'Executive Reports' : isManager ? 'Performance Reports' : 'Reports',
-    customers: 'Customer Shops',
-    summary: 'Summary Report',
-    map: 'Cluster Shop Map',
-    team: 'Sales Team Supervision',
-    delivery: 'Delivery Route Fulfillment',
-    'admin-dashboard': 'Executive Command Center',
-    'admin-users': 'User Accounts & Roles',
-    'admin-roles': 'Roles & Permissions',
-    'admin-assignments': 'Team Assignments',
-    'admin-targets': 'Targets & Quotas',
-    'admin-audit': 'Security Audit Trail',
-    'admin-settings': 'System Settings',
-    items: 'Items & Daily Pricing'
+  const handleNavSelect = (item) => {
+    if (item.resetsPreselectedShop) setPrefCustomer('');
+    navigate(item.pageId);
   };
 
   if (!user) {
     return (
-      <>
-        <LoginScreen
-          onLoginSuccess={(u) => {
-            setUser(u);
-            const r = (u?.role || '').toLowerCase();
-            if (r === 'admin') navigate('admin-dashboard');
-            else if (r === 'sales manager') navigate('reports');
-            else if (r === 'delivery agent') navigate('delivery');
-            else navigate('overview');
-          }}
-          showToast={showToast}
-        />
-        <div className={`toast ${toastMsg ? 'visible' : ''}`} role="status">
-          {toastMsg}
-        </div>
-      </>
+      <LoginScreen
+        onLoginSuccess={(u) => {
+          setUser(u);
+          const r = (u?.role || '').toLowerCase();
+          if (r === 'admin') navigate('admin-dashboard');
+          else if (r === 'sales manager') navigate('reports');
+          else if (r === 'delivery agent') navigate('delivery');
+          else navigate('overview');
+        }}
+        showToast={showToast}
+      />
     );
   }
 
-  return (
-    <div className={`app-shell`}>
-      {/* --- DESKTOP SIDEBAR --- */}
-      <aside className="sidebar">
-        {/* Brand */}
-        <a
-          className="brand"
-          href={isAdmin ? '#admin-dashboard' : isManager ? '#reports' : isDelivery ? '#delivery' : '#overview'}
-          onClick={(e) => {
-            e.preventDefault();
-            navigate(isAdmin ? 'admin-dashboard' : isManager ? 'reports' : isDelivery ? 'delivery' : 'overview');
-          }}
-          aria-label="Linecart home"
-        >
-          <img src="/lincart_flashicon.png" alt="" />
-          <span>linecart<span className="brand-dot">.</span></span>
-        </a>
-
-        <div className="workspace-label">
-          {isAdmin ? '🛡 EXECUTIVE GOVERNANCE' : isManager ? 'SALES MANAGER PORTAL' : isDelivery ? '🚚 DELIVERY ROUTE FLEET' : 'WORKSPACE'}
-        </div>
-
-        {/* Main Nav */}
-        {isAdmin ? (
-          <nav className="main-nav" aria-label="Administrator navigation">
-            <button
-              className={`nav-item ${page === 'admin-dashboard' ? 'active' : ''}`}
-              onClick={() => navigate('admin-dashboard')}
-            >
-              <span className="nav-icon">▦</span>Dashboard
-            </button>
-
-            <button
-              className={`nav-item ${page === 'admin-users' ? 'active' : ''}`}
-              onClick={() => navigate('admin-users')}
-            >
-              <span className="nav-icon">👥</span>User Management
-            </button>
-
-            <button
-              className={`nav-item ${page === 'admin-roles' ? 'active' : ''}`}
-              onClick={() => navigate('admin-roles')}
-            >
-              <span className="nav-icon">🛡</span>Roles &amp; Permissions
-            </button>
-
-            <button
-              className={`nav-item ${page === 'admin-assignments' ? 'active' : ''}`}
-              onClick={() => navigate('admin-assignments')}
-            >
-              <span className="nav-icon">🔗</span>Team Assignments
-            </button>
-
-            <button
-              className={`nav-item ${page === 'admin-targets' ? 'active' : ''}`}
-              onClick={() => navigate('admin-targets')}
-            >
-              <span className="nav-icon">🎯</span>Targets &amp; Quotas
-            </button>
-
-            <button
-              className={`nav-item ${page === 'orders' ? 'active' : ''}`}
-              onClick={() => navigate('orders')}
-            >
-              <span className="nav-icon">📦</span>Company Orders
-            </button>
-
-            <button
-              className={`nav-item ${page === 'price-requests' ? 'active' : ''}`}
-              onClick={() => navigate('price-requests')}
-            >
-              <span className="nav-icon">⏳</span>Price Approvals
-              {pendingPriceRequestsCount > 0 && (
-                <span style={{
-                  marginLeft: 'auto',
-                  background: '#d97706',
-                  color: '#fff',
-                  fontSize: '11px',
-                  fontWeight: 800,
-                  padding: '1px 7px',
-                  borderRadius: '999px'
-                }}>
-                  {pendingPriceRequestsCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              className={`nav-item ${page === 'items' ? 'active' : ''}`}
-              onClick={() => navigate('items')}
-            >
-              <span className="nav-icon">🏷️</span>Items &amp; Daily Pricing
-            </button>
-
-            <button
-              className={`nav-item ${page === 'reports' ? 'active' : ''}`}
-              onClick={() => navigate('reports')}
-            >
-              <span className="nav-icon">📈</span>Executive Reports
-            </button>
-
-            <button
-              className={`nav-item ${page === 'map' ? 'active' : ''}`}
-              onClick={() => navigate('map')}
-            >
-              <span className="nav-icon">🗺</span>Cluster Shop Map
-            </button>
-
-            <button
-              className={`nav-item ${page === 'field-visits' ? 'active' : ''}`}
-              onClick={() => navigate('field-visits')}
-            >
-              <span className="nav-icon">📍</span>Field Visits
-            </button>
-
-            <button
-              className={`nav-item ${page === 'delivery' ? 'active' : ''}`}
-              onClick={() => navigate('delivery')}
-            >
-              <span className="nav-icon">🚚</span>Delivery Fleet
-            </button>
-
-            <button
-              className={`nav-item ${page === 'admin-audit' ? 'active' : ''}`}
-              onClick={() => navigate('admin-audit')}
-            >
-              <span className="nav-icon">📜</span>Security Audit
-            </button>
-
-            <button
-              className={`nav-item ${page === 'admin-settings' ? 'active' : ''}`}
-              onClick={() => navigate('admin-settings')}
-            >
-              <span className="nav-icon">⚙️</span>System Settings
-            </button>
-          </nav>
-        ) : isManager ? (
-          <nav className="main-nav" aria-label="Manager navigation">
-            {isPageAllowed('reports') && (
-              <button
-                className={`nav-item ${page === 'reports' ? 'active' : ''}`}
-                onClick={() => navigate('reports')}
-              >
-                <span className="nav-icon">▥</span>Reports &amp; Performance
-              </button>
-            )}
-
-            {isPageAllowed('orders') && (
-              <button
-                className={`nav-item ${page === 'orders' ? 'active' : ''}`}
-                onClick={() => navigate('orders')}
-              >
-                <span className="nav-icon">▤</span>Team Orders
-              </button>
-            )}
-
-            {isPageAllowed('orders') && (
-              <button
-                className={`nav-item ${page === 'price-requests' ? 'active' : ''}`}
-                onClick={() => navigate('price-requests')}
-              >
-                <span className="nav-icon">⏳</span>Price Approvals
-                {pendingPriceRequestsCount > 0 && (
-                  <span style={{
-                    marginLeft: 'auto',
-                    background: '#d97706',
-                    color: '#fff',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    padding: '1px 7px',
-                    borderRadius: '999px'
-                  }}>
-                    {pendingPriceRequestsCount}
-                  </span>
-                )}
-              </button>
-            )}
-
-            {isPageAllowed('items') && (
-              <button
-                className={`nav-item ${page === 'items' ? 'active' : ''}`}
-                onClick={() => navigate('items')}
-              >
-                <span className="nav-icon">🏷️</span>Items &amp; Daily Pricing
-              </button>
-            )}
-
-            {isPageAllowed('map') && (
-              <button
-                className={`nav-item ${page === 'map' ? 'active' : ''}`}
-                onClick={() => navigate('map')}
-              >
-                <span className="nav-icon">🗺</span>Cluster Shop Map
-              </button>
-            )}
-
-            {isPageAllowed('field-visits') && (
-              <button
-                className={`nav-item ${page === 'field-visits' ? 'active' : ''}`}
-                onClick={() => navigate('field-visits')}
-              >
-                <span className="nav-icon">📍</span>Field Visits
-              </button>
-            )}
-
-            {isPageAllowed('team') && (
-              <button
-                className={`nav-item ${page === 'team' ? 'active' : ''}`}
-                onClick={() => navigate('team')}
-              >
-                <span className="nav-icon">👥</span>My Sales Team
-              </button>
-            )}
-
-            {isPageAllowed('customers') && (
-              <button
-                className={`nav-item ${page === 'customers' ? 'active' : ''}`}
-                onClick={() => navigate('customers')}
-              >
-                <span className="nav-icon">♙</span>Customer Shops
-              </button>
-            )}
-          </nav>
-        ) : isDelivery ? (
-          <nav className="main-nav" aria-label="Delivery agent navigation">
-            <button
-              className={`nav-item ${page === 'delivery' ? 'active' : ''}`}
-              onClick={() => navigate('delivery')}
-            >
-              <span className="nav-icon">🚚</span>Delivery Route
-            </button>
-          </nav>
-        ) : (
-          <nav className="main-nav" aria-label="Sales agent navigation">
-            {isPageAllowed('overview') && (
-              <button
-                className={`nav-item ${page === 'overview' ? 'active' : ''}`}
-                onClick={() => navigate('overview')}
-              >
-                <span className="nav-icon">▦</span>Overview
-              </button>
-            )}
-
-            {isPageAllowed('orders') && (
-              <button
-                className={`nav-item ${page === 'orders' ? 'active' : ''}`}
-                onClick={() => {
-                  setPrefCustomer('');
-                  navigate('orders');
-                }}
-              >
-                <span className="nav-icon">▤</span>Order entry
-              </button>
-            )}
-
-            {isPageAllowed('visits') && (
-              <button
-                className={`nav-item ${page === 'visits' ? 'active' : ''}`}
-                onClick={() => navigate('visits')}
-              >
-                <span className="nav-icon">📍</span>My Visits
-              </button>
-            )}
-
-            {isPageAllowed('reports') && (
-              <button
-                className={`nav-item ${page === 'reports' ? 'active' : ''}`}
-                onClick={() => navigate('reports')}
-              >
-                <span className="nav-icon">▥</span>Reports
-              </button>
-            )}
-
-            {isPageAllowed('customers') && (
-              <button
-                className={`nav-item ${page === 'customers' ? 'active' : ''}`}
-                onClick={() => navigate('customers')}
-              >
-                <span className="nav-icon">♙</span>Customers
-              </button>
-            )}
-
-            {isPageAllowed('summary') && (
-              <button
-                className={`nav-item ${page === 'summary' ? 'active' : ''}`}
-                onClick={() => navigate('summary')}
-              >
-                <span className="nav-icon">📋</span>Summary Report
-              </button>
-            )}
-          </nav>
+  const shell = (
+    <AppShell
+      roleLabel={roleLabel}
+      nav={nav}
+      page={page}
+      title={pageTitle(roleKey, page)}
+      showBack={page !== getRoleHome() || navHistory.length > 0}
+      onBack={handleBack}
+      onSelect={handleNavSelect}
+      onSignOut={handleLogout}
+      user={user}
+      approvals={showApprovals ? approvals : null}
+      onOpenApprovals={() => navigate('price-requests')}
+      syncSlot={<SyncStatusBar userId={user?.id} userName={user?.name} showToast={showToast} />}
+      dateLabel={todayStr}
+      forcePhone={androidPreview}
+      devPreview={DEV_PREVIEW_ENABLED ? { active: androidPreview, onToggle: () => setAndroidPreview((v) => !v) } : null}
+    >
+      <div className="page-content" id="pageContent">
+        <ErrorBoundary key={page}>
+          <Suspense fallback={<ScreenLoadingSkeleton />}>
+          {/* Administrator Exclusive Screens */}
+          {(page === 'admin-dashboard' || (page === 'overview' && isAdmin)) && (
+          <AdminDashboardScreen
+            user={user}
+            onNavigate={navigate}
+            showToast={showToast}
+          />
         )}
 
-        {/* Sidebar Bottom: Help Card & Profile Card */}
-        <div className="sidebar-bottom">
-          <div className="help-card">
-            <div className="help-mark">?</div>
-            <strong>{isAdmin ? 'System Governance' : isManager ? 'Manager Assistance' : isDelivery ? 'Delivery Assistance' : 'Need a hand?'}</strong>
-            <span>{isAdmin ? 'Full administrative authority and audit monitoring.' : isManager ? 'Team targets, order tracking & cluster mapping.' : isDelivery ? 'Road-distance ordered stops and quick status updates.' : 'All your routes and store orders in one place.'}</span>
-          </div>
-
-          <button
-            className="profile-button"
-            title="Click to switch user or sign out"
-            onClick={handleLogout}
-          >
-            <span className="avatar">{initials(user.name)}</span>
-            <span className="profile-copy">
-              <b>{user.name}</b>
-              <small>{user.role || (isAdmin ? 'Admin' : isManager ? 'Sales Manager' : isDelivery ? 'Delivery Agent' : 'Field Sales Agent')} · Sign out</small>
-            </span>
-            <span className="more">···</span>
-          </button>
-        </div>
-      </aside>
-
-      {/* --- MAIN CONTENT AREA --- */}
-      <main className="main-area">
-        {/* Android Simulated Status Bar (Visible only in desktop Android preview) */}
-        {androidPreview && (
-          <div className="android-status-bar">
-            <span>9:41</span>
-            <span>● ● ▰</span>
-          </div>
+        {page === 'admin-users' && (
+          <AdminUsersScreen
+            user={user}
+            clusters={clusters}
+            onNavigate={navigate}
+            showToast={showToast}
+          />
         )}
 
-        {/* Top Sticky Header */}
-        <header className="topbar">
-          <div className="topbar-left">
-            <button
-              className="back-nav-button"
-              onClick={handleBack}
-              title="Go back"
-              aria-label="Go back"
-            >
-              <svg className="back-arrow-svg" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <line x1="19" y1="12" x2="5" y2="12"></line>
-                <polyline points="12 19 5 12 12 5"></polyline>
-              </svg>
-              <span className="sr-only">Go back</span>
-            </button>
-            <div className="breadcrumbs">
-              <span className="crumb-brand">Linecart</span>
-              <span className="crumb-slash">/</span>
-              <strong id="crumbCurrent">{pageLabels[page] || 'Overview'}</strong>
-            </div>
-          </div>
+        {page === 'admin-roles' && (
+          <AdminRolesPermissionsScreen
+            user={user}
+            onNavigate={navigate}
+            showToast={showToast}
+          />
+        )}
 
-          <div className="top-actions">
-            <SyncStatusBar userId={user?.id} userName={user?.name} showToast={showToast} />
-            <span className="today-label" id="todayLabel">{todayStr}</span>
+        {page === 'admin-assignments' && (
+          <TeamAssignmentsScreen
+            user={user}
+            clusters={clusters}
+            showToast={showToast}
+          />
+        )}
 
-            {/* Laptop / Mobile Preview Toggle Button */}
-            <button
-              className="android-toggle device-preview-toggle"
-              onClick={() => setAndroidPreview(!androidPreview)}
-              title="Toggle view between Laptop and Mobile preview"
-              aria-label="Toggle device preview"
-            >
-              {androidPreview ? '💻 Laptop view' : '📱 Mobile preview'}
-            </button>
+        {page === 'admin-targets' && (
+          <AdminTargetsScreen
+            user={user}
+            clusters={clusters}
+            onNavigate={navigate}
+            showToast={showToast}
+          />
+        )}
 
-            {/* Notifications */}
-            <button
-              className="icon-button"
-              onClick={() => showToast('All wholesale delivery routes are active')}
-              aria-label="Notifications"
-            >
-              🔔<i></i>
-            </button>
+        {page === 'admin-audit' && (
+          <AdminAuditScreen
+            user={user}
+            showToast={showToast}
+          />
+        )}
 
-            {/* Sign out Button in Topbar */}
-            <button
-              className="topbar-signout-btn"
-              onClick={handleLogout}
-              title="Sign out of LineCart"
-              aria-label="Sign out"
-            >
-              <span className="signout-icon" aria-hidden="true">🚪</span>
-              <span className="signout-text">Sign out</span>
-            </button>
+        {page === 'admin-settings' && (
+          <AdminSettingsScreen
+            user={user}
+            showToast={showToast}
+          />
+        )}
 
-            {/* Avatar Pill */}
-            <span className="top-avatar" title={user.name}>
-              {initials(user.name)}
-            </span>
-          </div>
-        </header>
+        {(page === 'delivery' || isDelivery) && (
+          <DeliveryRouteScreen
+            user={user}
+            onLogout={handleLogout}
+            onBack={handleBack}
+            isMobilePreview={androidPreview}
+            onTogglePreview={DEV_PREVIEW_ENABLED ? (v) => setAndroidPreview(typeof v === 'boolean' ? v : !androidPreviewState) : undefined}
+            showToast={showToast}
+          />
+        )}
 
-        {/* Subtle Monochrome Background Watermark (strictly behind content, never full-color, preserves contrast) */}
-        <div className="app-watermark-bg" aria-hidden="true">
-          <div className="app-watermark-mark">
-            <img
-              src={logoIcon}
-              alt=""
-              className="app-watermark-logo"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-              }}
-            />
-            <span className="app-watermark-text">LineCart</span>
-          </div>
-        </div>
+        {/* Operational Screens */}
+        {page === 'overview' && !isAdmin && !isManager && (
+          <OverviewScreen
+            user={user}
+            orders={orders}
+            shops={shops}
+            clusters={clusters}
+            onNavigate={navigate}
+            onOrderForCustomer={handleOrderForCustomer}
+            showToast={showToast}
+          />
+        )}
 
-        {/* Main Content Router */}
-        <div className="page-content" id="pageContent">
-          <ErrorBoundary key={page}>
-            <Suspense fallback={<ScreenLoadingSkeleton />}>
-            {/* Administrator Exclusive Screens */}
-            {(page === 'admin-dashboard' || (page === 'overview' && isAdmin)) && (
-            <AdminDashboardScreen
+        {(page === 'orders' || page === 'admin-orders' || page === 'price-requests') && (
+          (isAdmin || isManager) ? (
+            <ManagerOrdersScreen
               user={user}
+              clusters={clusters}
+              shops={shops}
+              showToast={showToast}
+              defaultTab={page === 'price-requests' ? 'price-requests' : 'orders'}
+              onNavigate={navigate}
+              isAdmin={isAdmin}
+            />
+          ) : (
+            <OrderEntryScreen
+              user={user}
+              clusters={clusters}
+              shops={shops}
+              catalogItems={catalogItems}
+              preselectedShop={prefCustomer}
+              onOrderPlaced={handleOrderPlaced}
               onNavigate={navigate}
               showToast={showToast}
             />
-          )}
+          )
+        )}
 
-          {page === 'admin-users' && (
-            <AdminUsersScreen
+        {(page === 'reports' || page === 'admin-reports' || (page === 'overview' && isManager)) && (
+          (isAdmin || isManager) ? (
+            <ManagerReportsScreen
               user={user}
               clusters={clusters}
               onNavigate={navigate}
               showToast={showToast}
             />
-          )}
-
-          {page === 'admin-roles' && (
-            <AdminRolesPermissionsScreen
-              user={user}
-              onNavigate={navigate}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'admin-assignments' && (
-            <TeamAssignmentsScreen
+          ) : (
+            <ReportsScreen
               user={user}
               clusters={clusters}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'admin-targets' && (
-            <AdminTargetsScreen
-              user={user}
-              clusters={clusters}
-              onNavigate={navigate}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'admin-audit' && (
-            <AdminAuditScreen
-              user={user}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'admin-settings' && (
-            <AdminSettingsScreen
-              user={user}
-              showToast={showToast}
-            />
-          )}
-
-          {(page === 'delivery' || isDelivery) && (
-            <DeliveryRouteScreen
-              user={user}
-              onLogout={handleLogout}
-              onBack={handleBack}
-              isMobilePreview={androidPreview}
-              onTogglePreview={() => setAndroidPreview(!androidPreview)}
-              showToast={showToast}
-            />
-          )}
-
-          {/* Operational Screens */}
-          {page === 'overview' && !isAdmin && !isManager && (
-            <OverviewScreen
-              user={user}
+              shops={shops}
               orders={orders}
-              shops={shops}
-              clusters={clusters}
               onNavigate={navigate}
-              onOrderForCustomer={handleOrderForCustomer}
               showToast={showToast}
             />
-          )}
-
-          {(page === 'orders' || page === 'admin-orders' || page === 'price-requests') && (
-            (isAdmin || isManager) ? (
-              <ManagerOrdersScreen
-                user={user}
-                clusters={clusters}
-                shops={shops}
-                showToast={showToast}
-                defaultTab={page === 'price-requests' ? 'price-requests' : 'orders'}
-                onNavigate={navigate}
-                isAdmin={isAdmin}
-              />
-            ) : (
-              <OrderEntryScreen
-                user={user}
-                clusters={clusters}
-                shops={shops}
-                catalogItems={catalogItems}
-                preselectedShop={prefCustomer}
-                onOrderPlaced={handleOrderPlaced}
-                onNavigate={navigate}
-                showToast={showToast}
-              />
-            )
-          )}
-
-          {(page === 'reports' || page === 'admin-reports' || (page === 'overview' && isManager)) && (
-            (isAdmin || isManager) ? (
-              <ManagerReportsScreen
-                user={user}
-                clusters={clusters}
-                onNavigate={navigate}
-                showToast={showToast}
-              />
-            ) : (
-              <ReportsScreen
-                user={user}
-                clusters={clusters}
-                shops={shops}
-                orders={orders}
-                onNavigate={navigate}
-                showToast={showToast}
-              />
-            )
-          )}
-
-          {page === 'map' && (
-            <ShopMapScreen
-              user={user}
-              clusters={clusters}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'team' && (
-            <TeamAssignmentsScreen
-              user={user}
-              clusters={clusters}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'customers' && (
-            <CustomersScreen
-              user={user}
-              clusters={clusters}
-              shops={shops}
-              onShopAdded={handleShopAdded}
-              onOrderForCustomer={handleOrderForCustomer}
-              showToast={showToast}
-            />
-          )}
-
-          {page === 'items' && (isAdmin || isManager) && (
-            <ItemsScreen
-              user={user}
-              clusters={clusters}
-              showToast={showToast}
-              onNavigate={navigate}
-            />
-          )}
-
-          {page === 'visits' && !isAdmin && !isManager && !isDelivery && (
-            <VisitsScreen user={user} showToast={showToast} />
-          )}
-
-          {page === 'field-visits' && (isAdmin || isManager) && (
-            <FieldVisitsScreen user={user} showToast={showToast} />
-          )}
-
-          {page === 'summary' && (
-            <SummaryReportScreen
-              user={user}
-              showToast={showToast}
-            />
-          )}
-            </Suspense>
-          </ErrorBoundary>
-        </div>
-
-        {/* Mobile & Android Preview Bottom Navigation */}
-        {isDelivery ? (
-          <nav className="mobile-bottom-nav" aria-label="Mobile delivery navigation">
-            <button
-              className={page === 'delivery' ? 'active' : ''}
-              onClick={() => navigate('delivery')}
-            >
-              <span>🚚</span>Route
-            </button>
-            <button
-              className="mobile-nav-signout"
-              onClick={handleLogout}
-              title="Sign out of LineCart"
-              aria-label="Sign out"
-            >
-              <span>🚪</span>Sign out
-            </button>
-          </nav>
-        ) : isAdmin ? (
-          <nav className="mobile-bottom-nav" aria-label="Mobile admin navigation">
-            <button
-              className={page === 'admin-dashboard' || page === 'overview' ? 'active' : ''}
-              onClick={() => navigate('admin-dashboard')}
-            >
-              <span>▦</span>Overview
-            </button>
-            <button
-              className={page === 'admin-users' ? 'active' : ''}
-              onClick={() => navigate('admin-users')}
-            >
-              <span>👥</span>Users
-            </button>
-            <button
-              className={page === 'orders' ? 'active' : ''}
-              onClick={() => navigate('orders')}
-            >
-              <span>📦</span>Orders
-            </button>
-            <button
-              className={page === 'items' ? 'active' : ''}
-              onClick={() => navigate('items')}
-            >
-              <span>🏷️</span>Items
-            </button>
-            <button
-              className={page === 'field-visits' ? 'active' : ''}
-              onClick={() => navigate('field-visits')}
-            >
-              <span>📍</span>Visits
-            </button>
-            <button
-              className={page === 'admin-roles' ? 'active' : ''}
-              onClick={() => navigate('admin-roles')}
-            >
-              <span>🛡</span>Roles
-            </button>
-            <button
-              className={page === 'admin-settings' ? 'active' : ''}
-              onClick={() => navigate('admin-settings')}
-            >
-              <span>⚙️</span>Settings
-            </button>
-            <button
-              className="mobile-nav-signout"
-              onClick={handleLogout}
-              title="Sign out of LineCart"
-              aria-label="Sign out"
-            >
-              <span>🚪</span>Sign out
-            </button>
-          </nav>
-        ) : isManager ? (
-          <nav className="mobile-bottom-nav" aria-label="Mobile manager navigation">
-            {isPageAllowed('reports') && (
-              <button
-                className={page === 'reports' ? 'active' : ''}
-                onClick={() => navigate('reports')}
-              >
-                <span>▥</span>Reports
-              </button>
-            )}
-            {isPageAllowed('orders') && (
-              <button
-                className={page === 'orders' ? 'active' : ''}
-                onClick={() => navigate('orders')}
-              >
-                <span>▤</span>Orders
-              </button>
-            )}
-            {isPageAllowed('items') && (
-              <button
-                className={page === 'items' ? 'active' : ''}
-                onClick={() => navigate('items')}
-              >
-                <span>🏷️</span>Pricing
-              </button>
-            )}
-            {isPageAllowed('map') && (
-              <button
-                className={page === 'map' ? 'active' : ''}
-                onClick={() => navigate('map')}
-              >
-                <span>🗺</span>Map
-              </button>
-            )}
-            {isPageAllowed('field-visits') && (
-              <button
-                className={page === 'field-visits' ? 'active' : ''}
-                onClick={() => navigate('field-visits')}
-              >
-                <span>📍</span>Visits
-              </button>
-            )}
-            {isPageAllowed('team') && (
-              <button
-                className={page === 'team' ? 'active' : ''}
-                onClick={() => navigate('team')}
-              >
-                <span>👥</span>Team
-              </button>
-            )}
-            {isPageAllowed('customers') && (
-              <button
-                className={page === 'customers' ? 'active' : ''}
-                onClick={() => navigate('customers')}
-              >
-                <span>♙</span>Shops
-              </button>
-            )}
-            <button
-              className="mobile-nav-signout"
-              onClick={handleLogout}
-              title="Sign out of LineCart"
-              aria-label="Sign out"
-            >
-              <span>🚪</span>Sign out
-            </button>
-          </nav>
-        ) : (
-          <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-            {isPageAllowed('overview') && (
-              <button
-                className={page === 'overview' ? 'active' : ''}
-                onClick={() => navigate('overview')}
-              >
-                <span>⌂</span>Home
-              </button>
-            )}
-            {isPageAllowed('orders') && (
-              <button
-                className={page === 'orders' ? 'active' : ''}
-                onClick={() => {
-                  setPrefCustomer('');
-                  navigate('orders');
-                }}
-              >
-                <span>▤</span>Orders
-              </button>
-            )}
-            {isPageAllowed('visits') && (
-              <button
-                className={page === 'visits' ? 'active' : ''}
-                onClick={() => navigate('visits')}
-              >
-                <span>📍</span>Visits
-              </button>
-            )}
-            {isPageAllowed('customers') && (
-              <button
-                className={page === 'customers' ? 'active' : ''}
-                onClick={() => navigate('customers')}
-              >
-                <span>♙</span>Shops
-              </button>
-            )}
-            {isPageAllowed('reports') && (
-              <button
-                className={page === 'reports' ? 'active' : ''}
-                onClick={() => navigate('reports')}
-              >
-                <span>▥</span>Reports
-              </button>
-            )}
-            {isPageAllowed('summary') && (
-              <button
-                className={page === 'summary' ? 'active' : ''}
-                onClick={() => navigate('summary')}
-              >
-                <span>📋</span>Summary
-              </button>
-            )}
-            <button
-              className="mobile-nav-signout"
-              onClick={handleLogout}
-              title="Sign out of LineCart"
-              aria-label="Sign out"
-            >
-              <span>🚪</span>Sign out
-            </button>
-          </nav>
+          )
         )}
 
-        {/* Android System Gesture Bar (Visible only in desktop Android preview) */}
-        {androidPreview && (
-          <div className="android-system-nav">
-            <span></span>
-          </div>
+        {page === 'map' && (
+          <ShopMapScreen
+            user={user}
+            clusters={clusters}
+            showToast={showToast}
+          />
         )}
-      </main>
 
-      {/* Floating Exit Android Preview Button */}
-      {androidPreview && (
-        <button
-          className="exit-android"
-          onClick={() => setAndroidPreview(false)}
-        >
-          ← &nbsp; Exit Mobile preview (Laptop view)
-        </button>
-      )}
+        {page === 'team' && (
+          <TeamAssignmentsScreen
+            user={user}
+            clusters={clusters}
+            showToast={showToast}
+          />
+        )}
 
-      {/* Toast Notification Container */}
-      <div className={`toast ${toastMsg ? 'visible' : ''}`} role="status">
-        {toastMsg}
+        {page === 'customers' && (
+          <CustomersScreen
+            user={user}
+            clusters={clusters}
+            shops={shops}
+            onShopAdded={handleShopAdded}
+            onOrderForCustomer={handleOrderForCustomer}
+            showToast={showToast}
+          />
+        )}
+
+        {page === 'items' && (isAdmin || isManager) && (
+          <ItemsScreen
+            user={user}
+            clusters={clusters}
+            showToast={showToast}
+            onNavigate={navigate}
+          />
+        )}
+
+        {page === 'visits' && !isAdmin && !isManager && !isDelivery && (
+          <VisitsScreen user={user} showToast={showToast} />
+        )}
+
+        {page === 'field-visits' && (isAdmin || isManager) && (
+          <FieldVisitsScreen user={user} showToast={showToast} />
+        )}
+
+        {page === 'summary' && (
+          <SummaryReportScreen
+            user={user}
+            showToast={showToast}
+          />
+        )}
+          </Suspense>
+        </ErrorBoundary>
       </div>
-    </div>
+    </AppShell>
+  );
+
+  return (
+    <>
+      {androidPreview ? (
+        <div className="lc-devframe-host">
+          <span className="lc-devframe-note">Development preview only: simulated phone width, not the native app</span>
+          <div className="lc-devframe">{shell}</div>
+        </div>
+      ) : (
+        shell
+      )}
+      <ConfirmDialog
+        open={logoutConfirmOpen}
+        title="Sign out with unsent updates?"
+        message="Some delivery or price updates have not been sent yet. They will stay on this device and be sent the next time you sign in."
+        confirmLabel="Sign out"
+        cancelLabel="Stay signed in"
+        tone="danger"
+        onCancel={() => setLogoutConfirmOpen(false)}
+        onConfirm={performLogout}
+      />
+    </>
   );
 }

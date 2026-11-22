@@ -39,7 +39,7 @@ export function useOverlay({ open, onClose, panelRef, initialFocusRef, dismissib
       const target = initialFocusRef?.current || panel.querySelector('[data-autofocus]') || panel.querySelector(FOCUSABLE) || panel;
       target.focus({ preventScroll: true });
     };
-    const raf = requestAnimationFrame(focusFirst);
+    const focusTimer = setTimeout(focusFirst, 0);
 
     const onKeyDown = (e) => {
       if (!isTopOverlay(entry)) return;
@@ -70,7 +70,7 @@ export function useOverlay({ open, onClose, panelRef, initialFocusRef, dismissib
     document.addEventListener('keydown', onKeyDown, true);
 
     return () => {
-      cancelAnimationFrame(raf);
+      clearTimeout(focusTimer);
       document.removeEventListener('keydown', onKeyDown, true);
       unregister();
       unlockScroll();
