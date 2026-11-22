@@ -321,7 +321,8 @@ export function registerVisitRoutes(app, ctx) {
       message: VISIT_MESSAGES[visit.status],
       visit,
       radiusM: settings.visitGeofenceRadiusM,
-      maxAccuracyM: settings.visitMaxGpsAccuracyM
+      maxAccuracyM: settings.visitMaxGpsAccuracyM,
+      reviewMaxAccuracyM: settings.visitReviewMaxGpsAccuracyM
     });
   });
 

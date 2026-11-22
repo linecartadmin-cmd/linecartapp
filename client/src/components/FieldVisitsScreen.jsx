@@ -16,6 +16,7 @@ const STATUS_STYLE = {
   location_not_registered: { label: 'No shop location', bg: '#f1f5f9', fg: '#334155' }
 };
 const FLAG_TEXT = {
+  low_gps_accuracy: 'Low GPS accuracy (check before approving)',
   mock_location_detected: 'Mock location detected',
   stale_gps_fix: 'Old GPS fix',
   implausible_travel_speed: 'Impossible travel speed'
@@ -140,7 +141,7 @@ function SummaryTab({ onAgents }) {
             </table>
           </div>
           <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-            "Check" marks agents with a flagged visit or 3 or more failed attempts on this day. Geofence {data.settings.visitGeofenceRadiusM} m, accuracy ±{data.settings.visitMaxGpsAccuracyM} m.
+            "Check" marks agents with a flagged visit or 3 or more failed attempts on this day. Geofence {data.settings.visitGeofenceRadiusM} m, accuracy ±{data.settings.visitMaxGpsAccuracyM} m{data.settings.visitReviewMaxGpsAccuracyM > data.settings.visitMaxGpsAccuracyM ? ` (readings up to ±${data.settings.visitReviewMaxGpsAccuracyM} m go to review)` : ''}.
           </p>
         </>
       )}
@@ -448,6 +449,7 @@ function LocationsTab({ toast }) {
 const SETTING_FIELDS = [
   ['visitGeofenceRadiusM', 'Geofence radius (metres)', 20, 1000],
   ['visitMaxGpsAccuracyM', 'Maximum GPS accuracy (metres)', 5, 200],
+  ['visitReviewMaxGpsAccuracyM', 'Review GPS accuracy limit (metres): less accurate readings up to this go to manager review', 5, 500],
   ['visitDuplicateWindowMinutes', 'Duplicate protection window (minutes)', 0, 240],
   ['visitMaxFixAgeSeconds', 'Maximum GPS fix age (seconds)', 10, 600],
   ['visitMaxTravelSpeedKmh', 'Implausible travel speed (km/h)', 30, 1000]

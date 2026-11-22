@@ -24,11 +24,12 @@ Field Sales Agents prove they were at an assigned shop. The phone takes a fresh 
      | Check | Result | HTTP |
      |---|---|---|
      | Shop has no valid location (0,0 or outside India) | `location_not_registered` | 422 |
-     | Accuracy worse than the limit (default **30 m**), however close | `poor_accuracy` | 422 |
+     | Accuracy worse than the **review limit** (default **±200 m**), however close | `poor_accuracy` | 422 |
      | Haversine distance over the radius (default **100 m**) | `too_far` (distance returned) | 422 |
-     | Inside, but a risk flag applies | `flagged` (recorded, sent for review) | 200 |
+     | Inside, but a risk flag applies (including accuracy between ±30 m and ±200 m) | `flagged` (recorded, sent for review) | 200 |
      | Inside, no risk flag | `verified` | 200 |
    - **Risk flags:**
+     - `low_gps_accuracy`: accuracy worse than the accuracy limit (default ±30 m) but within the review limit (default ±200 m). Never verified automatically; a manager confirms or rejects it. Added 22 Nov 2026 at the owner's request, because indoor readings are often ±50–200 m.
      - `mock_location_detected`: Android reports a mock provider.
      - `stale_gps_fix`: the fix is older than 60 seconds when sent. The age is computed from the device's own clock values, so clock skew cancels out.
      - `implausible_travel_speed`: more than 150 km/h since the agent's previous accepted visit, over more than 1 km.
@@ -71,7 +72,8 @@ Permission keys: `visits` page and `record_visits` (agent); `field-visits` page 
 | Key | Default | Allowed |
 |---|---|---|
 | `visitGeofenceRadiusM` | 100 | 20–1000 |
-| `visitMaxGpsAccuracyM` | 30 | 5–200 |
+| `visitMaxGpsAccuracyM` | 30 | 5–200 (accuracy needed for automatic verification) |
+| `visitReviewMaxGpsAccuracyM` | 200 | 5–500, and at least `visitMaxGpsAccuracyM` (less accurate readings up to this go to manager review; set it equal to `visitMaxGpsAccuracyM` to turn review off) |
 | `visitDuplicateWindowMinutes` | 30 | 0–240 (0 turns off the window; idempotency keys still apply) |
 | `visitMaxFixAgeSeconds` | 60 | 10–600 |
 | `visitMaxTravelSpeedKmh` | 150 | 30–1000 |
@@ -98,7 +100,7 @@ Each visit stores the radius and accuracy limit used, so later changes don't rew
 
 - GPS is evidence, not proof.
 - A rooted device can fake locations without setting the mock flag.
-- Indoor readings are often worse than ±30 m, so agents may need to step outside.
+- Indoor readings are often worse than ±30 m. Readings up to ±200 m now go to manager review instead of being refused. A ±200 m reading only shows the agent is somewhere near the shop, so managers should check before approving (for example with the shop owner).
 - The server-side checks, the review workflow and the failed-attempt history are there to make cheating visible, not impossible.
 
 ## Testing status

@@ -4102,7 +4102,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
 app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   await refreshStateFromDb();
   const prev = JSON.stringify(appSettings);
-  const visitSettingError = validateVisitSettingUpdates(req.body || {});
+  const visitSettingError = validateVisitSettingUpdates(req.body || {}, appSettings);
   if (visitSettingError) {
     return res.status(400).json({ status: 400, message: visitSettingError });
   }

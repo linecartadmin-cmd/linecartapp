@@ -55,7 +55,7 @@ before(async () => {
 });
 
 after(async () => {
-  await setSettings({ visitDuplicateWindowMinutes: 30, visitGeofenceRadiusM: 100, visitMaxGpsAccuracyM: 30 });
+  await setSettings({ visitDuplicateWindowMinutes: 30, visitGeofenceRadiusM: 100, visitMaxGpsAccuracyM: 30, visitReviewMaxGpsAccuracyM: 200 });
 });
 
 describe('1-3. Geofence and accuracy', () => {
@@ -78,8 +78,8 @@ describe('1-3. Geofence and accuracy', () => {
     assert.strictEqual(r.json.verified, false);
   });
 
-  test('3. poor GPS accuracy is refused even at the shop', async () => {
-    const r = await verify(T.agent1, { latitude: SHOP.lat, longitude: SHOP.lng, accuracy: 45 });
+  test('3. GPS accuracy worse than the review limit (±200 m) is refused even at the shop', async () => {
+    const r = await verify(T.agent1, { latitude: SHOP.lat, longitude: SHOP.lng, accuracy: 250 });
     assert.strictEqual(r.status, 422);
     assert.strictEqual(r.json.result, 'poor_accuracy');
     assert.strictEqual(r.json.message, 'GPS accuracy is insufficient. Please move to an open area and try again.');
@@ -217,6 +217,63 @@ describe('Flagged visits and review', () => {
     const r = await api('/api/visits?status=failed', { token: T.admin });
     assert.ok(r.json.visits.length >= 1);
     assert.ok(r.json.visits.every((v) => ['too_far', 'poor_accuracy', 'location_not_registered'].includes(v.status)));
+  });
+});
+
+describe('Low-accuracy readings (±30 to ±200 m) go to manager review', () => {
+  let reviewId;
+
+  test('a ±150 m reading inside the geofence is recorded as flagged with low_gps_accuracy, not verified', async () => {
+    await db.query("DELETE FROM shop_visits WHERE status IN ('verified', 'flagged')");
+    const r = await verify(T.agent1, { accuracy: 150 });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.json));
+    assert.strictEqual(r.json.result, 'flagged');
+    assert.strictEqual(r.json.verified, false);
+    assert.deepStrictEqual(r.json.visit.riskFlags, ['low_gps_accuracy']);
+    assert.strictEqual(r.json.visit.gpsAccuracyM, 150);
+    assert.strictEqual(r.json.maxAccuracyM, 30);
+    assert.strictEqual(r.json.reviewMaxAccuracyM, 200);
+    reviewId = r.json.visit.id;
+  });
+
+  test('it does not count until a manager approves it', async () => {
+    let s = await api('/api/visits/summary', { token: T.manager });
+    let a1 = s.json.agents.find((a) => a.agentId === IDS.agent1);
+    assert.strictEqual(a1.verifiedVisits, 0);
+    assert.strictEqual(a1.flaggedPendingReview, 1);
+    const ok = await api(`/api/visits/${reviewId}/review`, { token: T.manager, method: 'POST', body: { decision: 'approve', comment: 'Agent was inside the shop' } });
+    assert.strictEqual(ok.status, 200);
+    assert.strictEqual(ok.json.visit.status, 'verified');
+    s = await api('/api/visits/summary', { token: T.manager });
+    a1 = s.json.agents.find((a) => a.agentId === IDS.agent1);
+    assert.strictEqual(a1.verifiedVisits, 1);
+  });
+
+  test('boundaries: ±200 m goes to review, ±201 m is refused, and a low-accuracy reading outside the radius is too far', async () => {
+    await setSettings({ visitDuplicateWindowMinutes: 0 });
+    try {
+      assert.strictEqual((await verify(T.agent1, { accuracy: 200 })).json.result, 'flagged');
+      assert.strictEqual((await verify(T.agent1, { accuracy: 201 })).json.result, 'poor_accuracy');
+      assert.strictEqual((await verify(T.agent1, { ...FAR, accuracy: 150 })).json.result, 'too_far');
+      assert.strictEqual((await verify(T.agent1, { accuracy: 30 })).json.result, 'verified');
+    } finally {
+      await setSettings({ visitDuplicateWindowMinutes: 30 });
+    }
+  });
+
+  test('the admin can change or switch off the review limit; it can never be below the accuracy limit', async () => {
+    assert.strictEqual((await setSettings({ visitReviewMaxGpsAccuracyM: 600 })).status, 400);
+    assert.strictEqual((await setSettings({ visitReviewMaxGpsAccuracyM: 20 })).status, 400);
+    assert.strictEqual((await api('/api/admin/settings', { token: T.manager, method: 'PUT', body: { visitReviewMaxGpsAccuracyM: 300 } })).status, 403);
+    assert.strictEqual((await setSettings({ visitReviewMaxGpsAccuracyM: 30 })).status, 200);
+    await setSettings({ visitDuplicateWindowMinutes: 0 });
+    try {
+      assert.strictEqual((await verify(T.agent1, { accuracy: 45 })).json.result, 'poor_accuracy', 'review switched off');
+    } finally {
+      await setSettings({ visitDuplicateWindowMinutes: 30, visitReviewMaxGpsAccuracyM: 200 });
+    }
+    const s = await api('/api/visits/settings', { token: T.agent1 });
+    assert.strictEqual(s.json.settings.visitReviewMaxGpsAccuracyM, 200);
   });
 });
 

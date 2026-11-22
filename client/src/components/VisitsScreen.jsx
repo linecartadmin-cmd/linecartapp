@@ -114,14 +114,16 @@ export default function VisitsScreen({ user, showToast }) {
       }
       setPhase('locating');
       const maxAccuracyM = Number(data.settings?.visitMaxGpsAccuracyM) || 30;
+      const reviewMaxAccuracyM = Math.max(Number(data.settings?.visitReviewMaxGpsAccuracyM) || maxAccuracyM, maxAccuracyM);
       const loc = await getFreshVisitLocation({ timeoutMs: 20000, desiredAccuracyM: maxAccuracyM });
       if (!loc.ok) {
         setPhase('location_error');
         setDetailText(loc.message);
         return;
       }
-      setReading({ latitude: loc.latitude, longitude: loc.longitude, accuracy: loc.accuracy, meetsAccuracy: loc.meetsAccuracy, maxAccuracyM });
-      // A fix that misses the accuracy limit is still sent: the server applies the rule and records the attempt
+      setReading({ latitude: loc.latitude, longitude: loc.longitude, accuracy: loc.accuracy, meetsAccuracy: loc.meetsAccuracy, maxAccuracyM, reviewMaxAccuracyM });
+      // A fix that misses the accuracy limit is still sent: the server applies the rule (verify, send to review
+      // or reject) and records the attempt
       setPhase('verifying');
       const reachable = await recheck();
       if (!reachable) {
@@ -153,7 +155,7 @@ export default function VisitsScreen({ user, showToast }) {
         }
       }
       const reading = { latitude: loc.latitude, longitude: loc.longitude, accuracy: loc.accuracy };
-      if (res?.visit) setResult({ ...res.visit, ...reading, distanceM: res.visit.distanceM, radiusM: res.radiusM, maxAccuracyM: res.maxAccuracyM, duplicate: res.duplicate });
+      if (res?.visit) setResult({ ...res.visit, ...reading, distanceM: res.visit.distanceM, radiusM: res.radiusM, maxAccuracyM: res.maxAccuracyM, reviewMaxAccuracyM: res.reviewMaxAccuracyM ?? data.settings?.visitReviewMaxGpsAccuracyM, duplicate: res.duplicate });
       if (res?.status === 401) {
         setPhase('error');
         setDetailText('Your session has expired. Sign in again.');
@@ -229,8 +231,14 @@ export default function VisitsScreen({ user, showToast }) {
             {result && ['verified', 'flagged', 'too_far', 'poor_accuracy'].includes(phase) && (
               <div style={{ marginTop: 8, fontSize: 13, display: 'grid', gap: 2 }}>
                 {['verified', 'flagged'].includes(phase) && <div>Recorded at <b>{fmtTime(result.visitedAt)}</b>{result.duplicate ? ' (already recorded)' : ''}</div>}
+                {phase === 'flagged' && (result.riskFlags || []).includes('low_gps_accuracy') && (
+                  <div data-testid="review-reason">Sent for review because GPS accuracy was <b>±{Math.round(result.accuracy)} m</b> (automatic approval needs ±{result.maxAccuracyM} m or better).</div>
+                )}
                 {result.distanceM !== null && <div>Distance from shop: <b>{Math.round(result.distanceM)} m</b> (allowed {result.radiusM} m)</div>}
-                <div>GPS accuracy: <b>±{Math.round(result.accuracy)} m</b> (needed ±{result.maxAccuracyM} m or better)</div>
+                <div>
+                  GPS accuracy: <b>±{Math.round(result.accuracy)} m</b> (±{result.maxAccuracyM} m or better is approved automatically
+                  {result.reviewMaxAccuracyM > result.maxAccuracyM ? `; up to ±${result.reviewMaxAccuracyM} m goes to manager review` : ''})
+                </div>
               </div>
             )}
           </div>
@@ -242,9 +250,11 @@ export default function VisitsScreen({ user, showToast }) {
             <div>📍 {reading.latitude.toFixed(6)}, {reading.longitude.toFixed(6)}</div>
             <div>
               🎯 Accuracy <b>±{Math.round(reading.accuracy)} m</b>{' '}
-              {reading.meetsAccuracy
+              {reading.accuracy <= reading.maxAccuracyM
                 ? <span style={{ color: '#166534' }}>(within the ±{reading.maxAccuracyM} m limit)</span>
-                : <span style={{ color: '#b45309' }}>(needs ±{reading.maxAccuracyM} m or better: move to an open area for a sharper fix)</span>}
+                : reading.accuracy <= reading.reviewMaxAccuracyM
+                  ? <span style={{ color: '#b45309' }}>(above ±{reading.maxAccuracyM} m: if you are at the shop, the visit goes to your manager for review)</span>
+                  : <span style={{ color: '#b91c1c' }}>(too inaccurate to record: needs ±{reading.reviewMaxAccuracyM} m or better. Move to an open area and try again)</span>}
             </div>
           </div>
         )}
@@ -271,6 +281,7 @@ export default function VisitsScreen({ user, showToast }) {
         </button>
         <p style={{ margin: 0, fontSize: 12, color: '#64748b', textAlign: 'center' }}>
           You must be within {settings.visitGeofenceRadiusM} m of the shop with GPS accuracy of ±{settings.visitMaxGpsAccuracyM} m or better.
+          {settings.visitReviewMaxGpsAccuracyM > settings.visitMaxGpsAccuracyM ? ` Readings up to ±${settings.visitReviewMaxGpsAccuracyM} m are sent to your manager for review.` : ''}
         </p>
 
         <section style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: 14 }}>

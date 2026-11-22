@@ -47,6 +47,9 @@ export function isRegisteredShopLocation(lat, lng) {
 export const VISIT_SETTING_RULES = Object.freeze({
   visitGeofenceRadiusM: { default: 100, min: 20, max: 1000, label: 'Geofence radius (metres)' },
   visitMaxGpsAccuracyM: { default: 30, min: 5, max: 200, label: 'Maximum GPS accuracy (metres)' },
+  // Readings less accurate than visitMaxGpsAccuracyM but within this limit are recorded as 'flagged'
+  // (manager review, not counted until approved) instead of rejected. Must be >= visitMaxGpsAccuracyM.
+  visitReviewMaxGpsAccuracyM: { default: 200, min: 5, max: 500, label: 'Review GPS accuracy limit (metres)' },
   visitDuplicateWindowMinutes: { default: 30, min: 0, max: 240, label: 'Duplicate protection window (minutes)' },
   visitMaxFixAgeSeconds: { default: 60, min: 10, max: 600, label: 'Maximum GPS fix age (seconds)' },
   visitMaxTravelSpeedKmh: { default: 150, min: 30, max: 1000, label: 'Implausible travel speed (km/h)' }
@@ -62,13 +65,22 @@ export function getVisitSettings(appSettings = {}) {
   return out;
 }
 
-/** Returns an error message for the first invalid visit setting in `updates`, or null. */
-export function validateVisitSettingUpdates(updates = {}) {
+/**
+ * Returns an error message for the first invalid visit setting in `updates`, or null.
+ * `current` (the stored settings) is used for checks that involve two settings.
+ */
+export function validateVisitSettingUpdates(updates = {}, current = {}) {
   for (const [key, rule] of Object.entries(VISIT_SETTING_RULES)) {
     if (!(key in updates)) continue;
     const v = Number(updates[key]);
     if (!Number.isFinite(v) || v < rule.min || v > rule.max) {
       return `${rule.label} must be a number between ${rule.min} and ${rule.max}.`;
+    }
+  }
+  if ('visitReviewMaxGpsAccuracyM' in updates || 'visitMaxGpsAccuracyM' in updates) {
+    const merged = getVisitSettings({ ...current, ...updates });
+    if (merged.visitReviewMaxGpsAccuracyM < merged.visitMaxGpsAccuracyM) {
+      return `${VISIT_SETTING_RULES.visitReviewMaxGpsAccuracyM.label} must be at least the ${VISIT_SETTING_RULES.visitMaxGpsAccuracyM.label.toLowerCase()} (${merged.visitMaxGpsAccuracyM}).`;
     }
   }
   return null;
@@ -80,14 +92,20 @@ export function validateVisitSettingUpdates(updates = {}) {
  *
  * Returns { status, distanceM, flags } where status is one of:
  *   location_not_registered | poor_accuracy | too_far | verified | flagged
- * Accuracy is checked independently of distance: a reading worse than the limit is never accepted.
+ * Accuracy is checked independently of distance:
+ *  - worse than the review limit (default ±200 m): rejected (poor_accuracy);
+ *  - between the accuracy limit (default ±30 m) and the review limit: never verified automatically;
+ *    recorded as 'flagged' with 'low_gps_accuracy' so a manager confirms or rejects it;
+ *  - the reading must still be inside the geofence radius in every case.
  */
 export function evaluateVisit({ shopLat, shopLng, lat, lng, accuracyM, settings, mockLocation = 'unknown', fixAgeMs = null, previousVisit = null, nowMs = Date.now() }) {
   if (!isRegisteredShopLocation(shopLat, shopLng)) {
     return { status: 'location_not_registered', distanceM: null, flags: [] };
   }
   const distanceM = Math.round(haversineMeters(Number(shopLat), Number(shopLng), Number(lat), Number(lng)) * 10) / 10;
-  if (!(Number(accuracyM) > 0) || Number(accuracyM) > settings.visitMaxGpsAccuracyM) {
+  const accuracy = Number(accuracyM);
+  const reviewLimit = Math.max(Number(settings.visitReviewMaxGpsAccuracyM) || 0, settings.visitMaxGpsAccuracyM);
+  if (!(accuracy > 0) || accuracy > reviewLimit) {
     return { status: 'poor_accuracy', distanceM, flags: [] };
   }
   if (distanceM > settings.visitGeofenceRadiusM) {
@@ -95,6 +113,7 @@ export function evaluateVisit({ shopLat, shopLng, lat, lng, accuracyM, settings,
   }
 
   const flags = [];
+  if (accuracy > settings.visitMaxGpsAccuracyM) flags.push('low_gps_accuracy');
   if (mockLocation === 'yes') flags.push('mock_location_detected');
   if (fixAgeMs !== null && Number.isFinite(Number(fixAgeMs)) && Number(fixAgeMs) > settings.visitMaxFixAgeSeconds * 1000) {
     flags.push('stale_gps_fix');

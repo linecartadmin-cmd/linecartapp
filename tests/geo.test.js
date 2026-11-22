@@ -61,6 +61,14 @@ describe('visit settings', () => {
     assert.match(validateVisitSettingUpdates({ visitGeofenceRadiusM: 5000 }), /between 20 and 1000/);
     assert.strictEqual(validateVisitSettingUpdates({ visitGeofenceRadiusM: 150, organizationName: 'x' }), null);
   });
+  test('review accuracy limit: default 200 m, bounded, and never below the accuracy limit', () => {
+    assert.strictEqual(getVisitSettings({}).visitReviewMaxGpsAccuracyM, 200);
+    assert.match(validateVisitSettingUpdates({ visitReviewMaxGpsAccuracyM: 600 }), /between 5 and 500/);
+    assert.match(validateVisitSettingUpdates({ visitReviewMaxGpsAccuracyM: 20 }), /at least/);
+    assert.match(validateVisitSettingUpdates({ visitMaxGpsAccuracyM: 100 }, { visitReviewMaxGpsAccuracyM: 50 }), /at least/);
+    assert.strictEqual(validateVisitSettingUpdates({ visitReviewMaxGpsAccuracyM: 30 }), null, 'equal to the limit turns review off');
+    assert.strictEqual(validateVisitSettingUpdates({ visitReviewMaxGpsAccuracyM: 150 }, { visitMaxGpsAccuracyM: 30 }), null);
+  });
 });
 
 describe('evaluateVisit', () => {
@@ -77,9 +85,29 @@ describe('evaluateVisit', () => {
     assert.strictEqual(r.status, 'too_far');
     near(r.distanceM, 222, 2);
   });
-  test('accuracy is checked independently: poor accuracy is refused even right at the shop', () => {
-    const r = evaluateVisit({ ...base, lat: 10.6583, lng: 77.0082, accuracyM: 45 });
-    assert.strictEqual(r.status, 'poor_accuracy');
+  test('accuracy is checked independently: worse than the review limit is refused even right at the shop', () => {
+    assert.strictEqual(evaluateVisit({ ...base, lat: 10.6583, lng: 77.0082, accuracyM: 201 }).status, 'poor_accuracy');
+    assert.strictEqual(evaluateVisit({ ...base, lat: 10.6583, lng: 77.0082, accuracyM: 0 }).status, 'poor_accuracy');
+  });
+  test('accuracy between the limit and the review limit goes to manager review, never auto-verified', () => {
+    for (const acc of [31, 45, 150, 200]) {
+      const r = evaluateVisit({ ...base, lat: 10.65875, lng: 77.0082, accuracyM: acc });
+      assert.strictEqual(r.status, 'flagged', `±${acc} m`);
+      assert.deepStrictEqual(r.flags, ['low_gps_accuracy']);
+    }
+    assert.strictEqual(evaluateVisit({ ...base, lat: 10.65875, lng: 77.0082, accuracyM: 30 }).status, 'verified', '±30 m is still automatic');
+  });
+  test('a low-accuracy reading must still be inside the geofence', () => {
+    assert.strictEqual(evaluateVisit({ ...base, lat: 10.6603, lng: 77.0082, accuracyM: 150 }).status, 'too_far');
+  });
+  test('low accuracy and mock location are both recorded', () => {
+    const r = evaluateVisit({ ...base, lat: 10.6583, lng: 77.0082, accuracyM: 120, mockLocation: 'yes' });
+    assert.strictEqual(r.status, 'flagged');
+    assert.deepStrictEqual(r.flags, ['low_gps_accuracy', 'mock_location_detected']);
+  });
+  test('review limit equal to the accuracy limit turns the review band off', () => {
+    const strict = getVisitSettings({ visitReviewMaxGpsAccuracyM: 30 });
+    assert.strictEqual(evaluateVisit({ ...base, settings: strict, lat: 10.6583, lng: 77.0082, accuracyM: 45 }).status, 'poor_accuracy');
   });
   test('missing shop coordinates never verify', () => {
     const r = evaluateVisit({ ...base, shopLat: 0, shopLng: 0, lat: 10.6583, lng: 77.0082, accuracyM: 5 });
