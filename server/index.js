@@ -23,7 +23,7 @@ import {
   logEvent
 } from './http-errors.js';
 import { registerVisitRoutes } from './visits.js';
-import { installRouteDeclarations, STAFF_ROLES } from './access.js';
+import { installRouteDeclarations, STAFF_ROLES, canonicalRole } from './access.js';
 import { validateVisitSettingUpdates } from './geo.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1640,6 +1640,18 @@ app.get('/api/users/:id', requireAuth, handleGetUserById);
 // FIELD SALES, CATALOG, SHOP REGISTRATION & ORDER CREATION ENDPOINTS
 // ============================================================================
 
+// T0.6 (R12): an order may be credited only to an existing, active sales user
+const CREDITABLE_ROLES = ['Field Sales Agent', 'Sales Manager', 'Admin'];
+function findCreditableSalesperson(id) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) return { ok: false, reason: 'is not a valid user id' };
+  const user = salesPersons.find((s) => Number(s.id) === n);
+  if (!user) return { ok: false, reason: 'does not exist' };
+  if (Number(user.active ?? 1) === 0) return { ok: false, reason: 'is deactivated' };
+  if (!CREDITABLE_ROLES.includes(canonicalRole(user.role))) return { ok: false, reason: 'is not a sales user' };
+  return { ok: true, user };
+}
+
 /**
  * Helper to validate caller access to a requested spersonId parameter on field endpoints.
  */
@@ -2469,6 +2481,17 @@ app.get('/api/uploads/shops/:filename', requireAuth, async (req, res) => {
     return res.status(400).json({ status: 400, message: 'Invalid photo filename.' });
   }
 
+  // T0.4 (R6): the photo belongs to the shop named in its file name; the caller must be allowed that shop
+  await refreshStateFromDb();
+  const photoShopId = Number(/^shop_(\d+)_/i.exec(safeName)[1]);
+  const photoShop = shops.find((s) => Number(s.shopid) === photoShopId);
+  if (!photoShop) {
+    return res.status(404).json({ status: 404, message: 'Shop photo not found.' });
+  }
+  if (!canCallerAccessShop(caller, photoShop)) {
+    return res.status(403).json({ status: 403, message: 'Access Denied: you cannot view photos of this shop.' });
+  }
+
   const photo = await getShopPhoto(safeName);
   if (!photo) {
     return res.status(404).json({ status: 404, message: 'Shop photo not found.' });
@@ -2658,6 +2681,16 @@ const handleCreateOrder = async (req, res) => {
           message: `Access Denied: Agent #${requestedSpersonId} is not assigned to your team.`
         });
       }
+    }
+
+    const credited = findCreditableSalesperson(requestedSpersonId);
+    if (!credited.ok) {
+      return res.status(400).json({
+        status: 400,
+        code: 'INVALID_CREDITED_SALESPERSON',
+        message: `The order cannot be credited to user #${orderList[0]?.spersonid ?? caller.id}: the user ${credited.reason}.`,
+        id: '0'
+      });
     }
 
     const customerId = Number(orderList[0]?.customerid || 0);
@@ -3741,6 +3774,8 @@ app.get('/api/admin/permissions', requireAdmin, async (req, res) => {
   res.json({ status: 200, permissions: rolePermissions });
 });
 
+const EDITABLE_PERMISSION_ROLES = STAFF_ROLES.filter((r) => r !== 'Admin');
+
 app.put('/api/admin/permissions', requireAdmin, async (req, res) => {
   await refreshStateFromDb();
   const { role, pages, actions } = req.body || {};
@@ -3749,6 +3784,15 @@ app.put('/api/admin/permissions', requireAdmin, async (req, res) => {
     return res.status(400).json({
       status: 400,
       message: 'Security Protection: Administrator permissions are immutable to prevent system lockout.'
+    });
+  }
+
+  // T0.3 (R5): only the three editable staff roles, exact names; anything else is refused before any write
+  if (typeof role !== 'string' || !EDITABLE_PERMISSION_ROLES.includes(role)) {
+    return res.status(400).json({
+      status: 400,
+      code: 'INVALID_ROLE',
+      message: `Invalid role. Permissions can be changed only for: ${EDITABLE_PERMISSION_ROLES.join(', ')}.`
     });
   }
 
@@ -5471,7 +5515,19 @@ app.post('/api/admin/orders', requireAdmin, async (req, res) => {
       return res.status(400).json({ status: 400, message: 'Order must contain at least one line item with quantity > 0.' });
     }
 
-    const agent = salesPersons.find((u) => Number(u.id) === Number(spersonId)) || caller;
+    // T0.6 (R12): an explicit spersonId must be an active sales user; without one the admin is credited (unchanged)
+    let agent = caller;
+    if (spersonId !== undefined && spersonId !== null && spersonId !== '') {
+      const credited = findCreditableSalesperson(spersonId);
+      if (!credited.ok) {
+        return res.status(400).json({
+          status: 400,
+          code: 'INVALID_CREDITED_SALESPERSON',
+          message: `The order cannot be credited to user #${spersonId}: the user ${credited.reason}.`
+        });
+      }
+      agent = credited.user;
+    }
     const finalClusterId = Number(clusterId || shop.clusterid || 1);
     const dateStr = orderDate && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) ? orderDate : getIstDateString();
     const expectedDeliveryDate = req.body?.expectedDeliveryDate && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)

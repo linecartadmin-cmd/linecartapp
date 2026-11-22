@@ -36,6 +36,8 @@ function expectedStatus(who, method, routePath) {
 
 // Explicit per-probe changes, each with the task that makes it
 const INTENDED = {
+  // T0.3: a missing or unknown role in PUT /api/admin/permissions is 400 INVALID_ROLE (was 404 not found)
+  'admin PUT /api/admin/permissions': 400,
   // T0.8: new route POST /api/auth/logout-all (any valid session; sign out everywhere)
   'none POST /api/auth/logout-all': 401,
   ...Object.fromEntries(['customer', 'auditor', 'delivery', 'agent', 'manager', 'admin'].map((who) => [`${who} POST /api/auth/logout-all`, 200]))
