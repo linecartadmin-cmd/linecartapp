@@ -596,8 +596,13 @@ function getAuthorizedClusterIds(caller) {
     if (agentShops.length > 0) {
       return Array.from(new Set(agentShops.map((sh) => Number(sh.clusterid || 1))));
     }
+    return [Number(caller.clusterid || 1)];
   }
-  return [Number(caller.clusterid || 1)];
+  if (callerRole === 'delivery agent') {
+    return [Number(caller.clusterid || 1)];
+  }
+  // T0.2: any other role has no cluster scope (was: its own cluster)
+  return [];
 }
 
 /**
@@ -1687,6 +1692,27 @@ function verifyFieldAgentScope(req, res, requestedSpersonId) {
   return { authorized: false };
 }
 
+const CLOSED_DELIVERY_STATUSES = new Set(['delivered', 'cancelled', 'rejected']);
+
+/**
+ * Shop ids on the Delivery Agent's own open deliveries (T0.2). Orders are matched to shops the
+ * same way as GET /api/delivery/orders (customer id, or the S-prefixed shop id).
+ */
+function getDeliveryAgentShopIds(deliveryAgentId) {
+  const ids = new Set();
+  for (const o of submittedOrders) {
+    if (o.deliveryAgentId === null || o.deliveryAgentId === undefined) continue;
+    if (Number(o.deliveryAgentId) !== Number(deliveryAgentId)) continue;
+    if (CLOSED_DELIVERY_STATUSES.has(String(o.status || '').toLowerCase())) continue;
+    if (o.customerId !== undefined && o.customerId !== null && o.customerId !== '') ids.add(Number(o.customerId));
+    if (o.shopId) {
+      const n = Number(String(o.shopId).replace(/^S0*/, ''));
+      if (Number.isFinite(n)) ids.add(n);
+    }
+  }
+  return ids;
+}
+
 /**
  * Strict shop-level access authorization guard.
  * Determines whether the authenticated caller has permission to view records / order history for a specific shop.
@@ -1717,7 +1743,8 @@ function canCallerAccessShop(caller, shop) {
     if (assignedAgentIds.includes(assignedAgentId) || assignedAgentIds.includes(shopCreatedBy)) {
       return true;
     }
-    if (callerClusterId === 0 || callerClusterId === shopClusterId) {
+    // T0.2: cluster 0 is no longer a wildcard for every cluster
+    if (callerClusterId > 0 && callerClusterId === shopClusterId) {
       return true;
     }
     const assignedAgents = salesPersons.filter((u) => assignedAgentIds.includes(Number(u.id)));
@@ -1740,12 +1767,9 @@ function canCallerAccessShop(caller, shop) {
     return assignedAgentId === callerId;
   }
 
-  // Delivery Agent: authorized for shops in their assigned route cluster
+  // Delivery Agent: only shops on their own open deliveries (T0.2; was: every shop in their cluster)
   if (role === 'delivery agent') {
-    if (callerClusterId === 0 || callerClusterId === shopClusterId) {
-      return true;
-    }
-    return false;
+    return getDeliveryAgentShopIds(callerId).has(Number(shop.shopid ?? shop.shop_id));
   }
 
   return false;
@@ -2037,11 +2061,13 @@ const handleGetHomeReport = async (req, res) => {
         (o) => assigned.includes(Number(o.spersonid)) || authorizedClusterIds.includes(Number(o.clusterId))
       );
     }
-  } else {
+  } else if (callerRole === 'field sales agent') {
     // Field Sales Agent: strictly only their own orders in their assigned clusters
     roleScopedOrders = roleScopedOrders.filter(
       (o) => Number(o.spersonid) === Number(effectiveSpersonId) && authorizedClusterIds.includes(Number(o.clusterId))
     );
+  } else {
+    roleScopedOrders = []; // T0.2: no other role has a report scope
   }
 
   // Resolve report period (today, 7d, 30d or custom fromDate/toDate in Asia/Kolkata)
@@ -2058,8 +2084,8 @@ const handleGetHomeReport = async (req, res) => {
     baseOrders = baseOrders.filter((o) => (o.date || '').slice(0, 10) <= toDate);
   }
 
-  // Scoped shops for stats
-  let scopedShops = shops;
+  // Scoped shops for stats (T0.2: explicit per role; nothing for other roles)
+  let scopedShops = callerRole === 'admin' ? shops : [];
   if (callerRole === 'field sales agent') {
     scopedShops = shops.filter((s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(effectiveSpersonId));
   } else if (callerRole === 'sales manager') {
@@ -2258,7 +2284,7 @@ const handleClusterInfo = async (req, res) => {
     });
   }
 
-  let scopedClusters = clusters;
+  let scopedClusters = callerRole === 'admin' ? clusters : []; // T0.2: explicit per role
   if (callerRole === 'field sales agent') {
     const assignedShops = shops.filter(
       (s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(effectiveSpersonId)
@@ -2491,7 +2517,7 @@ const handleGetItemsOrder = async (req, res) => {
     ? orderItemsCatalog.filter((item) => Number(item.active ?? 1) === 1)
     : defaultOrderItems;
 
-  let scopedShops = shops;
+  let scopedShops = callerRole === 'admin' ? shops : []; // T0.2: explicit per role
   if (callerRole === 'field sales agent') {
     scopedShops = shops.filter(
       (s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(effectiveSpersonId)
@@ -3262,9 +3288,11 @@ app.get('/api/shops', requireAuth, async (req, res) => {
   if (!caller) return res.status(401).json({ status: 401, message: 'Authentication required' });
 
   const callerRole = (caller.role || '').toLowerCase();
-  let scopedShops = shops;
+  let scopedShops;
 
-  if (callerRole === 'field sales agent') {
+  if (callerRole === 'admin') {
+    scopedShops = shops;
+  } else if (callerRole === 'field sales agent') {
     scopedShops = shops.filter((s) => Number(s.assignedAgentId || s.assigned_agent_id) === Number(caller.id));
   } else if (callerRole === 'sales manager') {
     const teamAgentIds = getAssignedAgentIds(caller.id);
@@ -3275,6 +3303,12 @@ app.get('/api/shops', requireAuth, async (req, res) => {
              teamAgentIds.includes(createdId) ||
              Number(s.clusterid) === Number(caller.clusterid);
     });
+  } else if (callerRole === 'delivery agent') {
+    // R1 (T0.2): was every shop; now only shops on the agent's own open deliveries
+    const deliveryShopIds = getDeliveryAgentShopIds(caller.id);
+    scopedShops = shops.filter((s) => deliveryShopIds.has(Number(s.shopid)));
+  } else {
+    return res.status(403).json({ status: 403, message: 'Access Denied: your role cannot list shops.' });
   }
 
   const userMap = new Map(salesPersons.map((u) => [Number(u.id), u.name]));
@@ -5351,9 +5385,12 @@ app.get('/api/orders', requireAuth, async (req, res) => {
   } else if (callerRole === 'delivery agent') {
     // Same assignment field as GET /api/delivery/orders (orders.delivery_agent_id)
     orders = submittedOrders.filter((o) => o.deliveryAgentId !== null && o.deliveryAgentId !== undefined && Number(o.deliveryAgentId) === Number(caller.id));
-  } else {
+  } else if (callerRole === 'field sales agent') {
     // Field Sales Agent: strictly scoped to caller.id
     orders = submittedOrders.filter((o) => Number(o.spersonid) === Number(caller.id));
+  } else {
+    // T0.2: other roles were treated as Field Sales Agents
+    return res.status(403).json({ status: 403, message: 'Access Denied: your role cannot list orders.' });
   }
 
   const { status, limit } = req.query;
