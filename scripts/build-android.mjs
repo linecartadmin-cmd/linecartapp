@@ -1,60 +1,55 @@
 /**
- * Build the LineCart Android app for one environment.
+ * Build the LineCart Android app.
  *
- *   node scripts/build-android.mjs --env staging                 -> debug APK  (app id in.linecart.suite.staging)
- *   node scripts/build-android.mjs --env local                   -> debug APK against http://10.0.2.2:3001 (emulator only)
- *   LINECART_PRODUCTION_API_URL=https://... \
- *   node scripts/build-android.mjs --env production [--aab]      -> release APK (or AAB), signed if signing is configured
+ *   node scripts/build-android.mjs debug            -> debug APK,   in.linecart.suite.debug, PRODUCTION server, "DEBUG BUILD" on every screen
+ *   node scripts/build-android.mjs release [--aab]  -> release APK (or AAB), in.linecart.suite, PRODUCTION server,
+ *                                                      signed only with the owner's keystore (otherwise UNSIGNED)
+ *   node scripts/build-android.mjs local            -> debug APK,   in.linecart.suite.local, local server http://10.0.2.2:3001
+ *                                                      (emulator only, isolated development data)
  *
+ * Server addresses come only from config/android-environments.json. The Gradle bundle guard refuses to package a
+ * web bundle built for another target, so a stale bundle cannot ship. Every output is inspected after the build
+ * (package id, debuggable flag, backend addresses, secrets) and fails the build if anything is wrong.
  * Output: dist-android/<file> plus <file>.sha256 and build-info.json (git-ignored).
- * Never embeds secrets: the only value baked into the app is the public API base URL.
  */
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inspectApk } from './inspect-apk.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const clientDir = path.join(repoRoot, 'client');
 const androidDir = path.join(clientDir, 'android');
 const outDir = path.join(repoRoot, 'dist-android');
+const envs = JSON.parse(fs.readFileSync(path.join(repoRoot, 'config', 'android-environments.json'), 'utf8'));
 
-const STAGING_API_URL = 'https://linecart-staging.onrender.com';
-const LOCAL_API_URL = 'http://10.0.2.2:3001';
-
-const args = process.argv.slice(2);
-const argVal = (name) => {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
-};
-const env = argVal('--env');
-const wantAab = args.includes('--aab');
 const die = (msg) => {
   console.error(`[build-android] ${msg}`);
   process.exit(1);
 };
-
-if (!['staging', 'local', 'production'].includes(env)) die('Use --env staging | local | production');
-
-let apiUrl;
-let buildType;
-if (env === 'staging') {
-  apiUrl = STAGING_API_URL;
-  buildType = 'debug';
-} else if (env === 'local') {
-  apiUrl = LOCAL_API_URL;
-  buildType = 'debug';
-} else {
-  apiUrl = String(process.env.LINECART_PRODUCTION_API_URL || '').trim().replace(/\/+$/, '');
-  buildType = 'release';
-  if (!apiUrl) die('Set LINECART_PRODUCTION_API_URL to the production backend URL (https://...).');
-  let u;
-  try { u = new URL(apiUrl); } catch { die(`Not a valid URL: ${apiUrl}`); }
-  if (u.protocol !== 'https:') die('The production API URL must use https.');
-  if (/staging/i.test(apiUrl) || apiUrl === STAGING_API_URL) die('The production APK must not point to a staging server.');
+const args = process.argv.slice(2);
+if (args.includes('--env')) {
+  die('The --env option was replaced. Use: debug | release [--aab] | local (debug and release both use the production server).');
 }
-if (wantAab && buildType !== 'release') die('--aab is only for --env production.');
+const kind = args.find((a) => !a.startsWith('--'));
+const wantAab = args.includes('--aab');
+
+const KINDS = {
+  debug: { target: 'production', appEnv: 'debug', buildType: 'debug', appId: 'in.linecart.suite.debug', filePrefix: 'linecart' },
+  release: { target: 'production', appEnv: 'production', buildType: 'release', appId: 'in.linecart.suite', filePrefix: 'linecart' },
+  local: { target: 'local', appEnv: 'local', buildType: 'debug', appId: 'in.linecart.suite.local', filePrefix: 'linecart-local' }
+};
+const cfg = KINDS[kind];
+if (!cfg) die('Usage: node scripts/build-android.mjs debug | release [--aab] | local');
+if (wantAab && kind !== 'release') die('--aab is only for release builds.');
+
+const apiUrl = String(envs[cfg.target]?.apiUrl || '').replace(/\/+$/, '');
+let parsed;
+try { parsed = new URL(apiUrl); } catch { die(`config/android-environments.json: invalid ${cfg.target} apiUrl "${apiUrl}".`); }
+if (cfg.target === 'production' && parsed.protocol !== 'https:') die('The production server must use https.');
+if (cfg.target === 'local' && !['10.0.2.2', 'localhost', '127.0.0.1'].includes(parsed.hostname)) die('The local build may only point to the emulator host or localhost.');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(clientDir, 'package.json'), 'utf8'));
 const [maj, min, pat] = String(pkg.version).split('.').map((n) => parseInt(n, 10) || 0);
@@ -65,25 +60,33 @@ const isWin = process.platform === 'win32';
 const javaHome = process.env.JAVA_HOME || (isWin ? 'C:/Program Files/Eclipse Adoptium/jdk-21.0.13.10002-hotspot' : '');
 const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || (isWin ? path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk') : '');
 
-function run(cmd, cmdArgs, opts = {}) {
+function run(cmd, cmdArgs, opts = {}, { retryOnce = false } = {}) {
   console.log(`\n> ${cmd} ${cmdArgs.join(' ')}`);
-  const r = spawnSync(cmd, cmdArgs, { stdio: 'inherit', shell: isWin, ...opts });
+  let r = spawnSync(cmd, cmdArgs, { stdio: 'inherit', shell: isWin, ...opts });
+  if (r.status !== 0 && retryOnce) {
+    // OneDrive briefly locks or converts freshly copied web assets ("not a regular file"); the same build
+    // succeeds once it settles.
+    console.log('[build-android] Gradle failed inside a OneDrive folder; retrying once in 10 s.');
+    spawnSync(isWin ? 'timeout' : 'sleep', isWin ? ['/t', '10', '/nobreak'] : ['10'], { stdio: 'ignore', shell: isWin });
+    r = spawnSync(cmd, cmdArgs, { stdio: 'inherit', shell: isWin, ...opts });
+  }
   if (r.status !== 0) die(`${cmd} failed (exit ${r.status}).`);
 }
+const git = (a) => (spawnSync('git', a, { cwd: repoRoot, encoding: 'utf8' }).stdout || '').trim();
+const gitCommit = git(['rev-parse', '--short', 'HEAD']);
+const gitDirty = git(['status', '--porcelain', '--untracked-files=no']) !== '';
 
-console.log(`[build-android] env=${env} type=${buildType}${wantAab ? ' (AAB)' : ''} version=${versionName} (${versionCode}) api=${apiUrl}`);
+console.log(`[build-android] ${kind}: ${cfg.appId} (${cfg.buildType}${wantAab ? ', AAB' : ''}) version ${versionName} (${versionCode}) server ${apiUrl}`);
 
-// 1. Web bundle with the environment's API URL baked in
+// 1. Web bundle with this build's server baked in
 run('npx', ['vite', 'build'], {
   cwd: clientDir,
-  env: { ...process.env, VITE_API_BASE_URL: apiUrl, VITE_APP_ENV: env }
+  env: { ...process.env, VITE_API_BASE_URL: apiUrl, VITE_APP_ENV: cfg.appEnv }
 });
 
-// 2. Confirm the bundle points where it should (and a production build never contains the staging URL)
-const assetsDir = path.join(clientDir, 'dist', 'assets');
-const bundleText = fs.readdirSync(assetsDir).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(assetsDir, f), 'utf8')).join('\n');
-if (!bundleText.includes(apiUrl)) die(`Built web bundle does not contain the API URL ${apiUrl}.`);
-if (env === 'production' && bundleText.includes(STAGING_API_URL)) die('Production bundle contains the staging URL. Aborting.');
+// 2. Build marker: the Gradle guard checks it before packaging (public facts only, no secrets)
+const marker = { target: cfg.target, appEnv: cfg.appEnv, apiUrl, buildType: cfg.buildType, appId: cfg.appId, versionName, versionCode, gitCommit, gitDirty, builtAt: new Date().toISOString() };
+fs.writeFileSync(path.join(clientDir, 'dist', 'linecart-build.json'), JSON.stringify(marker, null, 2));
 
 // 3. Copy web assets into the Android project
 run('npx', ['cap', 'sync', 'android'], { cwd: clientDir });
@@ -94,41 +97,71 @@ if (!gradleBuildRoot && isWin && /onedrive/i.test(repoRoot)) {
   gradleBuildRoot = path.join(process.env.LOCALAPPDATA || repoRoot, 'linecart-gradle-build');
 }
 if (gradleBuildRoot) console.log(`[build-android] Gradle build output: ${gradleBuildRoot}`);
-const task = wantAab ? 'bundleRelease' : buildType === 'release' ? 'assembleRelease' : 'assembleDebug';
-run(isWin ? `"${path.join(androidDir, 'gradlew.bat')}"` : './gradlew', [task, `-PlinecartVersionCode=${versionCode}`, `-PlinecartVersionName=${versionName}`, '--no-daemon'], {
+const task = wantAab ? 'bundleRelease' : cfg.buildType === 'release' ? 'assembleRelease' : 'assembleDebug';
+run(isWin ? `"${path.join(androidDir, 'gradlew.bat')}"` : './gradlew', [
+  task,
+  `-PlinecartTarget=${cfg.target}`,
+  `-PlinecartVersionCode=${versionCode}`,
+  `-PlinecartVersionName=${versionName}`,
+  '--no-daemon'
+], {
   cwd: androidDir,
   env: { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: androidHome, ...(gradleBuildRoot ? { LINECART_GRADLE_BUILD_ROOT: gradleBuildRoot } : {}) }
-});
+}, { retryOnce: /onedrive/i.test(repoRoot) });
 
 // 5. Collect output
 const appBuildDir = gradleBuildRoot ? path.join(gradleBuildRoot, 'app') : path.join(androidDir, 'app', 'build');
 const outputs = wantAab
   ? [path.join(appBuildDir, 'outputs', 'bundle', 'release', 'app-release.aab')]
-  : buildType === 'release'
+  : cfg.buildType === 'release'
     ? [path.join(appBuildDir, 'outputs', 'apk', 'release', 'app-release.apk'), path.join(appBuildDir, 'outputs', 'apk', 'release', 'app-release-unsigned.apk')]
     : [path.join(appBuildDir, 'outputs', 'apk', 'debug', 'app-debug.apk')];
-const built = outputs.find((p) => fs.existsSync(p));
+const built = outputs.filter((p) => fs.existsSync(p)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
 if (!built) die(`Build finished but no output found in: ${outputs.join(', ')}`);
-const unsigned = /unsigned/.test(built);
+if (fs.statSync(built).mtimeMs < Date.parse(marker.builtAt) - 1000) die(`Output ${built} is older than this build; refusing to copy a stale file.`);
+
 const ext = wantAab ? 'aab' : 'apk';
-const fileName = `linecart-${env}-${versionName}-${buildType}${unsigned ? '-unsigned' : ''}.${ext}`;
+const unsignedApk = /unsigned/.test(built);
+const fileName = `${cfg.filePrefix}-${versionName}-${cfg.buildType}${unsignedApk ? '-unsigned' : ''}.${ext}`;
 fs.mkdirSync(outDir, { recursive: true });
 const dest = path.join(outDir, fileName);
 fs.copyFileSync(built, dest);
+
+// 6. Inspect the final file
+const report = inspectApk(dest, { url: apiUrl, id: cfg.appId, debuggable: cfg.buildType === 'debug' });
+for (const c of report.checks) console.log(`  ${c.ok ? 'PASS' : 'FAIL'}  ${c.name}  (${c.detail})`);
+if (cfg.buildType === 'release' && report.signedWithDebugKey) report.checks.push({ name: 'release not signed with the debug key', ok: false, detail: report.signerDN });
+if (!report.checks.every((c) => c.ok)) {
+  fs.rmSync(dest, { force: true });
+  die('Inspection failed; the output was removed. See the FAIL lines above.');
+}
+
 const sha256 = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
 fs.writeFileSync(`${dest}.sha256`, `${sha256}  ${fileName}\n`);
+const signedState = cfg.buildType === 'debug'
+  ? 'Android debug key (development only, never distribute)'
+  : wantAab
+    ? 'AAB (signed if keystore.properties was configured; verify with jarsigner)'
+    : report.signed ? `release key (${report.signerDN})` : 'UNSIGNED (waiting for the production keystore; cannot be installed)';
 const info = {
   file: fileName,
-  environment: env,
-  apiBaseUrl: apiUrl,
-  applicationId: buildType === 'debug' ? 'in.linecart.suite.staging' : 'in.linecart.suite',
-  versionName: buildType === 'debug' ? `${versionName}-staging` : versionName,
+  path: dest,
+  build: kind,
+  server: apiUrl,
+  applicationId: report.packageId || cfg.appId,
+  label: report.label,
+  versionName: report.versionName || versionName,
   versionCode,
-  buildType,
-  signed: buildType === 'debug' ? 'debug key (testing only)' : unsigned ? 'UNSIGNED (configure release signing)' : 'release key',
+  buildType: cfg.buildType,
+  debuggable: report.debuggable,
+  signing: signedState,
+  permissions: report.permissions,
+  backendAddresses: report.backendAddresses,
+  secretFindings: report.secretFindings,
+  gitCommit: `${gitCommit}${gitDirty ? ' (uncommitted changes)' : ''}`,
   sizeBytes: fs.statSync(dest).size,
   sha256,
-  builtAt: new Date().toISOString()
+  builtAt: marker.builtAt
 };
 const infoPath = path.join(outDir, 'build-info.json');
 const all = fs.existsSync(infoPath) ? JSON.parse(fs.readFileSync(infoPath, 'utf8')) : {};

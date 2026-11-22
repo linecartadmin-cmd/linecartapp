@@ -1,0 +1,11 @@
+{
+  "_comment": "Single source of the server address baked into each Android build. Read by scripts/build-android.mjs and by the Gradle bundle guard in client/android/app/build.gradle. Public URLs only: never put credentials, database URLs or keys here.",
+  "production": {
+    "apiUrl": "https://linecart-staging.onrender.com",
+    "_note": "Live production service (real business data) despite the hostname; confirmed 22 Nov 2026. Used by BOTH the debug (in.linecart.suite.debug) and release (in.linecart.suite) APKs."
+  },
+  "local": {
+    "apiUrl": "http://10.0.2.2:3001",
+    "_note": "Developer-only build (in.linecart.suite.local) against a local server on the emulator host. Never production data."
+  }
+}

@@ -27,10 +27,19 @@ const isCapacitorNative = typeof window !== 'undefined' && (
 // The Android app talks ONLY to the server baked in at build time (scripts/build-android.mjs sets
 // VITE_API_BASE_URL per environment). There is deliberately no fallback: a native build without a server
 // URL must show a configuration error rather than silently connect to staging or anywhere else.
-// The web app served by the backend uses the same origin ('').
-const BASE_URL = ENV_API_URL || (isCapacitorNative ? '' : (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:3001' : ''));
+// The web app served by the backend uses the same origin (''). The localhost:3001 fallback exists only for
+// the Vite dev server (port 3000) and is compiled out of production builds, so no shipped bundle contains it.
+// __LINECART_DEV_FALLBACK__ is a compile-time constant from vite.config.js (false for production builds, so the
+// minifier removes this branch); it is undefined when modules run under Node tests.
+/* global __LINECART_DEV_FALLBACK__ */
+const DEV_FALLBACK_ENABLED = typeof __LINECART_DEV_FALLBACK__ !== 'undefined' && __LINECART_DEV_FALLBACK__;
+const DEV_SERVER_FALLBACK = DEV_FALLBACK_ENABLED && typeof window !== 'undefined' && window.location.port === '3000'
+  ? 'http://localhost:3001'
+  : '';
+const BASE_URL = ENV_API_URL || (isCapacitorNative ? '' : DEV_SERVER_FALLBACK);
 
-// Build environment label shown in the app ('staging' builds are visibly marked).
+// Build label baked in by scripts/build-android.mjs: 'debug' (production server, debug APK), 'local'
+// (developer build against a local server) or 'production' (release APK). Empty for the web app.
 export const APP_BUILD_ENV = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_APP_ENV) || '';
 export const API_BASE_URL = BASE_URL;
 // True when this is a native app build that was produced without a server address.

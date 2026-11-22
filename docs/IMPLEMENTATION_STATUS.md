@@ -68,6 +68,15 @@ What the tests cover:
 - New settings in Admin → Field Visits → Verification settings (defaults: 100 m radius, ±30 m accuracy, 30-minute duplicate window).
 - Shops with no coordinates (stored as 0,0) show "Shop location not registered" until a manager or admin sets their location.
 
+## Android builds against production (22 Nov 2026)
+- `node scripts/build-android.mjs debug | release | local`:
+  - **debug** (`in.linecart.suite.debug`) and **release** (`in.linecart.suite`) both use the production server.
+  - **local** (`in.linecart.suite.local`) uses a local server on the emulator host.
+- The debug app shows "DEBUG BUILD · LIVE DATA" on every screen; release builds are not debuggable.
+- A Gradle check refuses stale or mismatched web bundles. Every output is inspected for package id, debuggable flag, backend addresses and secrets.
+- Verified on the emulator: the debug and local apps install side by side. The unsigned release is refused by Android (no certificate). The debug app reaches production (316 shops, 7 orders) without signing in. The badge is on all 21 screens of the four roles (local build).
+- Not done: signed release (waiting for the owner's keystore); signed-in checks of the debug and release apps against production.
+
 ## Production read-only audit (22 Nov 2026)
 The existing Render service (`linecart-staging.onrender.com`) and its Supabase database are production. A read-only audit with the four real role accounts got 64 PASS, 3 FAIL, 2 REVIEW, 3 INFO:
 - **Passed:** sign-in, sessions, sign-out, 36 role-restriction checks, and agent/manager/delivery data scope. Admin totals match the database (316 shops, 7 orders, 5 users). No password or token fields in responses.

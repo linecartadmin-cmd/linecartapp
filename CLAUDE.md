@@ -15,7 +15,7 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 ## Commands
 - `npm test`: starts a server on :3001 against a temporary SQLite file, seeds fixtures, runs all suites. `npm test -- <file>.test.js` runs one suite.
 - `LINECART_TEST_PG_URL=postgresql://user:pass@127.0.0.1:<port>/<db> npm test`: same suite on a disposable PostgreSQL on this machine (schema is dropped first; localhost only). A throwaway PostgreSQL 17 (UTF-8) can be started with the `embedded-postgres` npm package outside the repo.
-- Android APKs: `node scripts/build-android.mjs --env staging|local|production [--aab]` (output in `dist-android/`, guide in `docs/ANDROID_BUILD.md`). Production needs `LINECART_PRODUCTION_API_URL` and the owner's keystore; never commit signing files.
+- Android APKs: `node scripts/build-android.mjs debug | release [--aab] | local` (output in `dist-android/`, guide in `docs/ANDROID_BUILD.md`). Debug (`in.linecart.suite.debug`) and release (`in.linecart.suite`) both use the production server from `config/android-environments.json`; `local` (`in.linecart.suite.local`) uses `http://10.0.2.2:3001`. A Gradle check refuses stale or mismatched web bundles; `scripts/inspect-apk.mjs` checks any APK. Release is signed only with the owner's keystore, never the debug key; never commit signing files.
 - Android compile check: in `client/android`, `gradlew.bat :app:compileDebugJavaWithJavac` (JAVA_HOME = JDK 21, ANDROID_HOME = SDK). Run `npx cap sync android` in `client/` first after client changes.
 - `npm run build`: installs server and client, then runs `vite build` (output in `client/dist`).
 - `npm start`: `node server/index.js`.
@@ -34,7 +34,7 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 ## Business decisions (final)
 - **Order creation is online only.** No offline order queue, no TEMP order ids. The sync queue still carries delivery-status and price updates.
 - Admin setup in production requires a `SETUP_TOKEN`.
-- Production = the existing Render service (`https://linecart-staging.onrender.com`) and its Supabase database. No separate staging environment exists. `scripts/build-android.mjs --env production` still refuses URLs containing "staging": open decision (custom domain, rename of the service, or an explicit override).
+- Production = the existing Render service (`https://linecart-staging.onrender.com`) and its Supabase database. No separate staging environment exists. Both the debug and the release APK use it; the debug APK shows "DEBUG BUILD · LIVE DATA" on every screen and must never be given to field staff.
 
 ## Environment on this machine
 Git 2.56, Node 22.23 LTS, gh 2.105, Temurin JDK 21, Android SDK at `%LOCALAPPDATA%\Android\Sdk` (platform 36, build-tools 36.0.0). New shells may need PATH refreshed from the Machine and User values.

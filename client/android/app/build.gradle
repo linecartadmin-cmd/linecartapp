@@ -1,4 +1,20 @@
+import groovy.json.JsonSlurper
+
 apply plugin: 'com.android.application'
+
+// ---------------------------------------------------------------------------
+// Server target. Every build talks to exactly one server, defined in config/android-environments.json:
+//   debug   build type + linecartTarget=production (default) -> in.linecart.suite.debug  "LineCart DEBUG"
+//   release build type (always production)                   -> in.linecart.suite        "LineCart Wholesale"
+//   debug   build type + -PlinecartTarget=local              -> in.linecart.suite.local  "LineCart LOCAL"
+// Build with scripts/build-android.mjs; the bundle guard below refuses web assets built for another target.
+// ---------------------------------------------------------------------------
+def lcEnvs = new JsonSlurper().parse(rootProject.file('../../config/android-environments.json'))
+def lcTarget = (project.findProperty('linecartTarget') ?: 'production').toString()
+if (!(lcTarget in ['production', 'local'])) {
+    throw new GradleException("[LineCart] linecartTarget must be 'production' or 'local', not '${lcTarget}'.")
+}
+def lcIsLocal = lcTarget == 'local'
 
 // ---------------------------------------------------------------------------
 // Version: passed by scripts/build-android.mjs (-PlinecartVersionCode / -PlinecartVersionName),
@@ -56,12 +72,16 @@ android {
     }
     buildTypes {
         debug {
-            // Test builds install side by side with the production app and are clearly labelled
-            applicationIdSuffix ".staging"
-            versionNameSuffix "-staging"
-            manifestPlaceholders = [appLabel: "LineCart STAGING"]
+            // Same production server and accounts as the release app; separate app id so both install side
+            // by side (each keeps its own sign-in and device cache). Debuggable, WebView inspection on.
+            debuggable true
+            applicationIdSuffix lcIsLocal ? ".local" : ".debug"
+            versionNameSuffix lcIsLocal ? "-local" : "-debug"
+            manifestPlaceholders = [appLabel: lcIsLocal ? "LineCart LOCAL" : "LineCart DEBUG"]
         }
         release {
+            // Not debuggable: no WebView inspection, no run-as. Signed only with the owner's release keystore.
+            debuggable false
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             if (hasReleaseSigning) {
@@ -73,6 +93,66 @@ android {
 
 if (!hasReleaseSigning) {
     logger.lifecycle('[LineCart] No release signing configured (keystore.properties / LINECART_KEYSTORE_*): release outputs will be UNSIGNED.')
+}
+
+// ---------------------------------------------------------------------------
+// Stale-bundle guard. Before assets are packaged, check that src/main/assets/public (copied by `cap sync`)
+// was built by scripts/build-android.mjs for THIS variant's server, contains that URL, contains no other
+// environment's URL or emulator/localhost address, and contains no credentials or keys.
+// ---------------------------------------------------------------------------
+def lcFail = { String variantName, String msg ->
+    throw new GradleException("[LineCart] ${variantName}: ${msg}")
+}
+android.applicationVariants.all { variant ->
+    def isRelease = variant.buildType.name == 'release'
+    def expectedTarget = isRelease ? 'production' : lcTarget
+    def expectedEnv = isRelease ? 'production' : (lcIsLocal ? 'local' : 'debug')
+    def buildCmd = "node scripts/build-android.mjs ${isRelease ? 'release' : expectedEnv}"
+    def taskSuffix = variant.name.substring(0, 1).toUpperCase() + variant.name.substring(1)
+    def publicDir = file('src/main/assets/public')
+    def verify = tasks.register("verifyLinecartWebBundle${taskSuffix}") {
+        group = 'verification'
+        description = "Checks the packaged web bundle targets ${expectedEnv}."
+        outputs.upToDateWhen { false }
+        doLast {
+            if (isRelease && lcIsLocal) lcFail(variant.name, 'release builds always target production; remove -PlinecartTarget=local.')
+            def marker = new File(publicDir, 'linecart-build.json')
+            if (!marker.exists()) lcFail(variant.name, "web bundle has no linecart-build.json (stale or manual build). Build with: ${buildCmd}")
+            def m = new JsonSlurper().parse(marker)
+            def expectedUrl = lcEnvs[expectedTarget].apiUrl
+            if (m.target != expectedTarget || m.appEnv != expectedEnv || m.apiUrl != expectedUrl) {
+                lcFail(variant.name, "web bundle was built for '${m.appEnv}' (${m.apiUrl}) but this build needs '${expectedEnv}' (${expectedUrl}). Build with: ${buildCmd}")
+            }
+            def text = new StringBuilder()
+            publicDir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (f.name ==~ /.*\.(js|html)$/) text.append(f.getText('UTF-8')).append('\n')
+            }
+            def s = text.toString()
+            if (!s.contains(expectedUrl)) lcFail(variant.name, "web bundle does not contain ${expectedUrl}.")
+            lcEnvs.each { k, v ->
+                if (k != expectedTarget && v instanceof Map && v.apiUrl && s.contains(v.apiUrl)) {
+                    lcFail(variant.name, "web bundle contains the ${k} server ${v.apiUrl}.")
+                }
+            }
+            if (expectedTarget != 'local') {
+                ['10.0.2.2', 'localhost:3001', '127.0.0.1:3001'].each { addr ->
+                    if (s.contains(addr)) lcFail(variant.name, "web bundle contains the development address ${addr}.")
+                }
+            }
+            def otherHosts = (s =~ /https?:\/\/[a-z0-9.-]+\.onrender\.com/).collect { it }.unique().findAll { it != expectedUrl }
+            if (otherHosts) lcFail(variant.name, "web bundle contains other backend hosts: ${otherHosts.join(', ')}")
+            [
+                [/postgres(ql)?:\/\//, 'a database URL'],
+                [/[a-z0-9]{20}\.supabase\.co|pooler\.supabase\.com/, 'a Supabase host'],
+                [/service_role|SUPABASE_SERVICE_ROLE|sb_secret_/, 'a Supabase service key'],
+                [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'a private key']
+            ].each { pair ->
+                if (s =~ pair[0]) lcFail(variant.name, "web bundle contains ${pair[1]}. Never ship credentials in the app.")
+            }
+            logger.lifecycle("[LineCart] ${variant.name}: web bundle verified for '${expectedEnv}' -> ${expectedUrl}")
+        }
+    }
+    variant.mergeAssetsProvider.configure { dependsOn verify }
 }
 
 repositories {

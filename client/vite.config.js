@@ -26,7 +26,9 @@ export default defineConfig(({ mode }) => {
       react()
     ],
     define: {
-      'import.meta.env.VITE_ENABLE_DEMO_LOGIN': JSON.stringify(isDemo ? 'true' : 'false')
+      'import.meta.env.VITE_ENABLE_DEMO_LOGIN': JSON.stringify(isDemo ? 'true' : 'false'),
+      // Browser-only http://localhost:3001 fallback for the Vite dev server; compiled out of production builds
+      __LINECART_DEV_FALLBACK__: JSON.stringify(mode !== 'production')
     },
     build: {
       chunkSizeWarningLimit: 600,
