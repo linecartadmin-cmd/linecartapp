@@ -14,8 +14,8 @@ export function concretePath(routePath) {
   return routePath.replace(/:([A-Za-z]+)/g, (_, name) => PARAM_VALUES[name] || '999999');
 }
 
-// Probes that end the caller's session run after everything else
-export const SESSION_ENDING = new Set(['POST /api/auth/logout', 'POST /api/auth/logout-all']);
+// Probes that end the caller's session run after everything else, in this order
+export const SESSION_ENDING = ['POST /api/auth/logout-all', 'POST /api/auth/logout'];
 
 export const SWEEP_IDENTITIES = ['none', 'customer', 'auditor', 'delivery', 'agent', 'manager', 'admin'];
 
@@ -35,8 +35,9 @@ export async function probe(base, method, routePath, token) {
 
 /** Runs every probe for every identity; returns { "identity METHOD path": status }. */
 export async function sweep(base, tokens, routes) {
-  const ordered = [...routes.filter((r) => !SESSION_ENDING.has(`${r.method} ${r.path}`)),
-                   ...routes.filter((r) => SESSION_ENDING.has(`${r.method} ${r.path}`))];
+  const keyOf = (r) => `${r.method} ${r.path}`;
+  const ordered = [...routes.filter((r) => !SESSION_ENDING.includes(keyOf(r))),
+                   ...SESSION_ENDING.flatMap((k) => routes.filter((r) => keyOf(r) === k))];
   const out = {};
   for (const who of SWEEP_IDENTITIES) {
     const token = who === 'none' ? null : tokens[who];

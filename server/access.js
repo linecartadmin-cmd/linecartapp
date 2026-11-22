@@ -59,6 +59,7 @@ export const ROUTE_DECLARATIONS = Object.freeze({
 
   // Session self-service
   'GET /api/auth/me': SELF,
+  'POST /api/auth/logout-all': SELF,
   'POST /api/auth/change-password': ACCOUNT,
 
   // Staff
@@ -154,6 +155,7 @@ const AUTH_MESSAGE = 'Authentication required: valid Bearer session token must b
 function makeGate(audience, getCaller, authFailureCode) {
   if (audience === PUBLIC) return null;
   return function accessGate(req, res, next) {
+    req._routeAudience = audience;
     const caller = getCaller(req);
     if (!caller) {
       return res.status(401).json({ status: 401, code: authFailureCode(req), message: AUTH_MESSAGE });

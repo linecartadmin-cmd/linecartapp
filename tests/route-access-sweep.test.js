@@ -35,7 +35,11 @@ function expectedStatus(who, method, routePath) {
 }
 
 // Explicit per-probe changes, each with the task that makes it
-const INTENDED = {};
+const INTENDED = {
+  // T0.8: new route POST /api/auth/logout-all (any valid session; sign out everywhere)
+  'none POST /api/auth/logout-all': 401,
+  ...Object.fromEntries(['customer', 'auditor', 'delivery', 'agent', 'manager', 'admin'].map((who) => [`${who} POST /api/auth/logout-all`, 200]))
+};
 
 test('every declared route answers as recorded, apart from the intended Stage A changes', async (t) => {
   const routes = Object.keys(ROUTE_DECLARATIONS).map((k) => {

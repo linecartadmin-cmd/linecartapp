@@ -285,18 +285,48 @@ async function revokeAllUserSessions(userId) {
   );
 }
 
+async function revokeOtherUserSessions(userId, keepRawToken) {
+  const res = await db.query(
+    'UPDATE sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL AND token_hash <> $3',
+    [Date.now(), Number(userId), keepRawToken ? hashSessionToken(keepRawToken) : '']
+  );
+  return res.rowCount || 0;
+}
+
+/**
+ * Reads the session credential from the request headers (T0.8).
+ * Accepted: Authorization: Bearer <token>, X-Session-Token: <token>, X-Token: <token>, in any
+ * combination as long as every one present carries the same token (the apps send the first two).
+ * Returns { token, failure } where failure is null, 'AUTH_REQUIRED' (nothing sent),
+ * 'AUTH_MALFORMED' (unknown scheme, "Bearer" without a token, a list of values) or
+ * 'AUTH_CONFLICT' (headers carry different tokens). Cookies are never read.
+ */
+function readCredentialHeaders(req) {
+  const headers = (req && req.headers) || {};
+  const asText = (v) => (Array.isArray(v) ? v.join(',') : String(v)).trim();
+  const tokens = [];
+  if (headers.authorization !== undefined) {
+    const value = asText(headers.authorization);
+    if (value) {
+      const m = /^Bearer[ \t]+([^\s,]+)$/i.exec(value);
+      if (!m) return { token: null, failure: 'AUTH_MALFORMED' };
+      tokens.push(m[1]);
+    }
+  }
+  for (const name of ['x-session-token', 'x-token']) {
+    if (headers[name] === undefined) continue;
+    const value = asText(headers[name]);
+    if (!value) continue;
+    if (/[\s,]/.test(value)) return { token: null, failure: 'AUTH_MALFORMED' };
+    tokens.push(value);
+  }
+  if (tokens.length === 0) return { token: null, failure: 'AUTH_REQUIRED' };
+  if (new Set(tokens).size > 1) return { token: null, failure: 'AUTH_CONFLICT' };
+  return { token: tokens[0], failure: null };
+}
+
 function extractBearerToken(req) {
-  if (!req || !req.headers) return null;
-  const authHeader = req.headers['authorization'] || req.headers['Authorization'];
-  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
-    const t = authHeader.slice(7).trim();
-    if (t) return t;
-  }
-  const sessionHeader = req.headers['x-session-token'] || req.headers['x-token'];
-  if (typeof sessionHeader === 'string' && sessionHeader.trim()) {
-    return sessionHeader.trim();
-  }
-  return null;
+  return readCredentialHeaders(req).token;
 }
 
 /**
@@ -310,11 +340,15 @@ async function getCallerAsync(req) {
     return req._resolvedCaller;
   }
 
-  const rawToken = extractBearerToken(req);
+  const credential = readCredentialHeaders(req);
+  const rawToken = credential.token;
   if (!rawToken) {
+    req._authFailure = credential.failure;
     req._resolvedCaller = null;
     return null;
   }
+  // Until a session is confirmed below, any refusal is an invalid session
+  req._authFailure = 'SESSION_INVALID';
 
   const tokenHash = hashSessionToken(rawToken);
   const sessRes = await db.query(
@@ -340,6 +374,7 @@ async function getCallerAsync(req) {
   const nowMs = Date.now();
   if (Number(row.expires_at) <= nowMs) {
     await db.query('UPDATE sessions SET revoked_at = $1 WHERE token_hash = $2', [nowMs, tokenHash]);
+    req._authFailure = 'SESSION_EXPIRED';
     req._resolvedCaller = null;
     return null;
   }
@@ -361,6 +396,7 @@ async function getCallerAsync(req) {
     sessionToken: rawToken
   };
 
+  req._authFailure = null;
   req._resolvedCaller = caller;
   return caller;
 }
@@ -837,10 +873,25 @@ const app = express();
 // Every handler registered below is wrapped so rejected promises reach the error middleware
 wrapAsyncRoutes(app);
 // Every route must be declared in server/access.js (startup refusal) and passes its audience gate first
-const routeAccess = installRouteDeclarations(app, { getCaller });
+const routeAccess = installRouteDeclarations(app, { getCaller, authFailureCode: (req) => req._authFailure || 'AUTH_REQUIRED' });
 const port = process.env.PORT || 3001;
 
 app.use(requestIdMiddleware);
+
+// T0.8: every 401/403 from a protected route carries a machine-readable `code` (added, never replacing a field).
+// 401: AUTH_REQUIRED | AUTH_MALFORMED | AUTH_CONFLICT | SESSION_INVALID | SESSION_EXPIRED; 403: FORBIDDEN unless set.
+// Public routes (sign-in, setup, health) are left as they were.
+app.use((req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    if ((res.statusCode === 401 || res.statusCode === 403) && req._routeAudience && req._routeAudience !== 'public'
+        && body && typeof body === 'object' && !Array.isArray(body) && body.code === undefined) {
+      body = { ...body, code: res.statusCode === 401 ? (req._authFailure || 'AUTH_REQUIRED') : 'FORBIDDEN' };
+    }
+    return json(body);
+  };
+  next();
+});
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -1460,6 +1511,17 @@ app.post('/api/auth/logout', async (req, res) => {
   });
 });
 
+// POST /api/auth/logout-all - Revoke every session of the signed-in user, this one included (T0.8)
+app.post('/api/auth/logout-all', async (req, res) => {
+  const caller = getCaller(req);
+  const result = await db.query(
+    'UPDATE sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL',
+    [Date.now(), Number(caller.id)]
+  );
+  await addAuditLog(req, 'USER_LOGOUT_ALL', 'User', caller.id, `Signed out of all devices (${result.rowCount || 0} session(s))`);
+  return res.json({ status: 200, message: 'Signed out on all devices.', revokedSessions: result.rowCount || 0 });
+});
+
 // POST /api/auth/change-password (Authenticated Self-Service or First-Login Password Change)
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const caller = getCaller(req);
@@ -1510,12 +1572,19 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     [newHash, targetUserId]
   );
 
+  // R14 (T0.8): sign the account out everywhere else. Own change keeps the current session so installed
+  // apps stay signed in on this device; an admin changing someone else's password signs them out fully.
+  const revokedSessions = targetUserId === Number(caller.id)
+    ? await revokeOtherUserSessions(targetUserId, caller.sessionToken)
+    : (await db.query('UPDATE sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL', [Date.now(), targetUserId])).rowCount || 0;
+
   await refreshStateFromDb();
-  await addAuditLog(req, 'USER_PASSWORD_CHANGE', 'User', user.id, `Password changed for user ${user.name} (${user.role})`);
+  await addAuditLog(req, 'USER_PASSWORD_CHANGE', 'User', user.id, `Password changed for user ${user.name} (${user.role}); ${revokedSessions} other session(s) signed out`);
 
   res.json({
     status: 200,
-    message: 'Password changed successfully.'
+    message: 'Password changed successfully.',
+    revokedSessions
   });
 });
 
