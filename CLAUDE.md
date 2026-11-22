@@ -5,19 +5,24 @@ Status, checklist and known issues: `docs/IMPLEMENTATION_STATUS.md`. Full techni
 
 ## Layout
 - `server/index.js`: Express 4 API, all routes. `server/db.js`: DB adapter (Postgres via `DATABASE_URL`, else `node:sqlite` file), boot-time migrations and seed, `loadDatabaseState()`.
-- `server/migrate.js`: backup, restore, verify, admin password reset CLI.
+- `server/migrate.js`: backup, restore, verify, admin password reset CLI. `server/backup.js`: full-fidelity backup/restore.
+- `server/visits.js` + `server/geo.js`: GPS-verified shop visits (migration 007). Feature guide: `docs/FIELD_VISITS.md`.
+- `server/http-errors.js`: async route wrapper, request ids, JSON error logs.
 - `client/src/api.js`: every fetch. `client/src/offline/`: IndexedDB cache, sync queue, biometric session.
-- `client/android/`: Capacitor 8 Android project (`in.linecart.suite`).
+- `client/android/`: Capacitor 8 Android project (`in.linecart.suite`). App-local plugin `LocationIntegrityPlugin.java` (fresh GPS fix + mock flag) is registered in `MainActivity`.
 - `tests/*.test.js`: `node:test` suites; `tests/run-tests.mjs` is the runner; `tests/fixtures/` holds test-only seed data.
 
 ## Commands
 - `npm test`: starts a server on :3001 against a temporary SQLite file, seeds fixtures, runs all suites. `npm test -- <file>.test.js` runs one suite.
+- `LINECART_TEST_PG_URL=postgresql://user:pass@127.0.0.1:<port>/<db> npm test`: same suite on a disposable PostgreSQL on this machine (schema is dropped first; localhost only). A throwaway PostgreSQL 17 (UTF-8) can be started with the `embedded-postgres` npm package outside the repo.
+- Android compile check: in `client/android`, `gradlew.bat :app:compileDebugJavaWithJavac` (JAVA_HOME = JDK 21, ANDROID_HOME = SDK). Run `npx cap sync android` in `client/` first after client changes.
 - `npm run build`: installs server and client, then runs `vite build` (output in `client/dist`).
 - `npm start`: `node server/index.js`.
 
 ## Hard rules
-- Never connect to Supabase or any remote DB from this machine. Tests refuse `DATABASE_URL` (guard in `db.js` init and in `run-tests.mjs`); keep it that way.
-- Never deploy to Render, and never run `migrate.js --restore` against a remote DB, without the user's explicit approval.
+- Never connect to Supabase or any remote DB from this machine. Tests refuse any `DATABASE_URL` except an explicitly opted-in localhost PostgreSQL (guard in `db.js` init and in `run-tests.mjs`); keep it that way.
+- Pushing to `main` auto-deploys `linecart-staging.onrender.com` (migrations run on staging at boot). The user approved pushing after each verified change; production deploys still need explicit approval.
+- Never deploy to production, change Render settings, or run `migrate.js --restore` against a remote DB without the user's explicit approval.
 - Work on `main`, in small commits. Never force-push or rewrite history. Push only after `npm test` and `npm run build --prefix client` pass.
 - Keep API contracts: legacy aliases (`/login`, `/createorder`, `/admin_panel/public/api/linecart/*`, ...) and the `status` field mirrored in JSON bodies. Add response fields; never rename or remove them.
 - No schema change without a reviewed, numbered migration that works on both Postgres and SQLite.
