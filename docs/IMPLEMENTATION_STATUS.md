@@ -20,6 +20,7 @@ Last updated: 22 Nov 2026. Baseline: commit `380a99c`.
 | T-1 | Test suite runs on a local PostgreSQL as well as SQLite | Done | `4f2db71` |
 | 5 | Functional fixes (delivery, payments, scope, passwords, lockout, demo data, permissions, validation, health, maintenance, logging) | Pending | |
 | 6 | UI and connectivity pass | Pending | |
+| UI-1 | UI redesign Phase 1 foundation: tokens, self-hosted fonts, UI primitives, role-aware shell, real approvals indicator, queued toasts, Android hardware back; see `docs/ui-redesign/PHASE1.md` | Done on local branch `ui-redesign-foundation` (not pushed, not deployed); screen migrations pending | `f9e7f7f`..`beb88c0` |
 | 7 | Android manifest, versioning, signing config, staging/production separation, build script; emulator-tested (see `docs/ANDROID_BUILD.md`) | Done except signed release: needs the owner's keystore and a production API URL | this commit |
 | 8 | Final regression and release | Pending | |
 
