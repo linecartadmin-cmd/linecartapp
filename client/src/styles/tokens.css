@@ -116,6 +116,16 @@
      phone < 600px, tablet 600-1023px, desktop >= 1024px, wide >= 1440px */
 }
 
+/* Touch: phones, tablets and any coarse pointer get 48px controls (Android / WCAG 2.5.5 target).
+   Desktop with a mouse keeps the denser 44px / 36px sizes. Small (sm) controls keep a 40px visual
+   size on touch and extend their hit area to 48px (see .lc-hit in ui.css). */
+@media (pointer: coarse), (max-width: 1023px) {
+  :root {
+    --lc-control-md: 48px;
+    --lc-control-sm: 40px;
+  }
+}
+
 /* Legacy aliases: only names whose original value equals a new token. Unmigrated screens are unchanged. */
 :root {
   --ink: var(--lc-ink);

@@ -235,3 +235,25 @@ button.lc-li:hover, a.lc-li:hover { background: var(--lc-surface-2); }
 .lc-progress--success .lc-progress__fill { background: var(--lc-success); }
 .lc-progress--warning .lc-progress__fill { background: #c27c0e; }
 .lc-progress--danger .lc-progress__fill { background: var(--lc-danger); }
+
+/* ---------- Touch targets ----------
+   Controls whose visual size is under 48px get an invisible hit area that reaches 48px, without
+   changing layout. Applied to small buttons, small icon buttons and the toast close button. */
+.lc-btn, .lc-icon-btn, .lc-toast__close { position: relative; }
+.lc-btn--sm::after,
+.lc-icon-btn--sm::after,
+.lc-toast__close::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 48px);
+  height: max(100%, 48px);
+  transform: translate(-50%, -50%);
+}
+.lc-toast__close { width: 40px; height: 40px; }
+@media (pointer: coarse), (max-width: 1023px) {
+  .lc-seg__opt { min-height: var(--lc-control-md); }
+  .lc-stepper { height: calc(var(--lc-control-md) + 2px); }
+  .lc-stepper button { width: var(--lc-control-md); }
+}
