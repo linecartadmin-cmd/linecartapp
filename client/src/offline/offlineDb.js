@@ -410,6 +410,23 @@ export async function getDeliveryOrders(userId, clusterId = null) {
   return list;
 }
 
+/**
+ * After the server refuses a queued delivery update (409), put the server's status back into this
+ * device's cached copy of the order. Only the status changes; payment fields are left as they are
+ * (the next server load replaces the whole cached order).
+ */
+export async function applyServerDeliveryStatus(userId, orderId, serverStatus) {
+  if (!userId || !orderId || !serverStatus) return;
+  const store = await getStore('delivery_orders', 'readwrite');
+  const key = `${userId}_${orderId}`;
+  const existing = await promisifyRequest(store.get(key));
+  if (!existing) return;
+  existing.status = serverStatus;
+  existing.raw = { ...(existing.raw || {}), status: serverStatus, syncState: 'rejected' };
+  existing.cachedAt = new Date().toISOString();
+  await promisifyRequest(store.put(existing));
+}
+
 export async function updateLocalDeliveryOrderStatus(userId, orderId, newStatus, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null) {
   if (!userId || !orderId) return;
   const store = await getStore('delivery_orders', 'readwrite');

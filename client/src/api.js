@@ -792,7 +792,7 @@ export const api = {
     }
   },
 
-  async updateDeliveryStatus(orderId, status, reason = null, note = null, idempotencyKey = null, deviceEventTime = null, paymentAmountCollected = null, paymentNotes = null) {
+  async updateDeliveryStatus(orderId, status, reason = null, note = null, idempotencyKey = null, deviceEventTime = null, paymentAmountCollected = null, paymentNotes = null, expectedStatus = null) {
     const key = idempotencyKey || `del-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const eventTime = deviceEventTime || new Date().toISOString();
     const payload = {
@@ -807,6 +807,9 @@ export const api = {
     }
     if (paymentNotes !== null && paymentNotes !== undefined) {
       payload.paymentNotes = paymentNotes;
+    }
+    if (expectedStatus) {
+      payload.expectedStatus = expectedStatus;
     }
     const res = await fetch(`${BASE_URL}/api/delivery/orders/${encodeURIComponent(orderId)}/status`, {
       method: 'POST',

@@ -128,20 +128,21 @@ describe('Offline queue and server confirmation (source guarantees)', () => {
   const screen = src('components/DeliveryRouteScreen.jsx');
 
   test('offline: queue first, then the local cache update (same order as before)', () => {
-    const q = hook.indexOf('await queueDeliveryStatusUpdate(userId, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes)');
+    const q = hook.indexOf('await queueDeliveryStatusUpdate(userId, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes, expectedStatus)');
     const l = hook.indexOf('await updateLocalDeliveryOrderStatus(userId, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes)');
     assert.ok(q > 0 && l > q);
     assert.match(hook, /typeof navigator !== 'undefined' && !navigator\.onLine/);
   });
 
   test('online call keeps the existing API signature; a network drop falls back to the queue', () => {
-    assert.match(hook, /api\.updateDeliveryStatus\(orderId, newStatus, reason, note, null, null, paymentAmountCollected, paymentNotes\)/);
+    // Same positional arguments as before; expectedStatus is appended (older servers ignore it)
+    assert.match(hook, /api\.updateDeliveryStatus\(orderId, newStatus, reason, note, null, null, paymentAmountCollected, paymentNotes, expectedStatus\)/);
     assert.match(hook, /\} catch \{\s*\/\/ Network dropped mid-request[\s\S]{0,120}queueIt/);
   });
 
   test('only a server-accepted update reports "synced"; rejection changes nothing locally', () => {
     assert.match(hook, /if \(res && \(res\.status === 200 \|\| res\.status === 1\)\) \{[\s\S]*?return \{ outcome: 'synced'/);
-    assert.match(hook, /return \{ outcome: 'rejected', message: res\?\.message \}/);
+    assert.match(hook, /return \{ outcome: 'rejected', message: res\?\.message, serverStatus: res\?\.currentStatus \|\| null \}/);
     assert.match(screen, /title=\{result\?\.outcome === 'synced' \? t\.deliveredSaved : t\.deliveredQueued\}/);
   });
 
@@ -180,5 +181,44 @@ describe('Emulator walkthrough fixes (Phase 2)', () => {
   test('navigate button keeps a short visible label; the address-only meaning stays in its accessible name', () => {
     assert.match(screen, /<span>\{t\.navigate\}<\/span>/);
     assert.match(screen, /aria-label=\{hasCoords\(stop\) \? t\.navigate : t\.openMapByAddress\}/);
+  });
+});
+
+describe('Server refusals (409) on the device', () => {
+  test('queue: 409 marks the update failed (never synced), keeps the server status and the code', async () => {
+    const { classifyDeliverySyncResponse } = await load('offline/deliverySyncResult.js');
+    const r = classifyDeliverySyncResponse({ status: 409, code: 'STATUS_CONFLICT', currentStatus: 'Cancelled', requestedStatus: 'Picked up', message: 'Order was cancelled and cannot be changed to \'Picked up\'.' });
+    assert.deepStrictEqual(
+      [r.outcome, r.isConflict, r.serverStatus, r.requestedStatus, r.code],
+      ['failed', true, 'Cancelled', 'Picked up', 'STATUS_CONFLICT']
+    );
+    assert.match(r.error, /cancelled/);
+    assert.strictEqual(classifyDeliverySyncResponse({ status: 200, idempotentReplay: true }).outcome, 'synced');
+    assert.strictEqual(classifyDeliverySyncResponse({ status: 400, message: 'bad' }).outcome, 'failed');
+    assert.strictEqual(classifyDeliverySyncResponse(null).outcome, 'failed');
+  });
+
+  test('queue replays send expectedStatus when it was recorded; older queued items still work without it', () => {
+    const engine = src('offline/syncEngine.js');
+    assert.match(engine, /\.\.\.\(expectedStatus \? \{ expectedStatus \} : \{\}\)/);
+    assert.match(engine, /paymentNotes,\s*expectedStatus \|\| null\s*\);/);
+    assert.match(engine, /const result = classifyDeliverySyncResponse\(res\);/);
+  });
+
+  test('a refused queued update replaces the local change with the server status on the device', () => {
+    const engine = src('offline/syncEngine.js');
+    const hook = src('delivery/useDeliveryRoute.js');
+    assert.match(engine, /if \(result\.isConflict && result\.serverStatus\) \{[\s\S]{0,200}applyServerDeliveryStatus\(userId, orderId, result\.serverStatus\)/);
+    assert.match(engine, /'linecart:delivery_conflict'/);
+    assert.match(hook, /'linecart:delivery_conflict'/);
+    assert.match(hook, /if \(res && res\.status === 409 && res\.currentStatus\) \{[\s\S]{0,200}applyLocal\(orderId, \{ status: res\.currentStatus, syncState: 'rejected' \}\)/);
+    const db = src('offline/offlineDb.js');
+    const fn = db.slice(db.indexOf('export async function applyServerDeliveryStatus'), db.indexOf('export async function updateLocalDeliveryOrderStatus'));
+    assert.ok(fn.length > 0 && !/payment/i.test(fn.replace(/payment fields are left as they are/, '')), 'only the status is changed, payment untouched');
+  });
+
+  test('"Could not deliver" is offered only after pick-up', () => {
+    const screen = src('components/DeliveryRouteScreen.jsx');
+    assert.match(screen, /\{p === 'onTheWay' \? \(\s*<Button variant="danger-ghost" block icon=\{XCircle\}/);
   });
 });

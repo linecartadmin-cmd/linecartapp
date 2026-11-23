@@ -418,9 +418,12 @@ function PrimaryActions({ t, stop, busy, onPickUp, onDeliver, onFail }) {
           {t.markPickedUp}
         </Button>
       )}
-      <Button variant="danger-ghost" block icon={XCircle} disabled={busy} onClick={onFail}>
-        {t.couldNotDeliver}
-      </Button>
+      {/* 'Could not deliver' is only possible after pick-up (server rule) */}
+      {p === 'onTheWay' ? (
+        <Button variant="danger-ghost" block icon={XCircle} disabled={busy} onClick={onFail}>
+          {t.couldNotDeliver}
+        </Button>
+      ) : null}
     </div>
   );
 }

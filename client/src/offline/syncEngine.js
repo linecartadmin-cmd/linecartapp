@@ -11,13 +11,15 @@
  */
 
 import { api } from '../api';
+import { classifyDeliverySyncResponse } from './deliverySyncResult';
 import {
   enqueueMutation,
   getSyncQueue,
   getPendingMutations,
   updateMutation,
   deleteMutation,
-  getUnsyncedCount
+  getUnsyncedCount,
+  applyServerDeliveryStatus
 } from './offlineDb';
 
 let isSyncing = false;
@@ -101,7 +103,9 @@ export async function discardQueueEntry(mutationId, userId) {
 /**
  * Enqueue a delivery status update mutation
  */
-export async function queueDeliveryStatusUpdate(userId, orderId, status, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null) {
+// expectedStatus (optional, new): the order status the agent saw when acting, so the server can
+// refuse the update if the order changed meanwhile (for example cancelled by the office).
+export async function queueDeliveryStatusUpdate(userId, orderId, status, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null, expectedStatus = null) {
   const deviceEventTime = new Date().toISOString();
   const idempotencyKey = `del-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -116,7 +120,8 @@ export async function queueDeliveryStatusUpdate(userId, orderId, status, reason 
       reason,
       note,
       paymentAmountCollected,
-      paymentNotes
+      paymentNotes,
+      ...(expectedStatus ? { expectedStatus } : {})
     }
   });
 
@@ -234,7 +239,7 @@ export async function triggerSync(userId) {
           });
           continue;
         } else if (item.type === 'UPDATE_DELIVERY_STATUS') {
-          const { orderId, status, reason, note, paymentAmountCollected, paymentNotes } = item.payload;
+          const { orderId, status, reason, note, paymentAmountCollected, paymentNotes, expectedStatus } = item.payload;
           const res = await api.updateDeliveryStatus(
             orderId,
             status,
@@ -243,25 +248,31 @@ export async function triggerSync(userId) {
             item.idempotencyKey,
             item.deviceEventTime,
             paymentAmountCollected,
-            paymentNotes
+            paymentNotes,
+            expectedStatus || null
           );
-
-          if (res && (res.status === 200 || res.status === 1)) {
+          const result = classifyDeliverySyncResponse(res);
+          if (result.outcome === 'synced') {
             await updateMutation(item.mutationId, {
               status: 'synced',
               syncError: null,
               syncedAt: new Date().toISOString(),
               syncedResult: {
-                idempotentReplay: Boolean(res.idempotentReplay)
+                idempotentReplay: result.idempotentReplay
               }
             });
           } else {
-            // Business rejection (illegal transition, not assigned, etc.)
-            const errMsg = res?.message || 'Server rejected status update.';
+            // Business rejection (illegal transition, not assigned, order changed, etc.): never retried
             await updateMutation(item.mutationId, {
               status: 'failed',
-              syncError: errMsg
+              syncError: result.error,
+              ...(result.isConflict ? { isConflict: true, conflictData: { serverStatus: result.serverStatus, requestedStatus: result.requestedStatus, code: result.code } } : {})
             });
+            if (result.isConflict && result.serverStatus) {
+              // Replace the rejected local change with the server's status on this device
+              await applyServerDeliveryStatus(userId, orderId, result.serverStatus).catch(() => {});
+              window.dispatchEvent(new CustomEvent('linecart:delivery_conflict', { detail: { orderId: String(orderId), serverStatus: result.serverStatus } }));
+            }
           }
         } else if (item.type === 'UPDATE_ITEM_PRICE') {
           const payload = {

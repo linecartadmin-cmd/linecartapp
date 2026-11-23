@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { planRoadDeliveryRoute } from '../routing';
 import { queueDeliveryStatusUpdate, subscribeSyncState, getNetworkState } from '../offline/syncEngine';
-import { updateLocalDeliveryOrderStatus, getDeliveryOrders, saveDeliveryOrders, getSyncQueue } from '../offline/offlineDb';
+import { updateLocalDeliveryOrderStatus, getDeliveryOrders, saveDeliveryOrders, getSyncQueue, applyServerDeliveryStatus } from '../offline/offlineDb';
 import { STATUS, deliveryCounts, nextStopIndex, paymentOutcome, syncStateByOrder } from './deliveryModel';
 
 /**
@@ -92,6 +92,11 @@ export function useDeliveryRoute({ user, showToast, t }) {
         pendingRef.current = pendingNow;
       }
     });
+    const onConflict = (e) => {
+      const d = e?.detail;
+      if (d?.orderId && d.serverStatus) applyLocal(d.orderId, { status: d.serverStatus, syncState: 'rejected' });
+    };
+    window.addEventListener('linecart:delivery_conflict', onConflict);
     const on = () => setOnline(true);
     const off = () => setOnline(false);
     window.addEventListener('online', on);
@@ -101,6 +106,7 @@ export function useDeliveryRoute({ user, showToast, t }) {
       unsubscribe();
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
+      window.removeEventListener('linecart:delivery_conflict', onConflict);
     };
   }, [userId, loadAssignedOrders]);
 
@@ -159,6 +165,8 @@ export function useDeliveryRoute({ user, showToast, t }) {
       }
       inFlight.current = true;
       setUpdatingId(String(orderId));
+      // The status the agent is acting on; the server refuses the update if the order changed since
+      const expectedStatus = target?.status || null;
 
       const col = paymentAmountCollected !== null && paymentAmountCollected !== undefined
         ? Number(paymentAmountCollected)
@@ -175,7 +183,7 @@ export function useDeliveryRoute({ user, showToast, t }) {
       };
 
       const queueIt = async (message) => {
-        await queueDeliveryStatusUpdate(userId, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
+        await queueDeliveryStatusUpdate(userId, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes, expectedStatus);
         await updateLocalDeliveryOrderStatus(userId, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
         applyLocal(orderId, { ...localPatch, syncState: 'waiting' });
         await refreshQueue();
@@ -193,7 +201,7 @@ export function useDeliveryRoute({ user, showToast, t }) {
           }
         }
         try {
-          const res = await api.updateDeliveryStatus(orderId, newStatus, reason, note, null, null, paymentAmountCollected, paymentNotes);
+          const res = await api.updateDeliveryStatus(orderId, newStatus, reason, note, null, null, paymentAmountCollected, paymentNotes, expectedStatus);
           if (res && (res.status === 200 || res.status === 1)) {
             const confirmedPay = {
               ...pay,
@@ -211,8 +219,13 @@ export function useDeliveryRoute({ user, showToast, t }) {
             toast(tRef.current.updateSuccess, 'success');
             return { outcome: 'synced', payment: confirmedPay };
           }
+          if (res && res.status === 409 && res.currentStatus) {
+            // The order changed on the server (for example cancelled by the office): show its real status
+            applyLocal(orderId, { status: res.currentStatus, syncState: 'rejected' });
+            applyServerDeliveryStatus(userId, orderId, res.currentStatus).catch(() => {});
+          }
           toast(res?.message || tRef.current.updateFailed, 'error');
-          return { outcome: 'rejected', message: res?.message };
+          return { outcome: 'rejected', message: res?.message, serverStatus: res?.currentStatus || null };
         } catch {
           // Network dropped mid-request: keep the update on the phone (same as before)
           try {
