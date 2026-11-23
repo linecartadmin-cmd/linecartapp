@@ -37,7 +37,7 @@ describe('safeTel', () => {
 
 describe('Map screens', () => {
   const userFields = ['shopName', 'ownerName', 'address', 'contact1', 'contactPhone', 'shopCategory', 'status'];
-  for (const file of ['ShopMapScreen.jsx', 'DeliveryRouteScreen.jsx']) {
+  for (const file of ['ShopMapScreen.jsx', 'DeliveryRouteScreen.jsx', 'DeliveryRouteMap.jsx']) {
     test(`${file}: no raw shop/order text inside HTML template strings`, () => {
       const lines = fs.readFileSync(path.join(repoRoot, 'client/src/components', file), 'utf8').split('\n');
       lines.forEach((line, i) => {
