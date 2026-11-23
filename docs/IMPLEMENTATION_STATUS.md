@@ -95,23 +95,23 @@ The existing Render service (`linecart-staging.onrender.com`) and its Supabase d
   - **Tested by:** `tests/delivery-agent-isolation.test.js` (two agents, every status, after closure) and `tests/scope-fixes.test.js`.
 - **M2: production role names.** Before deploying, run a read-only `SELECT role, COUNT(*) FROM users GROUP BY role` (owner). Any role other than Admin, Sales Manager, Field Sales Agent or Delivery Agent (letter case and surrounding spaces ignored) would be refused on staff routes.
 
-## Order status integrity (decided 23 Nov 2026; branch , not deployed)
-Found in the Delivery Agent emulator walkthrough: a delivery update queued offline was replayed after the office cancelled the order and moved it from 'Cancelled' to 'Picked up' (local test order S203-24027 only). The same check-then-write gap also let a concurrent agent update overwrite a cancellation.  (production) has the same code; production was not inspected.
+## Order status integrity (decided 23 Nov 2026; branch `ui-redesign-foundation`, not deployed)
+Found in the Delivery Agent emulator walkthrough: a delivery update queued offline was replayed after the office cancelled the order and moved it from 'Cancelled' to 'Picked up' (local test order S203-24027 only). The same check-then-write gap also let a concurrent agent update overwrite a cancellation. `main` (production) has the same code; production was not inspected.
 
-**Rules now enforced by the server** ():
+**Rules now enforced by the server** (`server/orderStatus.js`):
 - Cancelled, Delivered and Could not deliver are closed: no ordinary endpoint moves an order out of them.
 - Delivery Agents: awaiting pick-up (Pending / In progress) -> Picked up -> Delivered or Could not deliver. No moves back.
 - Could not deliver requires Picked up (all roles).
-- Admin cancel () only before pick-up (Pending, In progress, Price approval pending). Payment columns are never changed.
-- Admin edit () accepts only the seven recognised statuses (400 otherwise) and valid admin transitions (409 otherwise). Office corrections still possible: awaiting pick-up -> Picked up / Delivered / Cancelled; Picked up -> Delivered / Could not deliver.
-- Every status write is atomic: . If the order changed in between, nothing is written and the caller gets 409. No schema change.
+- Admin cancel (`POST /api/admin/orders/:id/cancel`) only before pick-up (Pending, In progress, Price approval pending). Payment columns are never changed.
+- Admin edit (`PUT /api/admin/orders/:id`) accepts only the seven recognised statuses (400 otherwise) and valid admin transitions (409 otherwise). Office corrections still possible: awaiting pick-up -> Picked up / Delivered / Cancelled; Picked up -> Delivered / Could not deliver.
+- Every status write is atomic: `UPDATE ... WHERE order_id = ? AND COALESCE(status, 'In progress') = <status that was checked>`. If the order changed in between, nothing is written and the caller gets 409. No schema change.
 
-**API behaviour** (fields added, none removed): refusals are . Same-status replays stay . Price approval pending stays 400 as before. Apps may send ; a mismatch is  (Pending and In progress count as the same). Refused delivery updates are audited as .
+**API behaviour** (fields added, none removed): refusals are `409 { status: 409, code: 'STATUS_CONFLICT' | 'STALE_UPDATE', currentStatus, requestedStatus, message }`. Same-status replays stay `200` with `idempotentReplay: true`. Price approval pending stays 400 as before. Apps may send `expectedStatus`; a mismatch is `STALE_UPDATE` (Pending and In progress count as the same). Refused delivery updates are audited as `DELIVERY_STATUS_REJECTED`.
 
 **App behaviour:** a refused update stays failed (never retried), the device shows the server's status and replaces its cached copy; 'Could not deliver' is offered only after pick-up. Older app versions (no expectedStatus) are protected by the server rules and atomic writes; they show the server's refusal message.
 
 **Not added:** an explicit admin reopen action (owner decision 2 allows it only as a separate, safe, audited action).
-**Tested:**  (21 tests incl. 20 + 10 concurrent rounds) on SQLite and on local PostgreSQL 17.
+**Tested:** `tests/order-status-integrity.test.js` (21 tests including 20 + 10 concurrent rounds) on SQLite and on a disposable local PostgreSQL 17; full suite 383 of 383 on both.
 
 ## Known issues found during work
 - The project lives in OneDrive. OneDrive turns some Gradle build output folders into read-only placeholders, which can fail an Android build with `AccessDeniedException`. Delete the named folder and rebuild, or keep the project (or at least `client/node_modules` and `client/android/build`) outside OneDrive.
