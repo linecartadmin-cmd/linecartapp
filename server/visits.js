@@ -157,7 +157,12 @@ export function registerVisitRoutes(app, ctx) {
       visitedToday: list.filter((s) => s.visitStatus === 'visited').length,
       notVisitedToday: list.filter((s) => s.visitStatus !== 'visited').length,
       pending: list.filter((s) => s.visitStatus === 'pending' && s.locationRegistered).length,
-      withoutLocation: list.filter((s) => !s.locationRegistered).length
+      withoutLocation: list.filter((s) => !s.locationRegistered).length,
+      // Visit records (not shops) for this agent dated today (IST). Only `verified` visits count,
+      // as in every visit summary; flagged visits count once a manager approves them. Counted from
+      // all of the agent's visits today, including shops since reassigned.
+      verifiedVisitsToday: visitRows.rows.filter((v) => v.visit_date === today && v.status === 'verified').length,
+      flaggedVisitsToday: visitRows.rows.filter((v) => v.visit_date === today && v.status === 'flagged').length
     };
     const filter = String(req.query.filter || 'all');
     if (filter === 'pending') list = list.filter((s) => s.visitStatus === 'pending' && s.locationRegistered);

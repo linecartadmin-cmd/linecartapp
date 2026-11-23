@@ -4,6 +4,7 @@ import { getFreshVisitLocation } from '../utils/locationService';
 import { safeTel } from '../utils';
 import useServerReachability from '../hooks/useServerReachability';
 import VisitMap from './VisitMap';
+import { Skeleton } from '../ui';
 
 const FILTERS = [
   { id: 'all', label: 'All shops' },
@@ -43,6 +44,34 @@ const TONE = {
 const fmtTime = (iso) =>
   iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 const newKey = () => `visit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+// Today's visits for the signed-in agent: the server's count of this agent's `verified` visit
+// records dated today (IST), the same definition every visit summary uses. Never shown as zero when
+// it could not be loaded.
+export function TodayVisitsCount({ loading, error, counts, date }) {
+  const value = counts?.verifiedVisitsToday;
+  const known = typeof value === 'number';
+  const flagged = Number(counts?.flaggedVisitsToday || 0);
+  return (
+    <section className="lc-visits-today" aria-label="Today's visits" aria-busy={loading && !known ? 'true' : undefined}>
+      <span className="lc-visits-today__label">Today's Visits</span>
+      {error ? (
+        <span className="lc-visits-today__unavailable" role="status">Unavailable</span>
+      ) : known ? (
+        <span className="lc-visits-today__value" data-testid="today-visits-count">{value}</span>
+      ) : loading ? (
+        <Skeleton width={72} height={48} />
+      ) : (
+        <span className="lc-visits-today__unavailable" role="status">Unavailable</span>
+      )}
+      <span className="lc-visits-today__hint">
+        {error
+          ? 'Could not load your visits. Use Retry below.'
+          : `Verified visits${date ? ` on ${date}` : ' today'}${known && flagged ? ` · ${flagged} awaiting manager review` : ''}`}
+      </span>
+    </section>
+  );
+}
 
 export default function VisitsScreen({ user, showToast }) {
   const [filter, setFilter] = useState('all');
@@ -306,12 +335,16 @@ export default function VisitsScreen({ user, showToast }) {
   // ------------------------------------------------------------------ list view
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '12px', display: 'grid', gap: 12 }}>
+      <TodayVisitsCount loading={loading} error={loadError} counts={data.counts} date={data.date} />
+
       <header>
         <h1 style={{ margin: 0, fontSize: 22 }}>My Visits</h1>
-        <p style={{ margin: '2px 0 0', fontSize: 13, color: '#64748b' }}>
-          {data.date ? `Today (${data.date})` : 'Today'} · {data.counts.visitedToday ?? 0} of {data.counts.all ?? 0} shops visited
-          {data.counts.withoutLocation ? ` · ${data.counts.withoutLocation} without a registered location` : ''}
-        </p>
+        {!loadError && typeof data.counts.all === 'number' ? (
+          <p style={{ margin: '2px 0 0', fontSize: 13, color: '#64748b' }}>
+            {data.counts.visitedToday ?? 0} of {data.counts.all} shops visited
+            {data.counts.withoutLocation ? ` · ${data.counts.withoutLocation} without a registered location` : ''}
+          </p>
+        ) : null}
       </header>
 
       {!isConnected && (

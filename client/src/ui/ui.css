@@ -257,3 +257,10 @@ button.lc-li:hover, a.lc-li:hover { background: var(--lc-surface-2); }
   .lc-stepper { height: calc(var(--lc-control-md) + 2px); }
   .lc-stepper button { width: var(--lc-control-md); }
 }
+
+/* ---------- Today's visits (Field Sales Agent, top of My visits) ---------- */
+.lc-visits-today { display: grid; gap: 2px; padding: var(--lc-space-4) var(--lc-space-5); background: var(--lc-brand-50); border: 1px solid var(--lc-brand-100); border-radius: var(--lc-radius-xl); min-width: 0; }
+.lc-visits-today__label { font: var(--lc-weight-semibold) var(--lc-text-sm) / 1.3 var(--lc-font-body); color: var(--lc-brand-800); text-transform: uppercase; letter-spacing: 0.06em; }
+.lc-visits-today__value { font: var(--lc-weight-heavy) 3rem / 1.05 var(--lc-font-head); color: var(--lc-ink); font-variant-numeric: tabular-nums; }
+.lc-visits-today__unavailable { font: var(--lc-weight-heavy) var(--lc-text-2xl) / 1.3 var(--lc-font-head); color: var(--lc-ink-2); }
+.lc-visits-today__hint { font-size: var(--lc-text-sm); color: var(--lc-ink-2); overflow-wrap: anywhere; }
