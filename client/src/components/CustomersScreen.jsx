@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
+import { registerOverlay } from '../ui';
 import { formatShopId, getGoogleMapsUrl } from '../utils';
 import { fetchCurrentDeviceLocation, reverseGeocodeCoordinates } from '../utils/locationService';
 
@@ -16,6 +17,13 @@ export default function CustomersScreen({
   showToast
 }) {
   const [viewMode, setViewMode] = useState(defaultViewMode); // 'list' or 'newCustomer'
+
+  // Android back on the add-shop form returns to the shop list instead of leaving Shops (and
+  // dropping what was typed); dialogs opened from the form register later and still close first.
+  useEffect(() => {
+    if (viewMode === 'list') return undefined;
+    return registerOverlay({ onRequestClose: () => setViewMode('list') });
+  }, [viewMode]);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [selectedClusterFilter, setSelectedClusterFilter] = useState('all');

@@ -78,3 +78,15 @@ describe('Approvals badge', () => {
     assert.ok(src('App.jsx').includes("'linecart:price_requests_updated'"));
   });
 });
+
+describe('Android back on in-page forms and visit list layout', () => {
+  test('back on the add-shop form returns to the shop list', () => {
+    const c = src('components/CustomersScreen.jsx');
+    assert.match(c, /import \{ registerOverlay \} from '\.\.\/ui';/);
+    assert.match(c, /if \(viewMode === 'list'\) return undefined;\s*return registerOverlay\(\{ onRequestClose: \(\) => setViewMode\('list'\) \}\);/);
+  });
+
+  test('visit status pill keeps its size next to a wrapping shop name', () => {
+    assert.match(src('components/VisitsScreen.jsx'), /fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-start', flexShrink: 0/);
+  });
+});

@@ -365,7 +365,7 @@ export default function VisitsScreen({ user, showToast }) {
                 >
                   <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                     <b style={{ fontSize: 15, color: '#0f172a', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.shopName}</b>
-                    <span style={{ background: badge.bg, color: badge.fg, borderRadius: 999, padding: '1px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{badge.text}</span>
+                    <span style={{ background: badge.bg, color: badge.fg, borderRadius: 999, padding: '1px 8px', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-start', flexShrink: 0 }}>{badge.text}</span>
                   </span>
                   <span style={{ fontSize: 12, color: '#475569' }}>{s.ownerName || '—'} · {s.contact1 || 'no phone'}</span>
                   <span style={{ fontSize: 12, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.address || '—'}</span>
