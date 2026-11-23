@@ -302,7 +302,7 @@ export default function AdminTargetsScreen({ user, clusters = [], onNavigate, sh
       {/* Header */}
       <div className="page-header-row">
         <div>
-          <div className="admin-role-badge">🎯 Performance Governance</div>
+          <div className="admin-role-badge">Performance Governance</div>
           <h1 className="page-title">Targets &amp; Quotas Management</h1>
           <p className="page-subtitle">
             Configure monthly sales revenue quotas and per-commodity kg targets across sales managers and field agents

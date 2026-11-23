@@ -1,6 +1,7 @@
 @import './styles/tokens.css';
 @import './styles/base.css';
 @import './reference-theme.css';
+@import './styles/legacy-bridge.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

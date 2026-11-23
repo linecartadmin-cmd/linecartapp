@@ -430,7 +430,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
           </div>
           <div class="popup-actions">
             <a href="https://www.google.com/maps?q=${Number(singleShop.latitude)},${Number(singleShop.longitude)}" target="_blank" rel="noopener noreferrer" class="popup-maps-link">
-              Open in Google Maps ↗
+              Open in Google Maps
             </a>
           </div>
         </div>
@@ -558,7 +558,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
       {spiderfiedGroupId && (
         <div className="card" style={{ padding: '0.6rem 1rem', background: '#eff6ff', border: '1px solid #bfdbfe', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '0.8125rem', color: '#1e40af', fontWeight: 600 }}>
-            🕸️ Spiderfy active: Fanned out overlapping stores at selected location
+            Spiderfy active: Fanned out overlapping stores at selected location
           </span>
           <button
             type="button"
@@ -695,7 +695,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
             <div className="shop-actions-row">
               {selectedShop.contact1 && (
                 <a href={`tel:${selectedShop.contact1}`} className="btn-secondary btn-sm">
-                  📞 Call Store
+                  Call Store
                 </a>
               )}
               {selectedShop.hasValidCoords && (
@@ -705,7 +705,7 @@ export default function ShopMapScreen({ user, clusters, showToast }) {
                   rel="noopener noreferrer"
                   className="btn-primary btn-sm"
                 >
-                  📍 Open in Google Maps
+                  Open in Google Maps
                 </a>
               )}
               {selectedGroup && selectedGroup.shops.length > 1 && !spiderfiedGroupId && (

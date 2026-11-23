@@ -866,7 +866,7 @@ export default function ItemsScreen({ user, clusters = [], showToast, onNavigate
                     }}
                     title="View Price Audit History"
                   >
-                    📜 History
+                    History
                   </button>
 
                   {isAdmin && (

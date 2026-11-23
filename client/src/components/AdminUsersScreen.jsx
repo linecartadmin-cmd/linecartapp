@@ -366,7 +366,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
                             <span className="muted-text">Unassigned</span>
                           )
                         ) : roleLower === 'delivery agent' ? (
-                          <span className="cluster-tag" style={{ background: '#e0f2fe', color: '#0369a1' }}>🚚 Delivery Fleet</span>
+                          <span className="cluster-tag" style={{ background: '#e0f2fe', color: '#0369a1' }}>Delivery Fleet</span>
                         ) : (
                           <span className="admin-all-scope">Org-Wide</span>
                         )}
@@ -571,7 +571,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
               <div className="modal-body">
                 {(editingUser && (editingUser.role || '').toLowerCase() === 'admin' && Number(editingUser.active) === 1 && activeAdminsCount <= 1) && (
                   <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '0.65rem 0.85rem', marginBottom: '1rem', fontSize: '0.78rem', color: '#991b1b', lineHeight: '1.4' }}>
-                    <strong>🛡 Protected Account:</strong> This is the last active Administrator account. System safeguards prevent deactivation or demoting this role to ensure permanent administrative governance.
+                    <strong>Protected Account:</strong> This is the last active Administrator account. System safeguards prevent deactivation or demoting this role to ensure permanent administrative governance.
                   </div>
                 )}
 

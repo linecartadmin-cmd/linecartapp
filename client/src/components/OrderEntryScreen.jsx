@@ -996,7 +996,7 @@ export default function OrderEntryScreen({
                         ? visitPhotoStatus === 'synced'
                           ? '✓ Photo saved to the server with the order'
                           : isOffline
-                          ? '📷 Photo attached. Connect to the internet to place the order.'
+                          ? ' Photo attached. Connect to the internet to place the order.'
                           : '✓ Photo ready. It is saved when the order is placed.'
                         : 'Take a photo using the in-app camera to attach to this order/visit record.'}
                     </span>
@@ -1031,7 +1031,7 @@ export default function OrderEntryScreen({
                     className="secondary-button"
                     onClick={() => fileInputRef.current && fileInputRef.current.click()}
                   >
-                    📁 Attach Photo
+                    Attach Photo
                   </button>
                   {visitPhoto && (
                     <button
@@ -1079,7 +1079,7 @@ export default function OrderEntryScreen({
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <strong style={{ fontSize: '15px', color: '#0f172a' }}>📷 In-App Visit Camera</strong>
+                  <strong style={{ fontSize: '15px', color: '#0f172a' }}>In-App Visit Camera</strong>
                   <button
                     type="button"
                     className="quiet-button"
@@ -1115,7 +1115,7 @@ export default function OrderEntryScreen({
                     className="primary-button"
                     onClick={handleCaptureVideoFrame}
                   >
-                    📸 Capture & Attach Photo
+                    Capture & Attach Photo
                   </button>
                 </div>
               </div>
@@ -1575,7 +1575,7 @@ export default function OrderEntryScreen({
                                 <span>·</span>
                                 <span>Requested: <b>{money(r.requestedPrice)}/{unitLabel}</b></span>
                                 <span>·</span>
-                                <span>⏳ Pending single approval</span>
+                                <span>Pending single approval</span>
                               </div>
                               <input
                                 type="text"

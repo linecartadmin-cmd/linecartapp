@@ -149,21 +149,21 @@ export default function AdminRolesPermissionsScreen({ user, onNavigate, showToas
           className={`role-tab-btn ${selectedRole === 'Sales Manager' ? 'active' : ''}`}
           onClick={() => setSelectedRole('Sales Manager')}
         >
-          👔 Sales Manager
+          Sales Manager
         </button>
         <button
           type="button"
           className={`role-tab-btn ${selectedRole === 'Field Sales Agent' ? 'active' : ''}`}
           onClick={() => setSelectedRole('Field Sales Agent')}
         >
-          📋 Field Sales Agent
+          Field Sales Agent
         </button>
         <button
           type="button"
           className={`role-tab-btn ${selectedRole === 'Delivery Agent' ? 'active' : ''}`}
           onClick={() => setSelectedRole('Delivery Agent')}
         >
-          🚚 Delivery Agent
+          Delivery Agent
         </button>
         <button
           type="button"

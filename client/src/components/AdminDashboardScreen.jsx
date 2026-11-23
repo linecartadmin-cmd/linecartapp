@@ -202,7 +202,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
       {/* Header */}
       <div className="page-header-row">
         <div>
-          <div className="admin-role-badge">🛡 LineCart Executive Administration</div>
+          <div className="admin-role-badge">LineCart Executive Administration</div>
           <h1 className="page-title">Executive Command Center</h1>
           <p className="page-subtitle">Full system governance, organization metrics, and access control</p>
         </div>

@@ -273,7 +273,7 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
 
   return (
     <div
-      className="w-full min-h-screen bg-[#f6f8fa] flex flex-col items-center p-4 overflow-y-auto"
+      className="lc-login w-full min-h-screen bg-[#f6f8fa] flex flex-col items-center p-4 overflow-y-auto"
       style={{ width: '100%', minWidth: '100%', minHeight: '100dvh', boxSizing: 'border-box', backgroundColor: '#f6f8fa' }}
     >
       <div
@@ -547,7 +547,7 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: '13px', fontWeight: 700, color: '#166534' }}>
-                    🔐 Offline Mode Available
+                    Offline Mode Available
                   </span>
                   <span style={{ fontSize: '11px', color: '#15803d', fontWeight: 700, background: '#dcfce7', padding: '2px 8px', borderRadius: '10px' }}>
                     {selectedAccount?.name || 'Verified Account'}

@@ -652,7 +652,7 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
             gap: '6px'
           }}
         >
-          <span>⏳ Customer Price Requests</span>
+          <span>Customer Price Requests</span>
           {priceRequests.filter((p) => p.status === 'pending').length > 0 && (
             <span style={{
               background: activeTab === 'price-requests' ? '#b45309' : '#d97706',

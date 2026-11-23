@@ -267,7 +267,7 @@ export default function ManagerReportsScreen({
             title="Review price approval requests"
             style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
           >
-            <span>⏳ Price Approvals</span>
+            <span>Price Approvals</span>
             {pendingPriceCount > 0 && (
               <span style={{
                 background: '#d97706',
@@ -286,7 +286,7 @@ export default function ManagerReportsScreen({
             onClick={() => setShowTargetModal(true)}
             disabled={assignedSalesAgents.length === 0}
           >
-            🎯 Configure Sales Target
+            Configure Sales Target
           </button>
         </div>
       </div>
@@ -979,7 +979,7 @@ export default function ManagerReportsScreen({
         >
           <div className="panel" style={{ width: '100%', maxWidth: '460px', padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h2 style={{ margin: 0, fontSize: '17px' }}>🎯 Configure Agent Sales Target</h2>
+              <h2 style={{ margin: 0, fontSize: '17px' }}>Configure Agent Sales Target</h2>
               <button
                 className="quiet-button"
                 onClick={() => setShowTargetModal(false)}
