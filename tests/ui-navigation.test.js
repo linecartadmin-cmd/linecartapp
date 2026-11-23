@@ -15,7 +15,7 @@ const read = (rel) => fs.readFileSync(path.join(clientSrc, rel), 'utf8');
 
 const { NAV, visibleNav, navPageIds, pageTitle } = await load('shell/navConfig.js');
 const { registerOverlay, closeTopOverlay, hasOpenOverlay, closeLegacyModal } = await load('ui/overlayStack.js');
-const { inferToastVariant } = await load('ui/toastVariant.js');
+const { inferToastVariant, toastDuration } = await load('ui/toastVariant.js');
 
 const appSrc = read('App.jsx');
 const serverSrc = fs.readFileSync(path.join(repoRoot, 'server/index.js'), 'utf8');
@@ -157,6 +157,10 @@ describe('App shell source guarantees', () => {
 });
 
 describe('Android back order: overlays first, then legacy modals', () => {
+  test('on the role home screen back leaves the app instead of replaying redirected history', () => {
+    assert.ok(appSrc.includes('useAndroidBackButton({ enabled: Boolean(user), onBack: handleBack, isAtRoot: page === getRoleHome() });'));
+  });
+
   test('closes the top-most registered overlay first', () => {
     const closed = [];
     const a = registerOverlay({ onRequestClose: () => closed.push('a') });
@@ -171,23 +175,43 @@ describe('Android back order: overlays first, then legacy modals', () => {
     assert.strictEqual(closeTopOverlay(), false);
   });
 
-  const el = (closeBtn) => ({
+  const view = { innerWidth: 360, innerHeight: 800 };
+  const btn = (text, onClick = () => {}) => ({ textContent: text, disabled: false, click: onClick });
+  // kind: 'class' (.modal-overlay etc.) or 'inline' (inline position: fixed)
+  const el = ({ marked = null, buttons = [], kind = 'class', rect = { width: 360, height: 800 } } = {}) => ({
     closest: () => null,
-    getBoundingClientRect: () => ({ width: 300, height: 200 }),
-    querySelector: () => closeBtn
+    matches: () => kind === 'class',
+    getBoundingClientRect: () => rect,
+    querySelector: () => marked,
+    querySelectorAll: () => buttons
   });
-  test('legacy modal with a close button is closed by pressing it', () => {
+  const docWith = (...els) => ({ defaultView: view, querySelectorAll: () => els });
+
+  test('legacy modal with a marked close button is closed by pressing it', () => {
     let clicked = 0;
-    const doc = { querySelectorAll: () => [el({ disabled: false, click: () => clicked++ })] };
-    assert.strictEqual(closeLegacyModal(doc), 'closed');
+    assert.strictEqual(closeLegacyModal(docWith(el({ marked: btn('✕', () => clicked++) }))), 'closed');
     assert.strictEqual(clicked, 1);
   });
-  test('legacy modal without a close button blocks back (no navigation away from a form)', () => {
-    const doc = { querySelectorAll: () => [el(null)] };
-    assert.strictEqual(closeLegacyModal(doc), 'blocked');
+  test('legacy modal whose only close control is a ✕ glyph button is closed', () => {
+    let clicked = 0;
+    const modal = el({ buttons: [btn('Save price'), btn('✕', () => clicked++)] });
+    assert.strictEqual(closeLegacyModal(docWith(modal)), 'closed');
+    assert.strictEqual(clicked, 1);
+  });
+  test('text buttons such as Cancel are never pressed; back is blocked instead', () => {
+    let pressed = 0;
+    const modal = el({ buttons: [btn('Cancel', () => pressed++), btn('Cancel Order', () => pressed++)] });
+    assert.strictEqual(closeLegacyModal(docWith(modal)), 'blocked');
+    assert.strictEqual(pressed, 0);
+  });
+  test('an inline position:fixed full-screen overlay counts as a modal', () => {
+    assert.strictEqual(closeLegacyModal(docWith(el({ kind: 'inline', buttons: [btn('Save')] }))), 'blocked');
+  });
+  test('a small inline fixed element (badge, bar) is not a modal', () => {
+    assert.strictEqual(closeLegacyModal(docWith(el({ kind: 'inline', rect: { width: 120, height: 20 } }))), 'none');
   });
   test('no legacy modal open', () => {
-    assert.strictEqual(closeLegacyModal({ querySelectorAll: () => [] }), 'none');
+    assert.strictEqual(closeLegacyModal(docWith()), 'none');
   });
 });
 
@@ -199,13 +223,21 @@ describe('Toast variants for existing showToast(message) calls', () => {
       'No internet connection. The order was not placed. Connect to the internet and try again.',
       'Error loading users',
       "Access Denied: 'summary' disabled by Administrator",
-      'Your session has expired. Sign in again to place the order. The order was not placed.'
+      'Your session has expired. Sign in again to place the order. The order was not placed.',
+      'Mobile number 9876500001 is already registered to Demo Admin (#950).',
+      'Current password is incorrect.',
+      'Account is deactivated. Please contact an Administrator.',
+      'Order not found.',
+      'Please select a valid assigned customer store.',
+      'Enter a short reason before rejecting.',
+      'Please select a shop.',
+      'Shop registration requires an active internet connection.'
     ],
     warning: [
       'Network drop: Status saved locally. Waiting to sync.',
       'Network error: Queued ₹50 for Onion to sync automatically.',
-      'Please select a valid assigned customer store.',
-      'Shop registration requires an active internet connection.'
+      'GPS coordinates updated. Please enter the street address.',
+      'Backend unavailable: showing cached dashboard metrics'
     ],
     success: ['Order created successfully!', 'Welcome back, Demo Admin!', 'Visit Verified Successfully'],
     info: ['Connection interrupted. Confirming the order with the server...']
@@ -213,4 +245,30 @@ describe('Toast variants for existing showToast(message) calls', () => {
   for (const [variant, messages] of Object.entries(cases)) {
     for (const m of messages) test(`${variant}: ${m}`, () => assert.strictEqual(inferToastVariant(m), variant));
   }
+});
+
+describe('Toast durations and server failure messages', () => {
+  test('errors never close themselves', () => {
+    assert.strictEqual(toastDuration('error', 'Failed'), null);
+  });
+  test('info and success stay at least 4 s and longer for long messages, at most 10 s', () => {
+    assert.strictEqual(toastDuration('success', 'Saved'), 4000);
+    const long = 'x'.repeat(120);
+    assert.ok(toastDuration('info', long) > 4000 && toastDuration('info', long) <= 10000);
+    assert.strictEqual(toastDuration('info', 'x'.repeat(1000)), 10000);
+  });
+  test('warnings stay at least 7 s', () => {
+    assert.ok(toastDuration('warning', 'Queued') >= 7000);
+  });
+  test('no 4xx/5xx message sent by the server would show as success or auto-closing info', () => {
+    const bad = [];
+    for (const rel of ['server/index.js', 'server/visits.js']) {
+      const src = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+      for (const m of src.matchAll(/status\((4\d\d|5\d\d)\)\.json\(\{[^}]*?message:\s*(['`])((?:(?!\2).){3,200})\2/gs)) {
+        const v = inferToastVariant(m[3]);
+        if (v === 'success' || v === 'info') bad.push(`${m[1]} ${v}: ${m[3]}`);
+      }
+    }
+    assert.deepStrictEqual(bad, []);
+  });
 });

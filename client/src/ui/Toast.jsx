@@ -1,14 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import Icon from './Icon';
-import { inferToastVariant, TOAST_VARIANTS } from './toastVariant';
+import { inferToastVariant, toastDuration, TOAST_VARIANTS } from './toastVariant';
 
 export { inferToastVariant };
 
 const ToastContext = createContext(null);
 
 const ICONS = { info: Info, success: CheckCircle2, warning: AlertTriangle, error: AlertCircle };
-const DURATION = { info: 4000, success: 4000, warning: 7000, error: null }; // errors stay until dismissed
 const MAX_VISIBLE = 3;
 
 function normalizeOptions(opts) {
@@ -30,7 +29,8 @@ export function ToastProvider({ children }) {
     const o = normalizeOptions(opts);
     const variant = TOAST_VARIANTS.includes(o.variant) ? o.variant : inferToastVariant(message);
     const id = ++seq.current;
-    const duration = o.duration !== undefined ? o.duration : DURATION[variant];
+    // Errors always stay until dismissed, even if a duration is passed
+    const duration = variant === 'error' ? null : o.duration !== undefined ? o.duration : toastDuration(variant, message);
     setToasts((list) => {
       // Do not stack the same visible message twice (double taps, repeated retries).
       if (list.some((t) => t.message === String(message) && t.variant === variant)) return list;
@@ -56,14 +56,26 @@ export function useToast() {
 }
 
 function ToastItem({ toast, onDismiss, active }) {
+  // Auto-close timer that pauses while the pointer is over the toast or focus is inside it.
+  const [paused, setPaused] = useState(false);
+  const remaining = useRef(toast.duration);
   useEffect(() => {
-    if (!active || !toast.duration) return undefined;
-    const t = setTimeout(() => onDismiss(toast.id), toast.duration);
-    return () => clearTimeout(t);
-  }, [active, toast.duration, toast.id, onDismiss]);
+    if (!active || !toast.duration || paused) return undefined;
+    const started = Date.now();
+    const t = setTimeout(() => onDismiss(toast.id), remaining.current);
+    return () => {
+      clearTimeout(t);
+      remaining.current = Math.max(800, remaining.current - (Date.now() - started));
+    };
+  }, [active, paused, toast.duration, toast.id, onDismiss]);
+  const pause = () => setPaused(true);
+  const resume = (e) => {
+    if (e && e.currentTarget.contains(e.relatedTarget)) return;
+    setPaused(false);
+  };
   const isError = toast.variant === 'error';
   return (
-    <div className={`lc-toast lc-toast--${toast.variant}`} role={isError ? 'alert' : 'status'} data-testid="lc-toast" data-variant={toast.variant}>
+    <div className={`lc-toast lc-toast--${toast.variant}`} role={isError ? 'alert' : 'status'} data-testid="lc-toast" data-variant={toast.variant} data-paused={paused ? "true" : "false"} onMouseEnter={pause} onMouseLeave={resume} onFocus={pause} onBlur={resume}>
       <span className="lc-toast__icon"><Icon icon={ICONS[toast.variant]} size={20} /></span>
       <span className="lc-toast__msg">{toast.message}</span>
       <button type="button" className="lc-toast__close" onClick={() => onDismiss(toast.id)} aria-label="Dismiss notification">
