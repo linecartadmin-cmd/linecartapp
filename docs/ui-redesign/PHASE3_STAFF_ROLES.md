@@ -57,3 +57,16 @@ Not exercised on the emulator: GPS fetch and camera photo (unchanged code paths;
 - Tamil exists only for the Delivery Agent screen; other staff screens are English (as before). Tamil data (shop names, addresses) was checked.
 - Sales Manager Team and Field visits, and Admin Reports exports, were checked for loading and layout only, not for every action.
 - Dark mode not implemented (not approved).
+
+## Final polish (23 Nov 2026, commits `28abbcc`, `9190693`)
+- **Today's Visits** at the top of the Field Sales Agent Visits screen: the number of this agent's `verified` visit records dated today (IST), from the new additive field `counts.verifiedVisitsToday` on `GET /api/visits/my-shops`. Same definition as every visit summary (`docs/FIELD_VISITS.md`): repeat visits to one shop count separately, flagged visits count only after approval (shown as "N awaiting manager review"), failed attempts never count; other agents and other days are excluded. Skeleton while loading, "Unavailable" on failure, never zero. Tests: `tests/visits-today-count.test.js` (3), `tests/ui-roles.test.js`.
+- **Tables on phones**: below 768px every pre-redesign staff table shows each row as a labelled card (labels from the column headers, `client/src/shell/responsiveTables.js`); action buttons get their own row. Tablet and desktop keep the table. Tables with merged header cells keep horizontal scrolling.
+- **Icons**: Admin navigation tiles, save buttons (roles, settings, assignments), Manage Team, Team Orders tab, PNG export, Update Price, edit/archive/restore, Fetch GPS, camera, upload photo, use-current-location and password show/hide now use lucide icons. Emoji in empty states, offline banners and secondary details were left.
+
+| Check | Result |
+|---|---|
+| Browser, all staff pages at 360/768/1280 (30 role/page pairs) | No error boundary, exceptions or page overflow. Every Manager/Admin table visible at 360px became cards; Users card actions on their own row; Edit opens the dialog. At 768px the table stays a table. |
+| Browser, Today's Visits | Count shown; loading skeleton (request held open); "Unavailable" when the request fails. |
+| Browser, Tamil (Delivery screen) | Tamil labels, buttons and tabs at 360px; no overflow (the "All stops (11)" tab wraps to three lines). |
+| Android emulator | Today's Visits 0 → a GPS-verified visit at Sunrise Fresh Produce (location permission prompt, emulator fix 22 m from the shop, ±5 m) → Today's Visits 1. Fetch GPS on New order (±5 m). Camera permission prompt, in-app camera, Capture & Attach, thumbnail preview. Airplane mode: "Offline: cannot place order", entries kept; back online re-enabled it. Admin dashboard tables as cards. Sign-out and sign-in between Admin and Field Sales Agent. |
+| Full SQLite suite | 31 suites, 412 tests, 0 failures. Client build passed. Local APK built and inspected (package `in.linecart.suite.local`, API `http://10.0.2.2:3001`, no secrets). |
