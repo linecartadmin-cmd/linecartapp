@@ -29,7 +29,7 @@ describe('Shared styling layer for pre-redesign screens', () => {
   });
 
   test('raises inline and Tailwind text below 12px to the 12px minimum', () => {
-    for (const px of ['9px', '10px', '11px', '11.5px']) assert.ok(bridge.includes(`[style*="font-size: ${px}"]`), px);
+    for (const px of ['9px', '10px', '11px', '11.5px', '0.68rem', '0.72rem']) assert.ok(bridge.includes(`[style*="font-size: ${px}"]`), px);
     assert.ok(bridge.includes('.text-\\[10px\\], .text-\\[11px\\]'), 'Tailwind 10px/11px classes raised');
     assert.match(bridge, /font-size: var\(--lc-text-xs\) !important;/);
   });

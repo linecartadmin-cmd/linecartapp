@@ -33,6 +33,8 @@
 :is(.lc-main .page-content, .lc-login) :is(
   [style*="font-size: 8px"], [style*="font-size: 9px"], [style*="font-size: 10px"],
   [style*="font-size: 10.5px"], [style*="font-size: 11px"], [style*="font-size: 11.5px"],
+  [style*="font-size: 0.6rem"], [style*="font-size: 0.65rem"], [style*="font-size: 0.68rem"],
+  [style*="font-size: 0.7rem"], [style*="font-size: 0.72rem"],
   .text-\[9px\], .text-\[10px\], .text-\[11px\]
 ) {
   font-size: var(--lc-text-xs) !important;

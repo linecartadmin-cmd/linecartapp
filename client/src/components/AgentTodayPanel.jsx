@@ -104,14 +104,20 @@ export default function AgentTodayPanel({ orders = [], onNavigate, onOrderForCus
                 key={s.shopId}
                 leadingIcon={Store}
                 title={s.shopName}
-                meta={[s.shopShortId, s.address].filter(Boolean).join(' · ')}
-                trailing={
+                meta={
                   <>
-                    {!s.locationRegistered ? <StatusPill tone="warning" icon={MapPin} label="No pin" /> : null}
-                    <Button variant="secondary" size="sm" onClick={() => onOrderForCustomer && onOrderForCustomer(s.shopName)}>
-                      Order
-                    </Button>
+                    {[s.shopShortId, s.address].filter(Boolean).join(' · ')}
+                    {!s.locationRegistered ? (
+                      <span style={{ display: 'block', marginTop: 'var(--lc-space-1)' }}>
+                        <StatusPill tone="warning" icon={MapPin} label="No pin" />
+                      </span>
+                    ) : null}
                   </>
+                }
+                trailing={
+                  <Button variant="secondary" size="sm" onClick={() => onOrderForCustomer && onOrderForCustomer(s.shopName)}>
+                    Order
+                  </Button>
                 }
               />
             ))}
