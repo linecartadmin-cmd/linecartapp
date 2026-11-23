@@ -82,11 +82,72 @@ describe('Approvals badge', () => {
 describe('Android back on in-page forms and visit list layout', () => {
   test('back on the add-shop form returns to the shop list', () => {
     const c = src('components/CustomersScreen.jsx');
-    assert.match(c, /import \{ registerOverlay \} from '\.\.\/ui';/);
+    assert.match(c, /import \{[^}]*\bregisterOverlay\b[^}]*\} from '\.\.\/ui';/);
     assert.match(c, /if \(viewMode === 'list'\) return undefined;\s*return registerOverlay\(\{ onRequestClose: \(\) => setViewMode\('list'\) \}\);/);
   });
 
   test('visit status pill keeps its size next to a wrapping shop name', () => {
     assert.match(src('components/VisitsScreen.jsx'), /fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-start', flexShrink: 0/);
   });
+});
+
+describe("Field Sales Agent: Today's Visits at the top of My visits", () => {
+  const v = src('components/VisitsScreen.jsx');
+
+  test('uses the server count of verified visit records, not assigned or visited shops', () => {
+    assert.match(v, /const value = counts\?\.verifiedVisitsToday;/);
+    const card = v.slice(v.indexOf('export function TodayVisitsCount'), v.indexOf('export default function VisitsScreen'));
+    assert.ok(!/visitedToday|counts\??\.all\b|shops\.length/.test(card), 'not derived from shop counts');
+  });
+
+  test('loading shows a skeleton; a failed load shows Unavailable, never zero', () => {
+    assert.match(v, /\{error \? \(\s*<span className="lc-visits-today__unavailable" role="status">Unavailable<\/span>/);
+    assert.match(v, /\) : loading \? \(\s*<Skeleton/);
+  });
+
+  test('is rendered first on the list view, above the heading', () => {
+    const list = v.slice(v.indexOf('// ------------------------------------------------------------------ list view'));
+    assert.ok(list.indexOf('<TodayVisitsCount') < list.indexOf('<h1'), 'count comes before the heading');
+  });
+});
+
+describe('Manager and Admin tables on phones', () => {
+  const rt = src('shell/responsiveTables.js');
+  const bridge = src('styles/legacy-bridge.css');
+
+  test('every staff screen gets the enhancer through the shell', () => {
+    assert.match(src('shell/AppShell.jsx'), /useResponsiveTables\(\);/);
+  });
+
+  test('labels come from the header; complex or self-managed tables are left alone', () => {
+    assert.match(rt, /const SKIP = '\.lc-table, \.dl-items, \.responsive-stack-table, \[data-lc-table="keep"\]';/);
+    assert.match(rt, /th\.colSpan > 1 \|\| th\.rowSpan > 1/);
+    assert.match(rt, /cells\.length !== labels\.length/);
+  });
+
+  test('cards only below 768px; tablet and desktop keep the table', () => {
+    const i = bridge.indexOf('@media (max-width: 767px) {\n  .lc-main .page-content table.lc-rtable');
+    assert.ok(i > 0, 'phone-only media query');
+    assert.ok(!/^\s*\.lc-main \.page-content table\.lc-rtable[^{]*\{[^}]*display: block/m.test(bridge.slice(0, i)), 'no card rules outside the phone query');
+  });
+});
+
+describe('Icons instead of emoji in navigation and primary actions', () => {
+  const cases = {
+    'AdminDashboardScreen.jsx': ['👥', '⚙️', '📜'],
+    'AdminSettingsScreen.jsx': ['💾'],
+    'AdminRolesPermissionsScreen.jsx': ['💾'],
+    'TeamAssignmentsScreen.jsx': ['💾'],
+    'ManagerReportsScreen.jsx': ['👥 Manage Team'],
+    'ManagerOrdersScreen.jsx': ['📦 Team Orders', '📸'],
+    'OrderEntryScreen.jsx': ['📍 Fetch GPS', '📷 {visitPhoto'],
+    'ItemsScreen.jsx': ['<span>⚡</span>', "'📦 Archive'"]
+  };
+  for (const [file, gone] of Object.entries(cases)) {
+    test(file, () => {
+      const s = src(`components/${file}`);
+      for (const g of gone) assert.ok(!s.includes(g), `${g} replaced`);
+      assert.match(s, /import \{ Icon[^}]*\} from '\.\.\/ui';/);
+    });
+  }
 });

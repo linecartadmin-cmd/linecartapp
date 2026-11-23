@@ -4,6 +4,7 @@ import SideNav from './SideNav';
 import BottomNav from './BottomNav';
 import MoreSheet from './MoreSheet';
 import TopBar from './TopBar';
+import useResponsiveTables from './responsiveTables';
 
 /**
  * Layout only. All routing, permission and session logic stays in App.jsx and is passed in:
@@ -28,6 +29,7 @@ export default function AppShell({
   children
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  useResponsiveTables();
   const badges = { approvals: approvals && approvals.status === 'ok' && approvals.count > 0 ? approvals.count : null };
   const moreIds = new Set(nav.moreGroups.flatMap((g) => g.items.map((i) => i.pageId)));
 

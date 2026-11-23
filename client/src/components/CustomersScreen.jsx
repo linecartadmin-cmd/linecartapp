@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { MapPin, Camera, Loader2 } from 'lucide-react';
+import { Icon, registerOverlay } from '../ui';
 import { api } from '../api';
-import { registerOverlay } from '../ui';
 import { formatShopId, getGoogleMapsUrl } from '../utils';
 import { fetchCurrentDeviceLocation, reverseGeocodeCoordinates } from '../utils/locationService';
 
@@ -863,7 +864,7 @@ export default function CustomersScreen({
                       disabled={locating}
                       onClick={handleUseCurrentLocation}
                     >
-                      <span aria-hidden="true">{locating ? '⏳' : '📍'}</span>
+                      {locating ? <Icon icon={Loader2} size={16} /> : <Icon icon={MapPin} size={16} />}
                       <span>{locating ? 'Detecting location…' : 'Use current location'}</span>
                     </button>
                     <span className="address-location-hint">
@@ -968,7 +969,7 @@ export default function CustomersScreen({
                       className="secondary-button"
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      📷 &nbsp;{isPhotoUploaded ? 'Change photo' : 'Upload photo'}
+                      <Icon icon={Camera} size={16} /> {isPhotoUploaded ? 'Change photo' : 'Upload photo'}
                     </button>
                     <span className="block text-[10px] text-slate-400 mt-1">
                       {isPhotoUploaded ? 'Store photo attached' : 'Optional storefront photo verification'}

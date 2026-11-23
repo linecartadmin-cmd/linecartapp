@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Save } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 
 export default function AdminSettingsScreen({ user, showToast }) {
@@ -67,7 +69,7 @@ export default function AdminSettingsScreen({ user, showToast }) {
             className="btn-primary"
             disabled={loading || saving}
           >
-            {saving ? 'Saving...' : '💾 Save Settings'}
+            {saving ? 'Saving...' : <><Icon icon={Save} size={16} /> Save Settings</>}
           </button>
         </div>
       </div>

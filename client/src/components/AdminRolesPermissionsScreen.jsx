@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Save } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 
 const AVAILABLE_PAGES = [
@@ -136,7 +138,7 @@ export default function AdminRolesPermissionsScreen({ user, onNavigate, showToas
               disabled={loading || saving}
               onClick={handleSave}
             >
-              {saving ? 'Saving...' : `💾 Save ${selectedRole} Permissions`}
+              {saving ? 'Saving...' : <><Icon icon={Save} size={16} /> Save {selectedRole} Permissions</>}
             </button>
           )}
         </div>

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Tag, Pencil, Archive, ArchiveRestore } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 import {
   queuePriceUpdate,
@@ -847,7 +849,7 @@ export default function ItemsScreen({ user, clusters = [], showToast, onNavigate
                       gap: '5px'
                     }}
                   >
-                    <span>⚡</span> Update Price
+                    <Icon icon={Tag} size={16} /> Update Price
                   </button>
 
                   <button
@@ -886,8 +888,9 @@ export default function ItemsScreen({ user, clusters = [], showToast, onNavigate
                           cursor: 'pointer'
                         }}
                         title="Edit Product Details"
+                        aria-label={`Edit ${item.itemName}`}
                       >
-                        ✏️
+                        <Icon icon={Pencil} size={16} />
                       </button>
 
                       <button
@@ -906,7 +909,7 @@ export default function ItemsScreen({ user, clusters = [], showToast, onNavigate
                         }}
                         title={isArchived ? 'Restore Product' : 'Archive Product (Preserves Orders)'}
                       >
-                        {isArchived ? '♻️ Restore' : '📦 Archive'}
+                        {isArchived ? <><Icon icon={ArchiveRestore} size={14} /> Restore</> : <><Icon icon={Archive} size={14} /> Archive</>}
                       </button>
                     </>
                   )}

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
+import { Icon } from '../ui';
 import { api, INDIAN_MOBILE_REGEX } from '../api';
 
 export default function AdminUsersScreen({ user, clusters = [], onNavigate, showToast }) {
@@ -493,7 +495,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
                         color: '#64748b'
                       }}
                     >
-                      {showCreatePassword ? '🙈' : '👁️'}
+                      {showCreatePassword ? <Icon icon={EyeOff} size={18} /> : <Icon icon={Eye} size={18} />}
                     </button>
                   </div>
                 </div>
@@ -625,7 +627,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
                         color: '#64748b'
                       }}
                     >
-                      {showEditPassword ? '🙈' : '👁️'}
+                      {showEditPassword ? <Icon icon={EyeOff} size={18} /> : <Icon icon={Eye} size={18} />}
                     </button>
                   </div>
                 </div>

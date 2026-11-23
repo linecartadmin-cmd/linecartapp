@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Users } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 
 function getIstDateStr(date = new Date()) {
@@ -259,7 +261,7 @@ export default function ManagerReportsScreen({
             onClick={() => onNavigate && onNavigate('team')}
             title="Inspect assigned team members"
           >
-            👥 Manage Team ({assignedAgents.length} assigned)
+            <Icon icon={Users} size={16} /> Manage Team ({assignedAgents.length} assigned)
           </button>
           <button
             className="secondary-button"

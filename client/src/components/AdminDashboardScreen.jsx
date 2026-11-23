@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Users, ShieldCheck, Link2, Target, Package, Clock, TrendingUp, ScrollText, Settings } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 
 export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
@@ -282,7 +284,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
       {/* Quick Access Tiles to All Management Screens */}
       <div className="admin-quick-nav-grid">
         <div className="nav-tile" onClick={() => onNavigate('admin-users')}>
-          <div className="tile-icon">👥</div>
+          <div className="tile-icon"><Icon icon={Users} size={22} /></div>
           <div className="tile-info">
             <strong>User Management</strong>
             <span>Create, edit, and deactivate user accounts and assign roles</span>
@@ -291,7 +293,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-roles')}>
-          <div className="tile-icon">🛡</div>
+          <div className="tile-icon"><Icon icon={ShieldCheck} size={22} /></div>
           <div className="tile-info">
             <strong>Roles &amp; Permissions</strong>
             <span>Configure accessible pages and actions for non-admin roles</span>
@@ -300,7 +302,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-assignments')}>
-          <div className="tile-icon">🔗</div>
+          <div className="tile-icon"><Icon icon={Link2} size={22} /></div>
           <div className="tile-info">
             <strong>Team Assignments</strong>
             <span>Map sales agents to regional managers with persistent storage</span>
@@ -309,7 +311,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-targets')}>
-          <div className="tile-icon">🎯</div>
+          <div className="tile-icon"><Icon icon={Target} size={22} /></div>
           <div className="tile-info">
             <strong>Targets &amp; Quotas</strong>
             <span>Set and manage revenue and commodity quotas org-wide</span>
@@ -318,7 +320,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-orders')}>
-          <div className="tile-icon">📦</div>
+          <div className="tile-icon"><Icon icon={Package} size={22} /></div>
           <div className="tile-info">
             <strong>All Company Orders</strong>
             <span>Inspect unscoped orders across all teams, shops, and clusters</span>
@@ -327,7 +329,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('price-requests')}>
-          <div className="tile-icon">⏳</div>
+          <div className="tile-icon"><Icon icon={Clock} size={22} /></div>
           <div className="tile-info">
             <strong>Price Approvals</strong>
             <span>Review, approve, or reject customer custom price requests</span>
@@ -342,7 +344,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-reports')}>
-          <div className="tile-icon">📈</div>
+          <div className="tile-icon"><Icon icon={TrendingUp} size={22} /></div>
           <div className="tile-info">
             <strong>Executive Reports</strong>
             <span>Org-wide target vs achieved performance analysis</span>
@@ -351,7 +353,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-audit')}>
-          <div className="tile-icon">📜</div>
+          <div className="tile-icon"><Icon icon={ScrollText} size={22} /></div>
           <div className="tile-info">
             <strong>Security Audit Trail</strong>
             <span>Review timestamps, administrators, and changes made</span>
@@ -360,7 +362,7 @@ export default function AdminDashboardScreen({ user, onNavigate, showToast }) {
         </div>
 
         <div className="nav-tile" onClick={() => onNavigate('admin-settings')}>
-          <div className="tile-icon">⚙️</div>
+          <div className="tile-icon"><Icon icon={Settings} size={22} /></div>
           <div className="tile-info">
             <strong>System Settings</strong>
             <span>Organization branding, default periods, and system mode</span>

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Package, ImageDown } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 import { getPaymentSummary } from '../utils';
 
@@ -634,7 +636,7 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
             color: activeTab === 'orders' ? '#fff' : '#475569'
           }}
         >
-          📦 Team Orders ({orders.length})
+          <Icon icon={Package} size={16} /> Team Orders ({orders.length})
         </button>
         <button
           type="button"
@@ -1474,7 +1476,7 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
                 disabled={isExporting}
                 onClick={() => exportOrderAsPNG(selectedOrder)}
               >
-                {isExporting ? 'Generating PNG...' : '📸 Export Order as PNG Image'}
+                {isExporting ? 'Generating PNG...' : <><Icon icon={ImageDown} size={16} /> Export Order as PNG Image</>}
               </button>
             </div>
           </div>

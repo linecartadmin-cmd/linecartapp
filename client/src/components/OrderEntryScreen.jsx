@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { MapPin, Camera, Loader2, RotateCw } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 import { formatShopId, getGoogleMapsUrl, getPaymentSummary } from '../utils';
 import useServerReachability from '../hooks/useServerReachability';
@@ -904,7 +906,7 @@ export default function OrderEntryScreen({
                   style={{ whiteSpace: 'nowrap', padding: '0 12px', flexShrink: 0 }}
                   title="Request foreground GPS coordinates"
                 >
-                  {locationStatus === 'loading' ? '⏳ Locating...' : locationText ? '↻ Retry GPS' : '📍 Fetch GPS'}
+                  {locationStatus === 'loading' ? <><Icon icon={Loader2} size={16} /> Locating...</> : locationText ? <><Icon icon={RotateCw} size={16} /> Retry GPS</> : <><Icon icon={MapPin} size={16} /> Fetch GPS</>}
                 </button>
               </div>
               {locationStatus !== 'idle' && (
@@ -1024,7 +1026,7 @@ export default function OrderEntryScreen({
                     onClick={handleOpenCamera}
                     style={{ borderColor: '#0284c7', color: '#0284c7', fontWeight: 700 }}
                   >
-                    📷 {visitPhoto ? 'Retake Camera Photo' : 'Take Camera Photo'}
+                    <Icon icon={Camera} size={16} /> {visitPhoto ? 'Retake Camera Photo' : 'Take Camera Photo'}
                   </button>
                   <button
                     type="button"

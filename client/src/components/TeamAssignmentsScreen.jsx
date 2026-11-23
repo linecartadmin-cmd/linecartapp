@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Save } from 'lucide-react';
+import { Icon } from '../ui';
 import { api } from '../api';
 
 export default function TeamAssignmentsScreen({ user = {}, clusters = [], showToast }) {
@@ -161,7 +163,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
               onClick={handleSaveAssignments}
               style={{ padding: '8px 16px', fontWeight: 700 }}
             >
-              {saving ? 'Saving...' : '💾 Save Manager Assignments'}
+              {saving ? 'Saving...' : <><Icon icon={Save} size={16} /> Save Manager Assignments</>}
             </button>
           </div>
         )}
@@ -421,7 +423,7 @@ export default function TeamAssignmentsScreen({ user = {}, clusters = [], showTo
                 onClick={handleSaveAssignments}
                 style={{ padding: '8px 16px', fontWeight: 700 }}
               >
-                {saving ? 'Saving...' : '💾 Save Manager Assignments'}
+                {saving ? 'Saving...' : <><Icon icon={Save} size={16} /> Save Manager Assignments</>}
               </button>
             </div>
           )}
