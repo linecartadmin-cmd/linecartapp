@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { formatShopId, getPaymentSummary } from '../utils';
+import AgentTodayPanel from './AgentTodayPanel';
 
 export default function OverviewScreen({
   user,
@@ -182,10 +183,12 @@ export default function OverviewScreen({
       <div className="page-heading">
         <div>
           <p className="eyebrow">{displayToday}</p>
-          <h1>Good morning, {user?.name || 'Field Sales Agent'}</h1>
-          <p>Here’s what’s happening with your wholesale produce orders today.</p>
+          <h1>{(() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })()}, {user?.name || 'Field Sales Agent'}</h1>
+          <p>Your visits, orders and shops for today.</p>
         </div>
       </div>
+
+      <AgentTodayPanel orders={orders} onNavigate={onNavigate} onOrderForCustomer={onOrderForCustomer} />
 
       {/* Date & Shop Selectors Panel */}
       <div

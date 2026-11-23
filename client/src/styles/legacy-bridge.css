@@ -296,3 +296,12 @@
 .lc-login { background: var(--lc-bg) !important; }
 .lc-login .text-slate-400 { color: var(--lc-muted) !important; }
 .lc-login .text-xs { font-size: var(--lc-text-sm) !important; }
+
+/* In-page back buttons (some close a form inside the screen, so they stay): shown as a standard
+   outlined icon button. */
+:is(.lc-main .page-content) .icon-back-btn {
+  width: var(--lc-control-md);
+  min-width: var(--lc-control-md);
+  padding: 0;
+  font-size: var(--lc-text-lg);
+}
