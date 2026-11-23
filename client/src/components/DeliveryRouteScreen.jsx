@@ -1,1706 +1,782 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Truck,
+  Phone,
+  Navigation,
+  Volume2,
+  Languages,
+  RefreshCw,
+  PackageCheck,
+  XCircle,
+  ChevronRight,
+  MapPin,
+  WifiOff,
+  AlertTriangle,
+  Store,
+  CheckCircle2,
+  Route as RouteIcon,
+  Clock
+} from 'lucide-react';
 import { api } from '../api';
-import { planRoadDeliveryRoute } from '../routing';
-import { getGoogleMapsUrl, getPaymentSummary, escapeHtml, safeTel } from '../utils';
-import { createMapTileLayer, getMapTileConfig } from '../mapConfig';
-import { queueDeliveryStatusUpdate } from '../offline/syncEngine';
-import { updateLocalDeliveryOrderStatus, getDeliveryOrders, saveDeliveryOrders } from '../offline/offlineDb';
-import SyncStatusBar from './SyncStatusBar';
+import { getGoogleMapsUrl, safeTel } from '../utils';
+import {
+  Button,
+  IconButton,
+  Icon,
+  StatusPill,
+  Dialog,
+  ConfirmDialog,
+  BottomSheet,
+  SearchInput,
+  Select,
+  Field,
+  TextInput,
+  TextArea,
+  SegmentedControl,
+  ProgressBar,
+  EmptyState,
+  Skeleton,
+  SkeletonGroup,
+  Metric
+} from '../ui';
+import { DELIVERY_I18N } from '../delivery/deliveryI18n';
+import { useDeliveryRoute } from '../delivery/useDeliveryRoute';
+import {
+  STATUS,
+  FAIL_REASONS,
+  FILTERS,
+  stopPhase,
+  isOpen,
+  filterStops,
+  orderItems,
+  paymentOutcome,
+  validateCollected,
+  hasCoords,
+  rupees
+} from '../delivery/deliveryModel';
+import DeliveryRouteMap from './DeliveryRouteMap';
+import '../delivery/delivery.css';
 
-const I18N = {
-  en: {
-    appTitle: 'Delivery Route',
-    portalSubtitle: 'LineCart Logistics Route Fulfillment',
-    langToggle: 'தமிழ்',
-    back: 'Back',
-    laptopView: 'Laptop view',
-    mobilePreview: 'Mobile preview',
-    signOut: 'Sign out',
-    chooseCluster: 'Delivery Area',
-    allClusters: 'All Assigned Areas',
-    stops: 'Stops',
-    pending: 'Pending',
-    delivered: 'Delivered',
-    issues: 'Issues',
-    startRoute: 'Start Route',
-    routeActive: 'Route Active',
-    optimizingRoute: 'Optimizing road-distance route...',
-    stopsInOrder: 'Assigned Delivery Stops',
-    stop: 'Stop',
-    markPickedUp: 'Mark as Picked Up',
-    markDelivered: 'Mark as Delivered',
-    couldNotDeliver: 'Could Not Deliver',
-    callShop: 'Call Shop',
-    openMap: 'Open Maps',
-    confirmTitle: 'Confirm Order Update',
-    confirmQuestion: 'Are you sure you want to update this order?',
-    confirmAction: 'Confirm Update',
-    cancel: 'Cancel',
-    reasonTitle: 'Why could this not be delivered?',
-    selectReason: 'Select a reason below:',
-    reasons: {
-      closed: 'Shop Closed',
-      ownerUnavailable: 'Owner Not Available',
-      rejected: 'Order Cancelled / Rejected',
-      wrongAddress: 'Wrong Address / Location Not Found'
-    },
-    statusPending: 'Awaiting Pickup',
-    statusInProgress: 'Ready to Pick Up',
-    statusPickedUp: 'Picked Up (On the Way)',
-    statusDelivered: 'Delivered Successfully',
-    statusFailed: 'Delivery Issue',
-    completedBadge: 'Completed',
-    failedBadge: 'Not Delivered',
-    nextStopBadge: 'NEXT STOP',
-    noOrders: 'No delivery orders assigned to you in this area.',
-    refresh: 'Refresh Stops',
-    logout: 'Sign Out',
-    speakBtn: 'Read aloud',
-    showMap: 'Show Map',
-    hideMap: 'Hide Map',
-    disclaimerPrefix: 'Route note:',
-    updating: 'Updating status...',
-    updateSuccess: 'Order status updated successfully!',
-    updateFailed: 'Failed to update order status. Please retry.',
-    sharedAddress: 'Shared Location',
-    sharedAddressBadge: 'Shared address with',
-    gpsMissing: 'Location pin unavailable (Address only)',
-    openMapByAddress: 'Open Maps (by Address)',
-    noAddressOrGps: 'No location on file',
-    unmappedNotice: 'stop(s) have missing GPS coordinates and are routed by address.'
-  },
-  ta: {
-    appTitle: 'டெலிவரி வழித்தடம்',
-    portalSubtitle: 'லைன்கார்ட் டெலிவரி சேவை',
-    langToggle: 'English',
-    back: 'பின்செல்',
-    laptopView: 'லேப்டாப் பார்வை',
-    mobilePreview: 'மொபைல் பார்வை',
-    signOut: 'வெளியேறு',
-    chooseCluster: 'டெலிவரி பகுதி',
-    allClusters: 'அனைத்து பகுதிகள்',
-    stops: 'நிறுத்தங்கள்',
-    pending: 'மீதம்',
-    delivered: 'முடிந்தது',
-    issues: 'சிக்கல்',
-    startRoute: 'வழியைத் தொடங்கு',
-    routeActive: 'பயணம் செயலில் உள்ளது',
-    optimizingRoute: 'சாலை வழியை கணக்கிடுகிறது...',
-    stopsInOrder: 'டெலிவரி நிறுத்தங்கள்',
-    stop: 'நிறுத்தம்',
-    markPickedUp: 'பொருட்கள் எடுத்தாச்சு',
-    markDelivered: 'டெலிவரி முடிந்தது',
-    couldNotDeliver: 'டெலிவரி செய்ய முடியவில்லை',
-    callShop: 'கடைக்கு அழை',
-    openMap: 'வரைபடம்',
-    confirmTitle: 'செயலை உறுதிப்படுத்துங்கள்',
-    confirmQuestion: 'இந்த ஆர்டரை மாற்ற விரும்புகிறீர்களா?',
-    confirmAction: 'உறுதிப்படுத்து',
-    cancel: 'ரத்துசெய்',
-    reasonTitle: 'டெலிவரி செய்ய முடியாததற்கான காரணம் என்ன?',
-    selectReason: 'காரணத்தைத் தேர்ந்தெடுக்கவும்:',
-    reasons: {
-      closed: 'கடை மூடப்பட்டுள்ளது',
-      ownerUnavailable: 'உரிமையாளர் இல்லை',
-      rejected: 'ஆர்டர் ரத்து செய்யப்பட்டது',
-      wrongAddress: 'தவறான முகவரி / இடம் கிடைக்கவில்லை'
-    },
-    statusPending: 'எடுக்க காத்திருக்கிறது',
-    statusInProgress: 'எடுக்க தயார்',
-    statusPickedUp: 'எடுக்கப்பட்டது (வழியில்)',
-    statusDelivered: 'டெலிவரி வெற்றிகரமாக முடிந்தது',
-    statusFailed: 'டெலிவரி தோல்வி',
-    completedBadge: 'முடிந்தது',
-    failedBadge: 'டெலிவரி ஆகவில்லை',
-    nextStopBadge: 'அடுத்த நிறுத்தம்',
-    noOrders: 'இந்த பகுதியில் உங்களுக்கு எந்த டெலிவரி ஆர்டரும் இல்லை.',
-    refresh: 'புதுப்பி',
-    logout: 'வெளியேறு',
-    speakBtn: 'வாசித்து காட்டு',
-    showMap: 'வரைபடத்தைக் காட்டு',
-    hideMap: 'வரைபடத்தை மறை',
-    disclaimerPrefix: 'வழிக் குறிப்பு:',
-    updating: 'நிலை மாற்றப்படுகிறது...',
-    updateSuccess: 'ஆர்டர் நிலை வெற்றிகரமாக மாற்றப்பட்டது!',
-    updateFailed: 'மாற்றுவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.',
-    sharedAddress: 'பகிர்ந்த இடம்',
-    sharedAddressBadge: 'பகிர்ந்த முகவரி:',
-    gpsMissing: 'ஜிபிஎஸ் குறி இல்லை (முகவரி மட்டும்)',
-    openMapByAddress: 'வரைபடம் (முகவரி வழியாக)',
-    noAddressOrGps: 'முகவரி அல்லது ஜிபிஎஸ் இல்லை',
-    unmappedNotice: 'நிறுத்தங்களுக்கு ஜிபிஎஸ் குறி இல்லை, முகவரியால் வழிநடத்தப்படுகிறது.'
-  }
-};
+/**
+ * Delivery Agent screen (page id 'delivery'; also opened by Admin as "Delivery fleet").
+ * Views: Today (progress and next stop), All stops (search and filters), Map.
+ * Details open in a bottom sheet; pick up, delivery with payment and could-not-deliver use dialogs.
+ * Data and actions come from useDeliveryRoute, which keeps the previous offline queue behaviour.
+ */
+export default function DeliveryRouteScreen({ user, showToast }) {
+  const [lang, setLang] = useState('en');
+  const t = DELIVERY_I18N[lang];
+  const route = useDeliveryRoute({ user, showToast, t });
+  const { activeStops, counts, nextIndex, syncMap, online, loading, clusters, selectedClusterId } = route;
 
-export default function DeliveryRouteScreen({
-  user,
-  onLogout,
-  onBack,
-  isMobilePreview = false,
-  onTogglePreview,
-  showToast
-}) {
-  const [lang, setLang] = useState('en'); // 'en' | 'ta'
-  const t = I18N[lang];
+  const [view, setView] = useState('today');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [detailId, setDetailId] = useState(null);
+  const [pickUpFor, setPickUpFor] = useState(null);
+  const [deliverFor, setDeliverFor] = useState(null);
+  const [failFor, setFailFor] = useState(null);
+  const [result, setResult] = useState(null);
 
-  const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false);
-  const [orders, setOrders] = useState([]);
-  const [clusters, setClusters] = useState([]);
-  const [selectedClusterId, setSelectedClusterId] = useState('all');
-
-  // Route optimization state
-  const [routeActive, setRouteActive] = useState(false);
-  const [routeInfo, setRouteInfo] = useState(null);
-  const [optimizing, setOptimizing] = useState(false);
-  const [showMap, setShowMap] = useState(true);
-
-  // Modal interaction states
-  const [confirmModal, setConfirmModal] = useState(null); // { order, targetStatus, title, text }
-  const [failModal, setFailModal] = useState(null); // { order }
-  const [selectedReason, setSelectedReason] = useState('Shop Closed');
-  const [customNote, setCustomNote] = useState('');
-
-  // Payment collection modal state for Delivery Agent
-  const [deliveryModal, setDeliveryModal] = useState(null); // { order, step: 'ask' | 'input', amountCollected: '', error: '' }
-  const [deliverySuccessConfirm, setDeliverySuccessConfirm] = useState(null); // { orderId, shopName, total, collected, balance, paymentStatus, summaryText }
-
-  // Map DOM and Leaflet references
-  const mapContainerRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const markersLayerRef = useRef(null);
-  const polylineLayerRef = useRef(null);
-
-  // Spoken voice assistant using Web Speech API
   const speak = (text) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     try {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang === 'ta' ? 'ta-IN' : 'en-IN';
-      utterance.rate = 0.95;
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-      console.warn('SpeechSynthesis error:', e);
-    }
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang === 'ta' ? 'ta-IN' : 'en-IN';
+      u.rate = 0.95;
+      window.speechSynthesis.speak(u);
+    } catch {}
   };
 
-  // Load orders assigned to this delivery agent (offline cache first, then cloud)
-  const loadAssignedOrders = async () => {
-    // 1. Immediately display cached delivery orders from IndexedDB
-    if (user?.id) {
-      try {
-        const cached = await getDeliveryOrders(user.id, selectedClusterId === 'all' ? null : selectedClusterId);
-        if (cached && cached.length > 0) {
-          setOrders(cached);
-          setLoading(false);
-        }
-      } catch {}
-    }
-
-    // 2. Fetch authoritative remote delivery orders
-    try {
-      const res = await api.getDeliveryOrders(selectedClusterId === 'all' ? undefined : selectedClusterId, user?.id);
-      if (res && res.status === 200) {
-        setOrders(res.orders || []);
-        if (user?.id && Array.isArray(res.orders)) {
-          saveDeliveryOrders(user.id, res.orders).catch(() => {});
-        }
-        if (res.clusters && res.clusters.length > 0) {
-          setClusters(res.clusters);
-          if (res.clusters.length === 1 && selectedClusterId === 'all') {
-            setSelectedClusterId(String(res.clusters[0].clusterId));
-          }
-        }
-      } else {
-        if (showToast) showToast(res?.message || 'Error loading deliveries');
-      }
-    } catch (err) {
-      console.warn('[DeliveryRoute] Backend offline, using cached stops:', err.message);
-      if (showToast) showToast('Working offline: loaded cached delivery stops');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadAssignedOrders();
-  }, [selectedClusterId]);
-
-  // Filtered stops for current cluster
-  const currentStops = useMemo(() => {
-    if (selectedClusterId === 'all') return orders;
-    return orders.filter(o => String(o.clusterId) === String(selectedClusterId));
-  }, [orders, selectedClusterId]);
-
-  // Cluster counts
-  const kpis = useMemo(() => {
-    let pending = 0;
-    let delivered = 0;
-    let issues = 0;
-    currentStops.forEach(o => {
-      const s = (o.status || '').toLowerCase();
-      if (s === 'delivered') delivered++;
-      else if (s === 'could not deliver' || s === 'cancelled') issues++;
-      else pending++;
-    });
-    return { total: currentStops.length, pending, delivered, issues };
-  }, [currentStops]);
-
-  // Plan road route when "Start route" is triggered
-  const handleStartRoute = async () => {
-    setOptimizing(true);
-    try {
-      const planned = await planRoadDeliveryRoute(currentStops);
-      setRouteInfo(planned);
-      setRouteActive(true);
-
-      const text = lang === 'ta'
-        ? `டெலிவரி வழி தயார். மொத்தம் ${planned.orderedStops.length} நிறுத்தங்கள்.`
-        : `Route active. ${planned.orderedStops.length} stops arranged in road routing order.`;
-      speak(text);
-
-      if (showToast) {
-        showToast(lang === 'ta' ? 'டெலிவரி வழி தொடங்கியது!' : 'Delivery route started!');
-      }
-    } catch (err) {
-      console.error('Route optimization error:', err);
-    } finally {
-      setOptimizing(false);
-    }
-  };
-
-  // The active sequence of stops: either ordered from route optimization or natural list
-  const activeStops = useMemo(() => {
-    if (routeInfo && routeInfo.orderedStops && routeInfo.orderedStops.length > 0) {
-      return routeInfo.orderedStops.map(rs => {
-        const fresh = orders.find(o => String(o.id) === String(rs.id));
-        return fresh || rs;
-      });
-    }
-    return currentStops;
-  }, [routeInfo, currentStops, orders]);
-
-  // Identify next incomplete stop in sequence
-  const nextIncompleteIndex = useMemo(() => {
-    return activeStops.findIndex(s => {
-      const st = (s.status || '').toLowerCase();
-      return st !== 'delivered' && st !== 'could not deliver' && st !== 'cancelled';
-    });
-  }, [activeStops]);
-
-  // Validation helper for GPS coordinates
-  const isValidCoord = (lat, lng) => {
-    const nLat = parseFloat(lat);
-    const nLng = parseFloat(lng);
-    return !isNaN(nLat) && !isNaN(nLng) && (nLat !== 0 || nLng !== 0);
-  };
-
-  // Grouping lookup for stops sharing the same coordinates
-  const coordGroupLookup = useMemo(() => {
-    const map = new Map();
-    activeStops.forEach((stop, index) => {
-      if (isValidCoord(stop.latitude, stop.longitude)) {
-        const key = `${parseFloat(stop.latitude).toFixed(5)},${parseFloat(stop.longitude).toFixed(5)}`;
-        if (!map.has(key)) map.set(key, []);
-        map.get(key).push({ stop, index });
-      }
-    });
-    return map;
-  }, [activeStops]);
-
-  // Counts of valid vs missing coordinates
-  const { validStopsCount, missingStopsCount } = useMemo(() => {
-    let valid = 0;
-    let missing = 0;
-    activeStops.forEach(s => {
-      if (isValidCoord(s.latitude, s.longitude)) valid++;
-      else missing++;
-    });
-    return { validStopsCount: valid, missingStopsCount: missing };
-  }, [activeStops]);
-
-  // Color & Icon mapping for delivery statuses
-  const getStatusColor = (status) => {
-    const st = (status || '').toLowerCase();
-    if (st === 'delivered') return '#10b981'; // emerald-500
-    if (st === 'could not deliver' || st === 'cancelled') return '#ef4444'; // rose-500
-    if (st === 'picked up') return '#3b82f6'; // blue-500
-    return '#f59e0b'; // amber-500
-  };
-
-  const getStatusIcon = (status) => {
-    const st = (status || '').toLowerCase();
-    if (st === 'delivered') return '✅';
-    if (st === 'could not deliver' || st === 'cancelled') return '❌';
-    if (st === 'picked up') return '🚚';
-    return '📦';
-  };
-
-  // Ensure map is visible on laptop view
-  useEffect(() => {
-    if (!isMobilePreview) {
-      setShowMap(true);
-    }
-  }, [isMobilePreview]);
-
-  // 1. Initialize Leaflet Map Instance once container is mounted
-  useEffect(() => {
-    if (!showMap || !mapContainerRef.current) return;
-
-    if (!mapInstanceRef.current) {
-      if (mapContainerRef.current._leaflet_id) {
-        delete mapContainerRef.current._leaflet_id;
-      }
-
-      const defaultCenter = [10.5758, 77.2415]; // Cluster 1 center default
-      const map = L.map(mapContainerRef.current, {
-        center: defaultCenter,
-        zoom: 13,
-        zoomControl: true,
-        scrollWheelZoom: true
-      });
-
-      // Legitimate, policy-compliant tile layer with caching & fallback
-      const tileLayer = createMapTileLayer(L);
-      tileLayer.addTo(map);
-
-      markersLayerRef.current = L.layerGroup().addTo(map);
-      polylineLayerRef.current = L.layerGroup().addTo(map);
-      mapInstanceRef.current = map;
-
-      // Force dimension calculation once rendered in layout
-      requestAnimationFrame(() => {
-        map.invalidateSize();
-      });
-      setTimeout(() => {
-        map.invalidateSize();
-      }, 150);
-    }
-
-    return () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-    };
-  }, [showMap]);
-
-  // 2. Resize Leaflet map whenever preview mode or visibility changes
-  useEffect(() => {
-    if (mapInstanceRef.current) {
-      const timer = setTimeout(() => {
-        mapInstanceRef.current?.invalidateSize();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [isMobilePreview, showMap]);
-
-  // 3. Render markers, overlapping pin fan-out, leader lines, and route polyline
-  useEffect(() => {
-    if (!showMap || !mapInstanceRef.current || !markersLayerRef.current || !polylineLayerRef.current) return;
-
-    const map = mapInstanceRef.current;
-    markersLayerRef.current.clearLayers();
-    polylineLayerRef.current.clearLayers();
-
-    // Collect valid mapped stops
-    const validMappedStops = [];
-    activeStops.forEach((stop, index) => {
-      if (isValidCoord(stop.latitude, stop.longitude)) {
-        validMappedStops.push({
-          stop,
-          index, // 0-based sequence in active stops (Stop #index+1)
-          lat: parseFloat(stop.latitude),
-          lng: parseFloat(stop.longitude)
-        });
-      }
-    });
-
-    if (validMappedStops.length === 0) return;
-
-    // Group valid stops by coordinate (precision 5 decimals ~ 1 meter)
-    const coordGroups = new Map();
-    validMappedStops.forEach(item => {
-      const key = `${item.lat.toFixed(5)},${item.lng.toFixed(5)}`;
-      if (!coordGroups.has(key)) coordGroups.set(key, []);
-      coordGroups.get(key).push(item);
-    });
-
-    const allPlotPoints = [];
-
-    // Helper to generate custom stop pin marker
-    const buildMarker = (stop, index, lat, lng, isShared, sharedCount) => {
-      const pinColor = getStatusColor(stop.status);
-      const pinIcon = getStatusIcon(stop.status);
-      const isNext = index === nextIncompleteIndex;
-
-      const ringEffect = isNext
-        ? 'box-shadow: 0 0 0 4px #2563eb, 0 4px 12px rgba(0,0,0,0.35); transform: scale(1.15);'
-        : 'box-shadow: 0 3px 8px rgba(0,0,0,0.25);';
-
-      const customIcon = L.divIcon({
-        className: 'delivery-custom-pin',
-        html: `
-          <div style="background-color: ${pinColor}; width: 38px; height: 38px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 13px; border: 2.5px solid #ffffff; ${ringEffect}">
-            <span>#${index + 1}</span>
-          </div>
-        `,
-        iconSize: [38, 38],
-        iconAnchor: [19, 19],
-        popupAnchor: [0, -19]
-      });
-
-      const marker = L.marker([lat, lng], { icon: customIcon });
-
-      const sharedNotice = isShared
-        ? `<div style="background: #eef2ff; color: #4338ca; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; margin-bottom: 6px;">🏢 Shared Location (${sharedCount} stops at this address)</div>`
-        : '';
-
-      const mapsUrl = getGoogleMapsUrl(stop);
-      const openMapsBtn = mapsUrl
-        ? `<a href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 5px 10px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px; margin-top: 6px;">🗺️ Open Maps</a>`
-        : '';
-
-      marker.bindPopup(`
-        <div style="font-family: inherit; font-size: 13px; min-width: 180px;">
-          ${sharedNotice}
-          <div style="font-weight: 800; font-size: 14px; margin-bottom: 2px;">#${index + 1} ${escapeHtml(stop.shopName)}</div>
-          <div style="color: #64748b; font-size: 11px; margin-bottom: 6px;">${escapeHtml(stop.address)}</div>
-          <div style="font-size: 11px; font-weight: 700; color: ${pinColor}; margin-bottom: 6px;">
-            ${pinIcon} ${escapeHtml(stop.status)}
-          </div>
-          <div style="font-size: 11px; color: #475569; margin-bottom: 6px;">
-            Order #${escapeHtml(stop.id)} • ₹${Number(stop.total || 0).toLocaleString()}
-          </div>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            ${stop.contactPhone ? `<a href="tel:${safeTel(stop.contactPhone)}" style="display: inline-block; padding: 5px 10px; background: #0284c7; color: white; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px;">📞 Call</a>` : ''}
-            ${openMapsBtn}
-          </div>
-        </div>
-      `);
-
-      return marker;
-    };
-
-    // Plot markers and fan out overlapping locations
-    coordGroups.forEach((groupItems) => {
-      const count = groupItems.length;
-      const baseLat = groupItems[0].lat;
-      const baseLng = groupItems[0].lng;
-      allPlotPoints.push([baseLat, baseLng]);
-
-      if (count === 1) {
-        // Solitary stop: draw directly at coordinate
-        const { stop, index, lat, lng } = groupItems[0];
-        const marker = buildMarker(stop, index, lat, lng, false, 1);
-        marker.addTo(markersLayerRef.current);
-      } else {
-        // Multiple stops at identical coordinates: Disambiguate without altering source records!
-        // 1. Central location hub anchor pin
-        const hubHtml = `
-          <div style="background-color: #0f172a; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 11px; border: 2px solid #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.35);">
-            <span>🏢${count}</span>
-          </div>
-        `;
-        const hubIcon = L.divIcon({
-          className: 'delivery-hub-anchor',
-          html: hubHtml,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14]
-        });
-
-        const hubMarker = L.marker([baseLat, baseLng], { icon: hubIcon, zIndexOffset: -10 }).addTo(markersLayerRef.current);
-        const hubPopupContent = `
-          <div style="font-family: inherit; font-size: 13px; min-width: 220px;">
-            <div style="font-weight: 800; font-size: 14px; margin-bottom: 4px; color: #0f172a;">🏢 Shared Address (${count} Deliveries)</div>
-            <div style="color: #64748b; font-size: 11px; margin-bottom: 8px;">${escapeHtml(groupItems[0].stop.address)}</div>
-            <div style="border-top: 1px solid #e2e8f0; padding-top: 6px; display: grid; gap: 6px;">
-              ${groupItems.map(gi => `
-                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 12px;">
-                  <b>#${gi.index + 1} ${escapeHtml(gi.stop.shopName)}</b>
-                  <span style="font-size: 11px; font-weight: 700; color: ${getStatusColor(gi.stop.status)};">${escapeHtml(gi.stop.status)}</span>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        `;
-        hubMarker.bindPopup(hubPopupContent);
-
-        // 2. Fan out individual stop markers radially so every stop is discoverable & clickable
-        const radius = 0.00018; // approx 20 meters
-        groupItems.forEach((gi, i) => {
-          const angle = (2 * Math.PI * i) / count - Math.PI / 2;
-          const offsetLat = baseLat + radius * Math.cos(angle);
-          const offsetLng = baseLng + (radius / Math.cos(baseLat * Math.PI / 180)) * Math.sin(angle);
-          allPlotPoints.push([offsetLat, offsetLng]);
-
-          // Draw connecting leader line from central hub to offset pin
-          L.polyline([[baseLat, baseLng], [offsetLat, offsetLng]], {
-            color: '#64748b',
-            weight: 1.5,
-            dashArray: '3, 4',
-            opacity: 0.8
-          }).addTo(markersLayerRef.current);
-
-          const marker = buildMarker(gi.stop, gi.index, offsetLat, offsetLng, true, count);
-          marker.addTo(markersLayerRef.current);
-        });
-      }
-    });
-
-    // Render polyline
-    if (routeInfo && routeInfo.polyline && routeInfo.polyline.length > 1) {
-      L.polyline(routeInfo.polyline, {
-        color: '#2563eb',
-        weight: 5,
-        opacity: 0.85,
-        lineJoin: 'round'
-      }).addTo(polylineLayerRef.current);
-    } else if (validMappedStops.length > 1) {
-      const lineCoords = validMappedStops.map(s => [s.lat, s.lng]);
-      L.polyline(lineCoords, {
-        color: '#3b82f6',
-        weight: 3,
-        dashArray: '6, 8',
-        opacity: 0.7
-      }).addTo(polylineLayerRef.current);
-    }
-
-    if (allPlotPoints.length > 0) {
-      const bounds = L.latLngBounds(allPlotPoints);
-      map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16 });
-    }
-
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 100);
-  }, [showMap, activeStops, routeInfo, nextIncompleteIndex]);
-
-  // Execute authenticated delivery status update (with payment collection tracking)
-  const executeStatusUpdate = async (orderId, newStatus, reason = null, note = null, paymentAmountCollected = null, paymentNotes = null) => {
-    const targetOrder = orders.find(o => String(o.id) === String(orderId));
-    if (targetOrder && targetOrder.status === 'Price approval pending') {
-      if (showToast) showToast('Cannot update delivery: Order has price approval pending.');
-      setConfirmModal(null);
-      setFailModal(null);
-      setDeliveryModal(null);
-      return;
-    }
-
-    setUpdating(true);
-
-    const tot = Number(targetOrder?.total || 0);
-    const col = paymentAmountCollected !== null && paymentAmountCollected !== undefined
-      ? Number(paymentAmountCollected)
-      : Number(targetOrder?.paymentAmountCollected || 0);
-    const bal = Math.max(0, tot - col);
-    const calculatedPayStatus = newStatus === 'Delivered'
-      ? (col >= tot && tot > 0 ? 'Collected' : (col > 0 ? 'Partially collected' : 'Not collected'))
-      : (targetOrder?.paymentStatus || 'Not collected');
-
-    // If offline, update locally and enqueue for sync
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      try {
-        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
-        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
-
-        setOrders(prev => prev.map(o => {
-          if (String(o.id) === String(orderId)) {
-            return {
-              ...o,
-              status: newStatus,
-              deliveryReason: reason,
-              deliveryNote: note,
-              deliveryUpdatedAt: new Date().toISOString(),
-              paymentStatus: calculatedPayStatus,
-              paymentAmountCollected: col,
-              paymentBalanceDue: bal,
-              syncState: 'waiting'
-            };
-          }
-          return o;
-        }));
-
-        if (showToast) showToast('Status updated locally (Offline). Waiting to sync.');
-        setConfirmModal(null);
-        setFailModal(null);
-      } catch (err) {
-        if (showToast) showToast(`Failed to update offline status: ${err.message}`);
-      } finally {
-        setUpdating(false);
-      }
-      return;
-    }
-
-    try {
-      const res = await api.updateDeliveryStatus(orderId, newStatus, reason, note, null, null, paymentAmountCollected, paymentNotes);
-      if (res && (res.status === 200 || res.status === 1)) {
-        if (showToast) showToast(t.updateSuccess);
-
-        setOrders(prev => prev.map(o => {
-          if (String(o.id) === String(orderId)) {
-            return {
-              ...o,
-              status: newStatus,
-              deliveryReason: reason,
-              deliveryNote: note,
-              deliveryUpdatedAt: new Date().toISOString(),
-              paymentStatus: res.order?.paymentStatus || calculatedPayStatus,
-              paymentAmountCollected: res.order?.paymentAmountCollected !== undefined ? res.order.paymentAmountCollected : col,
-              paymentBalanceDue: res.order?.paymentBalanceDue !== undefined ? res.order.paymentBalanceDue : bal,
-              syncState: 'synced'
-            };
-          }
-          return o;
-        }));
-
-        const orderShop = orders.find(o => String(o.id) === String(orderId))?.shopName || 'Shop';
-        if (newStatus === 'Delivered') {
-          const speakText = lang === 'ta'
-            ? `${orderShop} கடைக்கு டெலிவரி முடிந்தது.`
-            : `${orderShop} marked as Delivered.`;
-          speak(speakText);
-        } else if (newStatus === 'Picked up') {
-          speak(lang === 'ta' ? `${orderShop} பொருட்கள் எடுக்கப்பட்டது.` : `${orderShop} order picked up.`);
-        }
-
-        setConfirmModal(null);
-        setFailModal(null);
-      } else {
-        if (showToast) showToast(res?.message || t.updateFailed);
-      }
-    } catch (networkErr) {
-      // Fallback to queue if network dropped mid-request
-      try {
-        await queueDeliveryStatusUpdate(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
-        await updateLocalDeliveryOrderStatus(user?.id, orderId, newStatus, reason, note, paymentAmountCollected, paymentNotes);
-
-        setOrders(prev => prev.map(o => {
-          if (String(o.id) === String(orderId)) {
-            return {
-              ...o,
-              status: newStatus,
-              deliveryReason: reason,
-              deliveryNote: note,
-              deliveryUpdatedAt: new Date().toISOString(),
-              paymentStatus: calculatedPayStatus,
-              paymentAmountCollected: col,
-              paymentBalanceDue: bal,
-              syncState: 'waiting'
-            };
-          }
-          return o;
-        }));
-
-        if (showToast) showToast('Network drop: Status saved locally. Waiting to sync.');
-        setConfirmModal(null);
-        setFailModal(null);
-      } catch {
-        if (showToast) showToast(t.updateFailed);
-      }
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  // Handler for Delivery Agent confirming delivery with payment collection prompt
-  const handleCompleteDeliveryWithPayment = async (order, collectedAmount = 0) => {
-    const tot = Number(order.total || 0);
-    const col = Number(collectedAmount || 0);
-
-    if (isNaN(col) || col < 0) {
-      if (showToast) showToast('Collected amount must be a non-negative number.');
-      return;
-    }
-    if (col > tot) {
-      if (showToast) showToast(`Collected amount cannot exceed order total of ₹${tot}.`);
-      return;
-    }
-
-    const bal = Math.max(0, tot - col);
-    const paymentStatus = col >= tot && tot > 0 ? 'Collected' : (col > 0 ? 'Partially collected' : 'Not collected');
-
-    let summaryText = '';
-    if (paymentStatus === 'Collected') {
-      summaryText = `Delivered · Collected ₹${col.toLocaleString('en-IN')} of ₹${tot.toLocaleString('en-IN')} · Balance ₹${bal.toLocaleString('en-IN')}`;
-    } else if (paymentStatus === 'Partially collected') {
-      summaryText = `Delivered · Partially collected ₹${col.toLocaleString('en-IN')} of ₹${tot.toLocaleString('en-IN')} · Balance ₹${bal.toLocaleString('en-IN')}`;
-    } else {
-      summaryText = `Delivered · Not collected · Balance ₹${bal.toLocaleString('en-IN')}`;
-    }
-
-    await executeStatusUpdate(order.id, 'Delivered', null, null, col);
-
-    setDeliveryModal(null);
-    setDeliverySuccessConfirm({
-      orderId: order.id,
-      shopName: order.shopName,
-      total: tot,
-      collected: col,
-      balance: bal,
-      paymentStatus,
-      summaryText
-    });
-  };
-
-  // Render Stop Card
-  const renderStopCard = (stop, index) => {
-    const st = (stop.status || '').toLowerCase();
-    const isDelivered = st === 'delivered';
-    const isFailed = st === 'could not deliver' || st === 'cancelled';
-    const isPickedUp = st === 'picked up';
-    const isReadyForPickup = st === 'pending' || st === 'in progress';
-    const isNext = index === nextIncompleteIndex;
-
-    const hasCoords = isValidCoord(stop.latitude, stop.longitude);
-    const coordKey = hasCoords ? `${parseFloat(stop.latitude).toFixed(5)},${parseFloat(stop.longitude).toFixed(5)}` : null;
-    const sharedGroup = (coordKey && coordGroupLookup.get(coordKey)) || [];
-    const isShared = sharedGroup.length > 1;
-    const otherStopNums = isShared ? sharedGroup.filter(item => item.stop.id !== stop.id).map(item => `#${item.index + 1}`) : [];
-
-    return (
-      <div
-        key={stop.id}
-        className={`bg-white rounded-3xl p-4 sm:p-5 border transition shadow-sm relative ${
-          isNext
-            ? 'ring-2 ring-blue-500 border-blue-400 shadow-md bg-blue-50/20'
-            : isDelivered
-            ? 'border-emerald-200 bg-emerald-50/10 opacity-90'
-            : isFailed
-            ? 'border-rose-200 bg-rose-50/20'
-            : 'border-slate-200'
-        }`}
-      >
-        {/* Top Badge Row */}
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2">
-            <span className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs text-white ${
-              isDelivered ? 'bg-emerald-500' : isFailed ? 'bg-rose-500' : isPickedUp ? 'bg-blue-600' : 'bg-amber-500'
-            }`}>
-              #{index + 1}
-            </span>
-
-            {isNext && (
-              <span className="bg-blue-600 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded-full uppercase animate-pulse">
-                ⭐ {t.nextStopBadge}
-              </span>
-            )}
-
-            <span className="font-mono text-xs font-bold text-slate-500">
-              {stop.shopId || `S${String(stop.customerId || '').padStart(3, '0')}`}
-            </span>
-          </div>
-
-          {/* Status Indicator */}
-          <div className="flex items-center gap-1.5">
-            {stop.syncState === 'waiting' && (
-              <span className="bg-amber-50 text-amber-700 border border-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                ⏳ Waiting to sync
-              </span>
-            )}
-            {isDelivered ? (
-              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold px-3 py-1 rounded-full flex items-center gap-1">
-                ✅ {t.statusDelivered}
-              </span>
-            ) : isFailed ? (
-              <span className="bg-rose-100 text-rose-800 border border-rose-300 text-xs font-extrabold px-3 py-1 rounded-full flex items-center gap-1">
-                ❌ {stop.deliveryReason || t.statusFailed}
-              </span>
-            ) : isPickedUp ? (
-              <span className="bg-blue-100 text-blue-800 border border-blue-300 text-xs font-extrabold px-3 py-1 rounded-full flex items-center gap-1">
-                🚚 {t.statusPickedUp}
-              </span>
-            ) : (
-              <span className="bg-amber-100 text-amber-800 border border-amber-300 text-xs font-extrabold px-3 py-1 rounded-full flex items-center gap-1">
-                📦 {t.statusInProgress}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Shop Name & Information */}
-        <div className="mb-3">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="text-lg font-black text-slate-900 leading-snug">
-              {stop.shopName}
-            </h3>
-
-            {/* Audio Reader Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const speechText = lang === 'ta'
-                  ? `நிறுத்தம் எண் ${index + 1}. கடை பெயர்: ${stop.shopName}. முகவரி: ${stop.address || 'முகவரி இல்லை'}. நிலை: ${stop.status}.`
-                  : `Stop number ${index + 1}. Shop: ${stop.shopName}. Address: ${stop.address || 'No address'}. Status: ${stop.status}.`;
-                speak(speechText);
-              }}
-              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 active:scale-95 transition"
-              title={t.speakBtn}
-            >
-              🔊
-            </button>
-          </div>
-
-          {stop.ownerName && (
-            <p className="text-xs font-medium text-slate-600 mt-0.5">
-              👤 {stop.ownerName}
-            </p>
-          )}
-
-          <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            📍 {stop.address || 'Address on file'}
-          </p>
-
-          {/* Location status badge: Missing GPS vs Shared Address */}
-          {!hasCoords ? (
-            <div className="mt-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300">
-                <span>⚠️</span>
-                <span>{t.gpsMissing}</span>
-              </span>
-            </div>
-          ) : isShared ? (
-            <div className="mt-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
-                <span>🏢</span>
-                <span>{t.sharedAddressBadge} {otherStopNums.join(', ')}</span>
-              </span>
-            </div>
-          ) : null}
-        </div>
-
-        {/* Order Summary & Contact Pills */}
-        <div className="flex flex-wrap items-center gap-2 mb-4 pt-2 border-t border-slate-100">
-          <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg">
-            🧾 Order #{stop.id}
-          </span>
-          <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg">
-            📦 {stop.itemsCount || 1} items
-          </span>
-          <span className="text-xs font-extrabold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-lg">
-            ₹{Number(stop.total || 0).toLocaleString()}
-          </span>
-
-          {stop.contactPhone && (
-            <a
-              href={`tel:${stop.contactPhone}`}
-              className="ml-auto inline-flex items-center gap-1 text-xs font-bold bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 px-3 py-1.5 rounded-xl transition min-h-[36px]"
-            >
-              📞 {t.callShop}
-            </a>
-          )}
-
-          {hasCoords ? (
-            <a
-              href={getGoogleMapsUrl(stop)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition min-h-[36px]"
-              title="Open Google Maps with GPS coordinates"
-            >
-              🗺️ {t.openMap}
-            </a>
-          ) : stop.address ? (
-            <a
-              href={getGoogleMapsUrl(stop)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 px-3 py-1.5 rounded-xl transition min-h-[36px]"
-              title="Open Google Maps search with store street address"
-            >
-              🗺️ {t.openMapByAddress}
-            </a>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-xl min-h-[36px]">
-              📍 {t.noAddressOrGps}
-            </span>
-          )}
-        </div>
-
-        {/* Single Obvious Action Button Bar */}
-        {stop.status === 'Price approval pending' ? (
-          <div style={{
-            background: '#fffbeb',
-            border: '1px solid #fde68a',
-            borderRadius: '12px',
-            padding: '12px 14px',
-            color: '#92400e',
-            fontSize: '12px',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <span style={{ fontSize: '18px' }}>⏳</span>
-            <span>Price approval pending — cannot dispatch or deliver until authorized by Admin or Sales Manager.</span>
-          </div>
-        ) : isDelivered ? (
-          <div className="pt-2">
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl">✅</span>
-                <div>
-                  <span className="text-xs font-bold text-emerald-950 block">Delivered</span>
-                  <span className="text-xs text-emerald-800 font-semibold block">
-                    {getPaymentSummary(stop).summaryText}
-                  </span>
-                </div>
-              </div>
-              <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${
-                stop.paymentStatus === 'Collected' ? 'bg-emerald-200 text-emerald-900' : (stop.paymentStatus === 'Partially collected' ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-800')
-              }`}>
-                {stop.paymentStatus || 'Not collected'}
-              </span>
-            </div>
-          </div>
-        ) : !isDelivered && !isFailed && (
-          <div className="pt-2 flex flex-col sm:flex-row items-stretch gap-2.5">
-            {isReadyForPickup ? (
-              <button
-                type="button"
-                disabled={updating}
-                onClick={() => {
-                  setConfirmModal({
-                    order: stop,
-                    targetStatus: 'Picked up',
-                    title: t.markPickedUp,
-                    text: lang === 'ta'
-                      ? `இந்த ஆர்டரை (${stop.id}) வண்டியில் ஏற்றிவிட்டீர்களா?`
-                      : `Are you ready to mark Order #${stop.id} as Picked Up?`
-                  });
-                }}
-                className="flex-1 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-black text-sm py-3.5 px-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 min-h-[54px]"
-              >
-                <span className="text-xl">📦</span>
-                <span>{t.markPickedUp}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={updating}
-                onClick={() => {
-                  setDeliveryModal({
-                    order: stop,
-                    step: 'ask',
-                    amountCollected: String(stop.total || ''),
-                    error: ''
-                  });
-                }}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-base py-3.5 px-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 min-h-[56px]"
-              >
-                <span className="text-2xl">✅</span>
-                <span>{t.markDelivered}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              disabled={updating}
-              onClick={() => setFailModal({ order: stop })}
-              className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs py-3 px-4 rounded-2xl transition flex items-center justify-center gap-1.5 min-h-[50px]"
-            >
-              <span>❌</span>
-              <span>{t.couldNotDeliver}</span>
-            </button>
-          </div>
-        )}
-      </div>
+  const indexOf = (stop) => activeStops.findIndex((s) => String(s.id) === String(stop.id));
+  const byId = (id) => activeStops.find((s) => String(s.id) === String(id)) || route.orders.find((s) => String(s.id) === String(id));
+  const detail = detailId ? byId(detailId) : null;
+  const nextStop = nextIndex >= 0 ? activeStops[nextIndex] : null;
+
+  const pendingSync = useMemo(() => [...syncMap.values()].filter((s) => s.state === 'pending').length, [syncMap]);
+  const failedSync = useMemo(() => [...syncMap.entries()].filter(([, s]) => s.state === 'failed'), [syncMap]);
+
+  const speakStop = (stop) => {
+    const n = indexOf(stop) + 1;
+    speak(
+      lang === 'ta'
+        ? `நிறுத்தம் எண் ${n}. கடை பெயர்: ${stop.shopName}. முகவரி: ${stop.address || 'முகவரி இல்லை'}. நிலை: ${stop.status}.`
+        : `Stop number ${n}. Shop: ${stop.shopName}. Address: ${stop.address || 'No address'}. Status: ${stop.status}.`
     );
   };
 
+  const handleStartRoute = async () => {
+    const planned = await route.startRoute();
+    if (!planned) return;
+    speak(lang === 'ta' ? `டெலிவரி வழி தயார். மொத்தம் ${planned.orderedStops.length} நிறுத்தங்கள்.` : `Route active. ${planned.orderedStops.length} stops arranged in road routing order.`);
+    showToast && showToast(lang === 'ta' ? 'டெலிவரி வழி தொடங்கியது!' : 'Delivery route started!', 'success');
+  };
+
+  // ----- Workflow actions -----
+  const confirmPickUp = async () => {
+    const stop = pickUpFor;
+    const r = await route.updateStatus(stop.id, STATUS.PICKED_UP);
+    if (r.outcome === 'synced' || r.outcome === 'queued') {
+      setPickUpFor(null);
+      if (r.outcome === 'synced') speak(lang === 'ta' ? `${stop.shopName} பொருட்கள் எடுக்கப்பட்டது.` : `${stop.shopName} order picked up.`);
+    }
+  };
+
+  const confirmDelivered = async (stop, collected) => {
+    const r = await route.updateStatus(stop.id, STATUS.DELIVERED, { paymentAmountCollected: collected });
+    if (r.outcome === 'synced' || r.outcome === 'queued') {
+      setDeliverFor(null);
+      setResult({ stop, outcome: r.outcome, payment: r.payment });
+      if (r.outcome === 'synced') speak(lang === 'ta' ? `${stop.shopName} கடைக்கு டெலிவரி முடிந்தது.` : `${stop.shopName} marked as Delivered.`);
+    }
+  };
+
+  const confirmFailed = async (stop, reason, note) => {
+    const r = await route.updateStatus(stop.id, STATUS.COULD_NOT_DELIVER, { reason, note: note || null });
+    if (r.outcome === 'synced' || r.outcome === 'queued') setFailFor(null);
+  };
+
+  const openStop = (stop) => setDetailId(String(stop.id));
+
+  const filtered = useMemo(
+    () => filterStops(activeStops, { filter, query, syncMap }),
+    [activeStops, filter, query, syncMap]
+  );
+
+  const filterLabels = {
+    all: t.filterAll,
+    toPickUp: t.filterToPickUp,
+    onTheWay: t.filterOnTheWay,
+    delivered: t.filterDelivered,
+    failed: t.filterFailed,
+    pendingSync: t.filterPendingSync
+  };
+
   return (
-    <div className="w-full text-[#1e293b] font-sans pb-16">
-      {/* Top Delivery Header Bar with Back, Preview Switcher, Language & Sign out */}
-      <div className="bg-[#0f172a] text-white p-3.5 sm:p-4 rounded-3xl shadow-md border border-slate-800 mb-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Left: Back Button & Branding */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {onBack && (
-              <button
-                type="button"
-                onClick={onBack}
-                className="bg-slate-800 hover:bg-slate-700 active:scale-95 text-white text-base font-bold w-10 h-10 min-w-[40px] min-h-[40px] rounded-xl border border-slate-700 flex items-center justify-center transition"
-                title="Go back"
-                aria-label="Go back"
-              >
-                <span aria-hidden="true">←</span>
-                <span className="sr-only">Go back</span>
-              </button>
-            )}
-
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">🚚</span>
-              <div>
-                <h1 className="text-base sm:text-lg font-black tracking-tight leading-tight flex items-center gap-1.5">
-                  {t.appTitle}
-                  <span className="text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                    {user?.name || 'Agent'}
-                  </span>
-                </h1>
-                <p className="text-[11px] text-slate-400 hidden sm:block">
-                  {t.portalSubtitle}
-                </p>
-              </div>
-            </div>
+    <div className={`dl ${lang === 'ta' ? 'lc-tamil' : ''}`} lang={lang === 'ta' ? 'ta' : 'en'}>
+      {/* Controls: area, language, refresh */}
+      <div className="dl-head">
+        {clusters.length > 1 ? (
+          <div className="dl-head__area">
+            <label className="lc-sr-only" htmlFor="dl-area">{t.area}</label>
+            <Select
+              id="dl-area"
+              value={selectedClusterId}
+              onChange={(e) => route.setSelectedClusterId(e.target.value)}
+              options={[
+                { value: 'all', label: t.allClusters },
+                ...clusters.map((c) => ({ value: String(c.clusterId), label: c.clusterName || `Cluster ${c.clusterId}` }))
+              ]}
+            />
           </div>
-
-          {/* Right: Preview Switcher, Bilingual Toggle & Sign Out */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <SyncStatusBar userId={user?.id} userName={user?.name} showToast={showToast} />
-            {/* Laptop / Mobile View Switcher */}
-            {onTogglePreview && (
-              <div className="flex items-center bg-slate-800 p-0.5 rounded-xl border border-slate-700">
-                <button
-                  type="button"
-                  onClick={() => onTogglePreview(false)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 min-h-[34px] ${
-                    !isMobilePreview
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="Switch to Laptop wide layout"
-                >
-                  <span>💻</span>
-                  <span className="hidden sm:inline">{t.laptopView}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onTogglePreview(true)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 min-h-[34px] ${
-                    isMobilePreview
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="Switch to Mobile phone preview"
-                >
-                  <span>📱</span>
-                  <span className="hidden sm:inline">{t.mobilePreview}</span>
-                </button>
-              </div>
-            )}
-
-            {/* Bilingual Toggle */}
-            <button
-              type="button"
-              onClick={() => {
-                const nextLang = lang === 'en' ? 'ta' : 'en';
-                setLang(nextLang);
-                speak(nextLang === 'ta' ? 'தமிழ் தேர்ந்தெடுக்கப்பட்டது' : 'English selected');
-              }}
-              className="bg-slate-800 hover:bg-slate-700 active:scale-95 text-xs font-bold px-3 py-2 rounded-xl border border-slate-700 text-amber-400 flex items-center gap-1.5 transition min-h-[38px]"
-              title="Toggle Tamil / English"
-            >
-              <span>🌐</span>
-              <span>{t.langToggle}</span>
-            </button>
-
-            {/* Sign Out Button */}
-            {onLogout && (
-              <button
-                type="button"
-                onClick={onLogout}
-                className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 min-h-[38px]"
-                title={t.logout}
-              >
-                <span>🚪</span>
-                <span>{t.signOut}</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Delivery Workflow Layout: Responsive Side-by-Side on Laptop, Stacked on Mobile */}
-      <div className={`space-y-4 ${!isMobilePreview ? 'max-w-7xl mx-auto' : 'max-w-2xl mx-auto'}`}>
-        {/* Top Controls: Cluster / Area Selector */}
-        {clusters.length > 0 && (
-          <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-200">
-            <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider block px-1 mb-2">
-              📍 {t.chooseCluster}
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedClusterId('all')}
-                className={`py-2.5 px-3 rounded-xl text-xs font-black transition flex flex-col items-center justify-center min-h-[48px] ${
-                  selectedClusterId === 'all'
-                    ? 'bg-slate-900 text-white shadow-md'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                <span>{t.allClusters}</span>
-                <span className="text-[10px] opacity-75 font-normal">
-                  ({orders.length} {t.stops})
-                </span>
-              </button>
-
-              {clusters.map(c => (
-                <button
-                  key={c.clusterId}
-                  type="button"
-                  onClick={() => setSelectedClusterId(String(c.clusterId))}
-                  className={`py-2.5 px-3 rounded-xl text-xs font-black transition flex flex-col items-center justify-center min-h-[48px] ${
-                    selectedClusterId === String(c.clusterId)
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  <span className="truncate max-w-full">{c.clusterName}</span>
-                  <span className="text-[10px] opacity-80 font-normal">
-                    {c.pendingCount} {t.pending} • {c.deliveredCount} {t.delivered}
-                  </span>
-                </button>
-              ))}
-            </div>
+        ) : (
+          <div className="dl-head__title">
+            <Icon icon={Truck} size={22} />
+            <span>{clusters[0]?.clusterName || ''}</span>
           </div>
         )}
-
-        {/* KPI Tiles Row */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3">
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm text-center">
-            <span className="text-xl block mb-1">📦</span>
-            <div className="text-2xl font-black text-amber-600 leading-none">{kpis.pending}</div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase">{t.pending}</span>
-          </div>
-
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm text-center">
-            <span className="text-xl block mb-1">✅</span>
-            <div className="text-2xl font-black text-emerald-600 leading-none">{kpis.delivered}</div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase">{t.delivered}</span>
-          </div>
-
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm text-center">
-            <span className="text-xl block mb-1">❌</span>
-            <div className="text-2xl font-black text-rose-600 leading-none">{kpis.issues}</div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase">{t.issues}</span>
-          </div>
-        </div>
-
-        {/* Start Route Action Banner */}
-        <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 text-white p-4 sm:p-5 rounded-3xl shadow-lg">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-2.5">
-            <div>
-              <span className="text-xs font-extrabold uppercase tracking-widest text-blue-200 block mb-0.5">
-                {routeActive ? `🟢 ${t.routeActive}` : `📍 ${t.stopsInOrder}`}
-              </span>
-              <h2 className="text-xl font-black">
-                {activeStops.length} {t.stops} • {kpis.pending} {t.pending}
-              </h2>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* On mobile preview, allow toggling map visibility */}
-              {isMobilePreview && (
-                <button
-                  type="button"
-                  onClick={() => setShowMap(!showMap)}
-                  className="bg-white/20 hover:bg-white/30 text-white font-bold text-xs px-3.5 py-3 rounded-xl transition flex items-center justify-center gap-1.5 flex-1 min-h-[48px]"
-                >
-                  <span>🗺️</span>
-                  <span>{showMap ? t.hideMap : t.showMap}</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                disabled={optimizing || activeStops.length === 0}
-                onClick={handleStartRoute}
-                className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-sm px-5 py-3 rounded-xl shadow-md active:scale-95 transition flex items-center justify-center gap-2 flex-1 sm:flex-initial min-h-[48px]"
-              >
-                <span>{optimizing ? '⏳' : '🚚'}</span>
-                <span>{optimizing ? t.optimizingRoute : t.startRoute}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Route Disclaimer Notice */}
-          {routeInfo && (
-            <div className="bg-white/10 p-2.5 rounded-xl text-xs text-blue-100 flex items-start gap-2 border border-white/10">
-              <span className="text-base">ℹ️</span>
-              <div className="leading-snug">
-                <span className="font-bold">{t.disclaimerPrefix} </span>
-                <span>{routeInfo.disclaimer}</span>
-                {routeInfo.distanceMeters > 0 && (
-                  <span className="block mt-0.5 opacity-90">
-                    Est. road distance: {(routeInfo.distanceMeters / 1000).toFixed(1)} km (~{Math.round(routeInfo.durationSeconds / 60)} mins)
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* =========================================================================
-            RESPONSIVE CONTENT: SIDE-BY-SIDE ON LAPTOP VIEW, STACKED ON MOBILE PREVIEW
-           ========================================================================= */}
-        <div className={`grid gap-5 items-start ${!isMobilePreview ? 'grid-cols-1 lg:grid-cols-12' : 'grid-cols-1'}`}>
-          {/* Map Section: Left Column on Laptop (Sticky), Collapsible on Mobile */}
-          {(!isMobilePreview || showMap) && (
-            <div className={`${!isMobilePreview ? 'lg:col-span-6 xl:col-span-5 lg:sticky lg:top-24 space-y-3' : 'space-y-2'}`}>
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden delivery-route-map-wrapper">
-                <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🗺️</span>
-                    <span className="text-xs font-black tracking-wide uppercase">Route Map</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {missingStopsCount > 0 && (
-                      <span className="text-[10px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black">
-                        ⚠️ {missingStopsCount} No GPS
-                      </span>
-                    )}
-                    <span className="text-[10px] bg-white/20 text-blue-200 px-2 py-0.5 rounded-full font-bold">
-                      {validStopsCount} Mapped
-                    </span>
-                  </div>
-                </div>
-                <div
-                  ref={mapContainerRef}
-                  className="w-full bg-slate-100 leaflet-map-canvas"
-                  style={{
-                    width: '100%',
-                    height: isMobilePreview ? '300px' : '480px',
-                    minHeight: isMobilePreview ? '300px' : '480px',
-                    position: 'relative'
-                  }}
-                />
-                <div className="bg-slate-50 p-2.5 px-3.5 text-[11px] text-slate-500 flex items-center justify-between border-t border-slate-200">
-                  <span className="font-semibold">Tap marker pins to inspect contact</span>
-                  <span className="font-mono text-slate-400">Leaflet | Map data © OSM / CARTO</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Delivery Stops Section: Right Column on Laptop, Stacked on Mobile */}
-          <div className={`${!isMobilePreview ? 'lg:col-span-6 xl:col-span-7 space-y-3' : 'space-y-3'}`}>
-            <div className="flex items-center justify-between px-1">
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                <span>📦</span>
-                <span>{t.stopsInOrder} ({activeStops.length})</span>
-              </h3>
-              <button
-                type="button"
-                onClick={loadAssignedOrders}
-                className="text-xs text-blue-600 font-bold hover:underline"
-              >
-                🔄 {t.refresh}
-              </button>
-            </div>
-
-            {/* Empty State */}
-            {!loading && activeStops.length === 0 && (
-              <div className="bg-white rounded-3xl p-8 text-center border border-slate-200 shadow-sm space-y-3">
-                <span className="text-5xl block">📦</span>
-                <h3 className="text-base font-bold text-slate-700">{t.noOrders}</h3>
-                <button
-                  type="button"
-                  onClick={loadAssignedOrders}
-                  className="bg-slate-900 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm hover:bg-slate-800 transition"
-                >
-                  🔄 {t.refresh}
-                </button>
-              </div>
-            )}
-
-            {/* Stops Cards */}
-            <div className="space-y-3">
-              {activeStops.map((stop, index) => renderStopCard(stop, index))}
-            </div>
-          </div>
-        </div>
+        <Button variant="secondary" size="sm" icon={Languages} onClick={() => setLang(lang === 'en' ? 'ta' : 'en')} aria-label={`${t.language}: ${t.langToggle}`}>
+          <span className={lang === 'en' ? 'lc-tamil' : ''}>{t.langToggle}</span>
+        </Button>
+        <IconButton icon={RefreshCw} label={t.refresh} outlined onClick={() => route.reload()} />
       </div>
 
-      {/* Confirmation Modal Sheet */}
-      {confirmModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="text-center">
-              <span className="text-5xl block mb-2">
-                {confirmModal.targetStatus === 'Delivered' ? '✅' : '📦'}
-              </span>
-              <h2 className="text-xl font-black text-slate-900">
-                {confirmModal.title}
-              </h2>
-              <div className="mt-2 p-3 bg-slate-50 rounded-2xl border border-slate-200 text-left">
-                <span className="text-xs font-bold text-slate-500 uppercase block">Shop</span>
-                <span className="text-base font-extrabold text-slate-900 block">{confirmModal.order.shopName}</span>
-                <span className="text-xs text-slate-600 block mt-1">Order #{confirmModal.order.id} • ₹{confirmModal.order.total}</span>
-              </div>
-              <p className="text-sm text-slate-600 font-medium mt-3">
-                {confirmModal.text}
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2.5 pt-2">
-              <button
-                type="button"
-                disabled={updating}
-                onClick={() => executeStatusUpdate(confirmModal.order.id, confirmModal.targetStatus)}
-                className={`w-full text-white font-black text-base py-3.5 px-4 rounded-2xl shadow-lg transition flex items-center justify-center gap-2 min-h-[54px] ${
-                  confirmModal.targetStatus === 'Delivered'
-                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-amber-500 hover:bg-amber-600'
-                }`}
-              >
-                <span>{updating ? '⏳' : '✓'}</span>
-                <span>{updating ? t.updating : t.confirmAction}</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={updating}
-                onClick={() => setConfirmModal(null)}
-                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm py-3 px-4 rounded-2xl transition min-h-[46px]"
-              >
-                {t.cancel}
-              </button>
-            </div>
-          </div>
+      {/* Connection and sync state */}
+      {!online ? (
+        <div className="dl-banner dl-banner--offline" role="status">
+          <Icon icon={WifiOff} size={20} />
+          <span>{t.offlineBanner}</span>
         </div>
-      )}
+      ) : null}
+      {pendingSync > 0 || failedSync.length > 0 ? (
+        <div className="dl-banner dl-banner--sync" role="status">
+          <Icon icon={failedSync.length ? AlertTriangle : Clock} size={20} />
+          <span>
+            {pendingSync > 0 ? `${pendingSync} ${t.pendingSummary}` : null}
+            {pendingSync > 0 && failedSync.length > 0 ? ' · ' : null}
+            {failedSync.length > 0 ? `${failedSync.length} ${t.failedSummary}` : null}
+          </span>
+          {failedSync.length > 0 ? (
+            <Button variant="ghost" size="sm" onClick={() => { setFilter('pendingSync'); setView('stops'); }}>
+              {t.allStops}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
-      {/* Could Not Deliver Reason Modal */}
-      {failModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="text-center">
-              <span className="text-4xl block mb-1">❌</span>
-              <h2 className="text-xl font-black text-slate-900">
-                {t.reasonTitle}
-              </h2>
-              <p className="text-xs text-slate-500 font-medium mt-1">
-                {failModal.order.shopName} (Order #{failModal.order.id})
-              </p>
-            </div>
+      <SegmentedControl
+        label={t.appTitle}
+        className="dl-tabs"
+        value={view}
+        onChange={setView}
+        options={[
+          { value: 'today', label: t.today },
+          { value: 'stops', label: `${t.allStops} (${counts.total})` },
+          { value: 'map', label: t.map }
+        ]}
+      />
 
-            {/* Reason Selection Tiles */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 block">
-                {t.selectReason}
-              </label>
-
-              {[
-                { id: 'Shop Closed', label: t.reasons.closed, icon: '🔒' },
-                { id: 'Owner Not Available', label: t.reasons.ownerUnavailable, icon: '👤' },
-                { id: 'Order Cancelled / Rejected', label: t.reasons.rejected, icon: '🚫' },
-                { id: 'Wrong Address / Location Not Found', label: t.reasons.wrongAddress, icon: '📍' }
-              ].map(r => (
-                <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => setSelectedReason(r.id)}
-                  className={`w-full p-3.5 rounded-2xl border text-left font-bold text-xs flex items-center gap-3 transition min-h-[50px] ${
-                    selectedReason === r.id
-                      ? 'bg-rose-50 border-rose-500 text-rose-900 ring-2 ring-rose-400/30'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="text-xl">{r.icon}</span>
-                  <span className="flex-1">{r.label}</span>
-                  {selectedReason === r.id && <span className="text-rose-600 font-black">●</span>}
-                </button>
+      {loading && route.orders.length === 0 ? (
+        <SkeletonGroup label={t.loading}>
+          <Skeleton height={96} />
+          <Skeleton height={220} />
+          <Skeleton height={72} />
+        </SkeletonGroup>
+      ) : view === 'today' ? (
+        <TodayView
+          t={t}
+          counts={counts}
+          nextStop={nextStop}
+          nextNumber={nextIndex + 1}
+          syncMap={syncMap}
+          route={route}
+          failedSync={failedSync}
+          byId={byId}
+          onStartRoute={handleStartRoute}
+          onOpen={openStop}
+          onSpeak={speakStop}
+          onPickUp={setPickUpFor}
+          onDeliver={setDeliverFor}
+          onFail={setFailFor}
+        />
+      ) : view === 'stops' ? (
+        <div className="dl-stack">
+          <SearchInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.search} aria-label={t.search} />
+          <SegmentedControl
+            label={t.filterAll}
+            className="dl-filters"
+            value={filter}
+            onChange={setFilter}
+            options={FILTERS.map((f) => ({ value: f, label: filterLabels[f] }))}
+          />
+          {route.currentStops.length === 0 ? (
+            <EmptyState icon={Truck} title={t.noOrders}>{t.noStopsYet}</EmptyState>
+          ) : filtered.length === 0 ? (
+            <EmptyState icon={Store} title={t.noMatches} />
+          ) : (
+            <ul className="dl-list" aria-label={t.allStops}>
+              {filtered.map((stop) => (
+                <li key={stop.id}>
+                  <StopRow t={t} stop={stop} number={indexOf(stop) + 1} isNext={stop === nextStop} sync={syncMap.get(String(stop.id))} onOpen={() => openStop(stop)} />
+                </li>
               ))}
-            </div>
-
-            {/* Optional Note */}
-            <div>
-              <input
-                type="text"
-                placeholder={lang === 'ta' ? 'கூடுதல் குறிப்பு (தேவைப்பட்டால்)' : 'Additional note (optional)'}
-                value={customNote}
-                onChange={e => setCustomNote(e.target.value)}
-                className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-rose-500 outline-none"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-col gap-2 pt-2">
-              <button
-                type="button"
-                disabled={updating}
-                onClick={() => executeStatusUpdate(failModal.order.id, 'Could not deliver', selectedReason, customNote)}
-                className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black text-sm py-3.5 px-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 min-h-[52px]"
-              >
-                <span>{updating ? '⏳' : '❌'}</span>
-                <span>{updating ? t.updating : t.couldNotDeliver}</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={updating}
-                onClick={() => setFailModal(null)}
-                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm py-3 px-4 rounded-2xl transition min-h-[46px]"
-              >
-                {t.cancel}
-              </button>
-            </div>
-          </div>
+            </ul>
+          )}
+        </div>
+      ) : (
+        <div className="dl-stack">
+          <DeliveryRouteMap
+            stops={activeStops}
+            routeInfo={route.routeInfo}
+            nextIndex={nextIndex}
+            labels={{ callShop: t.callShop, openMap: t.openMap, order: t.order, map: t.map }}
+          />
+          <RouteNote t={t} route={route} />
         </div>
       )}
 
-      {/* Payment Collection Step Modal for Delivery Agent */}
-      {deliveryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-5">
-            {deliveryModal.step === 'ask' ? (
-              <>
-                <div className="text-center">
-                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black mb-3">
-                    💰
-                  </div>
-                  <h2 className="text-xl font-black text-slate-900 leading-snug">
-                    Was payment collected at the shop?
-                  </h2>
-                  <p className="text-xs text-slate-500 font-semibold mt-1">
-                    {deliveryModal.order.shopName} · Order #{deliveryModal.order.id}
-                  </p>
-                  <div className="mt-3 inline-block bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-800">
-                    Order Total: <span className="font-extrabold text-slate-950">₹{Number(deliveryModal.order.total || 0).toLocaleString('en-IN')}</span>
-                  </div>
-                </div>
+      {/* Stop details */}
+      <BottomSheet open={Boolean(detail)} onClose={() => setDetailId(null)} title={detail?.shopName}>
+        {detail ? (
+          <StopDetail
+            t={t}
+            stop={detail}
+            number={indexOf(detail) + 1}
+            sync={syncMap.get(String(detail.id))}
+            user={user}
+            busy={route.updatingId === String(detail.id)}
+            onSpeak={() => speakStop(detail)}
+            onPickUp={() => setPickUpFor(detail)}
+            onDeliver={() => setDeliverFor(detail)}
+            onFail={() => setFailFor(detail)}
+          />
+        ) : null}
+      </BottomSheet>
 
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <button
-                    type="button"
-                    disabled={updating}
-                    onClick={() => handleCompleteDeliveryWithPayment(deliveryModal.order, 0)}
-                    className="p-4 rounded-2xl border-2 border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-800 font-black text-sm flex flex-col items-center justify-center gap-1 transition min-h-[72px]"
-                  >
-                    <span className="text-xl">❌</span>
-                    <span>No</span>
-                    <span className="text-[11px] font-semibold text-slate-500">(₹0 / Not collected)</span>
-                  </button>
+      {/* Pick up */}
+      <ConfirmDialog
+        open={Boolean(pickUpFor)}
+        title={t.markPickedUp}
+        message={pickUpFor ? `${pickUpFor.shopName} · ${t.order} ${pickUpFor.id}. ${t.pickUpQuestion}` : ''}
+        confirmLabel={t.confirmAction}
+        cancelLabel={t.cancel}
+        onCancel={() => setPickUpFor(null)}
+        onConfirm={confirmPickUp}
+      />
 
-                  <button
-                    type="button"
-                    disabled={updating}
-                    onClick={() => setDeliveryModal(prev => ({
-                      ...prev,
-                      step: 'input',
-                      amountCollected: String(prev.order?.total || 0),
-                      error: ''
-                    }))}
-                    className="p-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-black text-sm flex flex-col items-center justify-center gap-1 transition ring-2 ring-emerald-500/20 min-h-[72px]"
-                  >
-                    <span className="text-xl">💵</span>
-                    <span>Yes</span>
-                    <span className="text-[11px] font-bold text-emerald-700">(Enter amount)</span>
-                  </button>
-                </div>
+      {/* Delivered with payment */}
+      <DeliverDialog t={t} stop={deliverFor} busy={Boolean(deliverFor) && route.updatingId === String(deliverFor?.id)} onCancel={() => setDeliverFor(null)} onConfirm={confirmDelivered} />
 
-                <button
-                  type="button"
-                  disabled={updating}
-                  onClick={() => setDeliveryModal(null)}
-                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs py-2.5 px-4 rounded-xl transition"
-                >
-                  {t.cancel}
-                </button>
-              </>
-            ) : (
-              /* Step: input */
-              <>
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl font-black mb-2">
-                    💵
-                  </div>
-                  <h2 className="text-lg font-black text-slate-900 leading-snug">
-                    Amount Collected at Shop
-                  </h2>
-                  <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                    {deliveryModal.order.shopName} (Order #{deliveryModal.order.id})
-                  </p>
-                </div>
+      {/* Could not deliver */}
+      <FailDialog t={t} stop={failFor} busy={Boolean(failFor) && route.updatingId === String(failFor?.id)} onCancel={() => setFailFor(null)} onConfirm={confirmFailed} />
 
-                {(() => {
-                  const tot = Number(deliveryModal.order.total || 0);
-                  const rawVal = deliveryModal.amountCollected;
-                  const parsed = parseFloat(rawVal);
-                  const col = isNaN(parsed) ? 0 : parsed;
-                  const bal = Math.max(0, tot - col);
-                  const isNegative = !isNaN(parsed) && parsed < 0;
-                  const isExceeding = !isNaN(parsed) && parsed > tot;
-                  const isValid = !isNaN(parsed) && parsed >= 0 && parsed <= tot;
-                  const calculatedPayStatus = col >= tot && tot > 0
-                    ? 'Collected'
-                    : (col > 0 ? 'Partially collected' : 'Not collected');
-
-                  return (
-                    <div className="space-y-4">
-                      {/* Live Balance / Calculation Card */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2">
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-600 font-semibold">Order Total:</span>
-                          <span className="font-black text-slate-900">₹{tot.toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-600 font-semibold">Amount Collected:</span>
-                          <span className="font-black text-emerald-700">₹{col.toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-200">
-                          <span className="text-slate-700 font-bold">Remaining Balance Due:</span>
-                          <span className="font-black text-rose-700">₹{bal.toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="pt-1.5 flex justify-between items-center">
-                          <span className="text-[11px] font-semibold text-slate-500">Payment Status:</span>
-                          <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                            calculatedPayStatus === 'Collected'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : (calculatedPayStatus === 'Partially collected'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-slate-200 text-slate-800')
-                          }`}>
-                            {calculatedPayStatus}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Input */}
-                      <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1">
-                          Amount Collected (₹)
-                        </label>
-                        <div className="relative">
-                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-bold text-slate-500">
-                            ₹
-                          </span>
-                          <input
-                            type="number"
-                            min="0"
-                            max={tot}
-                            step="any"
-                            autoFocus
-                            value={deliveryModal.amountCollected}
-                            onChange={e => setDeliveryModal(prev => ({
-                              ...prev,
-                              amountCollected: e.target.value,
-                              error: ''
-                            }))}
-                            placeholder="0"
-                            className="w-full text-base font-black pl-8 pr-4 py-3 rounded-xl border border-slate-300 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                          />
-                        </div>
-
-                        {/* Quick amount presets */}
-                        <div className="flex gap-2 mt-2">
-                          <button
-                            type="button"
-                            onClick={() => setDeliveryModal(prev => ({ ...prev, amountCollected: String(tot) }))}
-                            className="text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg transition"
-                          >
-                            Full Amount (₹{tot})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeliveryModal(prev => ({ ...prev, amountCollected: '0' }))}
-                            className="text-[11px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 px-2.5 py-1 rounded-lg transition"
-                          >
-                            ₹0 (Unpaid)
-                          </button>
-                        </div>
-
-                        {/* Validation message */}
-                        {isExceeding && (
-                          <p className="text-xs text-rose-600 font-bold mt-1.5 flex items-center gap-1">
-                            <span>⚠️</span> Collected amount cannot exceed order total of ₹{tot}.
-                          </p>
-                        )}
-                        {isNegative && (
-                          <p className="text-xs text-rose-600 font-bold mt-1.5 flex items-center gap-1">
-                            <span>⚠️</span> Amount cannot be negative.
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Action buttons */}
-                      <div className="flex flex-col gap-2 pt-2">
-                        <button
-                          type="button"
-                          disabled={updating || !isValid}
-                          onClick={() => handleCompleteDeliveryWithPayment(deliveryModal.order, col)}
-                          className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-sm py-3.5 px-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 min-h-[52px]"
-                        >
-                          <span>{updating ? '⏳' : '✅'}</span>
-                          <span>{updating ? t.updating : 'Save & Mark Delivered'}</span>
-                        </button>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => setDeliveryModal(prev => ({ ...prev, step: 'ask' }))}
-                            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition"
-                          >
-                            ← Back
-                          </button>
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => setDeliveryModal(null)}
-                            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition"
-                          >
-                            {t.cancel}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </>
-            )}
+      {/* Result after delivery: confirmed only when the server accepted it */}
+      <Dialog
+        open={Boolean(result)}
+        onClose={() => setResult(null)}
+        title={result?.outcome === 'synced' ? t.deliveredSaved : t.deliveredQueued}
+        footer={<Button onClick={() => setResult(null)}>{t.done}</Button>}
+      >
+        {result ? (
+          <div className="dl-stack dl-stack--sm">
+            <div className="dl-result__shop">{result.stop.shopName}</div>
+            <StatusPill status={result.outcome === 'synced' ? 'Delivered' : 'pending'} label={result.outcome === 'synced' ? t.syncSynced : t.syncPending} tone={result.outcome === 'synced' ? 'success' : 'warning'} />
+            <dl className="dl-kv">
+              <dt>{t.total}</dt><dd className="lc-num">{rupees(result.payment?.total)}</dd>
+              <dt>{t.collected}</dt><dd className="lc-num">{rupees(result.payment?.collected)}</dd>
+              <dt>{t.balance}</dt><dd className="lc-num">{rupees(result.payment?.balance)}</dd>
+              <dt>{t.payment}</dt><dd><StatusPill status={result.payment?.status} /></dd>
+            </dl>
+            {result.outcome === 'queued' ? <p className="dl-muted">{t.queuedToast}</p> : null}
           </div>
-        </div>
-      )}
-
-      {/* Delivery & Payment Completion Confirmation Modal */}
-      {deliverySuccessConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-center">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black">
-              ✅
-            </div>
-            <h2 className="text-xl font-black text-slate-900">
-              Delivery Completed
-            </h2>
-            <p className="text-xs text-slate-500 font-semibold">
-              {deliverySuccessConfirm.shopName} · Order #{deliverySuccessConfirm.orderId}
-            </p>
-
-            {/* Summary Banner */}
-            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-left space-y-2">
-              <div className="text-xs font-black text-emerald-950 leading-relaxed">
-                {deliverySuccessConfirm.summaryText}
-              </div>
-              <div className="pt-2 border-t border-emerald-200 grid grid-cols-3 gap-2 text-center text-xs">
-                <div>
-                  <span className="text-[10px] text-emerald-700 font-semibold block">Total</span>
-                  <span className="font-black text-slate-900">₹{deliverySuccessConfirm.total.toLocaleString('en-IN')}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-emerald-700 font-semibold block">Collected</span>
-                  <span className="font-black text-emerald-700">₹{deliverySuccessConfirm.collected.toLocaleString('en-IN')}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-emerald-700 font-semibold block">Balance</span>
-                  <span className="font-black text-rose-700">₹{deliverySuccessConfirm.balance.toLocaleString('en-IN')}</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setDeliverySuccessConfirm(null)}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black text-sm py-3.5 px-4 rounded-2xl shadow-md transition"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
+        ) : null}
+      </Dialog>
     </div>
+  );
+}
+
+// ---------- Pieces ----------
+
+function SyncChip({ t, sync }) {
+  if (!sync || sync.state === 'synced' || !sync.state) return null;
+  if (sync.state === 'pending') return <StatusPill tone="warning" icon={Clock} label={t.syncPending} />;
+  return <StatusPill tone="danger" icon={AlertTriangle} label={t.syncFailed} />;
+}
+
+function phaseLabel(t, stop) {
+  const p = stopPhase(stop);
+  if (p === 'delivered') return t.completedBadge;
+  if (p === 'failed') return t.failedBadge;
+  if (p === 'onTheWay') return t.statusPickedUp;
+  if (p === 'blocked') return t.statusPriceBlocked;
+  if (p === 'cancelled') return stop.status;
+  return t.statusInProgress;
+}
+
+function StopStatus({ t, stop }) {
+  return <StatusPill status={stop.status} label={phaseLabel(t, stop)} />;
+}
+
+function ContactActions({ t, stop, onSpeak }) {
+  const mapsUrl = getGoogleMapsUrl(stop);
+  const tel = stop.contactPhone ? safeTel(stop.contactPhone) : '';
+  return (
+    <div className="dl-contact">
+      {tel ? (
+        <a className="lc-btn lc-btn--secondary" href={`tel:${tel}`}>
+          <Icon icon={Phone} size={20} />
+          <span>{t.callShop}</span>
+        </a>
+      ) : null}
+      {mapsUrl ? (
+        <a className="lc-btn lc-btn--secondary" href={mapsUrl} target="_blank" rel="noopener noreferrer">
+          <Icon icon={Navigation} size={20} />
+          <span>{hasCoords(stop) ? t.navigate : t.openMapByAddress}</span>
+        </a>
+      ) : null}
+      <IconButton icon={Volume2} label={t.readAloud} outlined onClick={onSpeak} />
+    </div>
+  );
+}
+
+function PrimaryActions({ t, stop, busy, onPickUp, onDeliver, onFail }) {
+  const p = stopPhase(stop);
+  if (p === 'blocked') {
+    return (
+      <div className="dl-notice dl-notice--warning" role="note">
+        <Icon icon={AlertTriangle} size={20} />
+        <span>{t.priceBlocked}</span>
+      </div>
+    );
+  }
+  if (p === 'cancelled') {
+    return (
+      <div className="dl-notice" role="note">
+        <Icon icon={XCircle} size={20} />
+        <span>{t.cancelledNotice}</span>
+      </div>
+    );
+  }
+  if (!isOpen(stop)) return null;
+  return (
+    <div className="dl-actions">
+      {p === 'onTheWay' ? (
+        <Button variant="success" size="lg" block icon={PackageCheck} loading={busy} onClick={onDeliver}>
+          {t.markDelivered}
+        </Button>
+      ) : (
+        <Button variant="primary" size="lg" block icon={Truck} loading={busy} onClick={onPickUp}>
+          {t.markPickedUp}
+        </Button>
+      )}
+      <Button variant="danger-ghost" block icon={XCircle} disabled={busy} onClick={onFail}>
+        {t.couldNotDeliver}
+      </Button>
+    </div>
+  );
+}
+
+function TodayView({ t, counts, nextStop, nextNumber, syncMap, route, failedSync, byId, onStartRoute, onOpen, onSpeak, onPickUp, onDeliver, onFail }) {
+  if (counts.total === 0) {
+    return <EmptyState icon={Truck} title={t.noOrders}>{t.noStopsYet}</EmptyState>;
+  }
+  return (
+    <div className="dl-stack">
+      <div className="dl-progressline">
+        <ProgressBar label={t.progressLabel} value={counts.done} max={counts.total} valueText={`${counts.done} / ${counts.total}`} tone={counts.done === counts.total ? 'success' : undefined} />
+      </div>
+
+      {nextStop ? (
+        <section className="lc-card dl-next" aria-labelledby="dl-next-title">
+          <div className="dl-next__top">
+            <span className="dl-stopno" aria-hidden="true">{nextNumber}</span>
+            <div className="dl-next__id">
+              <div className="dl-over" id="dl-next-title">{t.nextDelivery}</div>
+              <h2 className="dl-shop">{nextStop.shopName}</h2>
+              <div className="dl-muted">{nextStop.address || t.noAddressOrGps}</div>
+            </div>
+          </div>
+          <div className="dl-chips">
+            <StopStatus t={t} stop={nextStop} />
+            <SyncChip t={t} sync={syncMap.get(String(nextStop.id))} />
+            {!hasCoords(nextStop) ? <StatusPill tone="warning" icon={MapPin} label={t.gpsMissing} /> : null}
+          </div>
+          <div className="dl-row">
+            <span className="dl-muted">{t.order} {nextStop.id} · {nextStop.itemsCount || orderItems(nextStop).length} {t.items}</span>
+            <span className="dl-amount lc-num">{rupees(nextStop.total)}</span>
+          </div>
+          <ContactActions t={t} stop={nextStop} onSpeak={() => onSpeak(nextStop)} />
+          <PrimaryActions
+            t={t}
+            stop={nextStop}
+            busy={route.updatingId === String(nextStop.id)}
+            onPickUp={() => onPickUp(nextStop)}
+            onDeliver={() => onDeliver(nextStop)}
+            onFail={() => onFail(nextStop)}
+          />
+          <Button variant="ghost" block iconAfter={ChevronRight} onClick={() => onOpen(nextStop)}>{t.details}</Button>
+        </section>
+      ) : (
+        <EmptyState icon={CheckCircle2} title={t.allDone} />
+      )}
+
+      <section className="dl-metrics" aria-label={t.today}>
+        <Metric label={t.assigned} value={counts.total} />
+        <Metric label={t.pending} value={counts.pending} />
+        <Metric label={t.delivered} value={counts.delivered} />
+        <Metric label={t.failed} value={counts.failed} />
+      </section>
+
+      {failedSync.length > 0 ? (
+        <section className="lc-card lc-card--pad" aria-label={t.syncFailed}>
+          <h3 className="dl-section">{t.syncFailed}</h3>
+          <ul className="dl-list">
+            {failedSync.map(([id, s]) => {
+              const stop = byId(id);
+              return (
+                <li key={id}>
+                  <button type="button" className="dl-attn" onClick={() => stop && onOpen(stop)}>
+                    <Icon icon={AlertTriangle} size={20} />
+                    <span className="dl-attn__body">
+                      <b>{stop?.shopName || `${t.order} ${id}`}</b>
+                      <span className="dl-muted">{s.status} · {s.error || t.updateFailed}</span>
+                    </span>
+                    <Icon icon={ChevronRight} size={20} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="lc-card lc-card--pad dl-stack dl-stack--sm">
+        <Button variant="secondary" block icon={RouteIcon} loading={route.optimizing} onClick={onStartRoute}>
+          {route.routeInfo ? t.routeActive : t.startRoute}
+        </Button>
+        <RouteNote t={t} route={route} />
+      </section>
+    </div>
+  );
+}
+
+function RouteNote({ t, route }) {
+  const missing = route.activeStops.filter((s) => !hasCoords(s)).length;
+  return (
+    <>
+      {route.routeInfo ? (
+        <p className="dl-muted">
+          <b>{t.disclaimerPrefix}</b> {route.routeInfo.disclaimer}
+          {route.routeInfo.distanceMeters > 0
+            ? ` · ${(route.routeInfo.distanceMeters / 1000).toFixed(1)} km (~${Math.round(route.routeInfo.durationSeconds / 60)} min)`
+            : ''}
+        </p>
+      ) : null}
+      {missing > 0 ? (
+        <p className="dl-muted"><Icon icon={MapPin} size={16} /> {missing} {t.unmappedNotice}</p>
+      ) : null}
+    </>
+  );
+}
+
+function StopRow({ t, stop, number, isNext, sync, onOpen }) {
+  return (
+    <button type="button" className={`dl-stop ${isNext ? 'is-next' : ''}`} onClick={onOpen} aria-label={`${t.stopNumber} ${number}: ${stop.shopName}, ${phaseLabel(t, stop)}`}>
+      <span className="dl-stopno" aria-hidden="true">{number > 0 ? number : '•'}</span>
+      <span className="dl-stop__body">
+        <span className="dl-stop__name">{stop.shopName}</span>
+        <span className="dl-muted dl-stop__addr">{stop.address || t.noAddressOrGps}</span>
+        <span className="dl-chips">
+          {isNext ? <StatusPill tone="info" icon={null} label={t.nextStopBadge} /> : null}
+          <StopStatus t={t} stop={stop} />
+          <SyncChip t={t} sync={sync} />
+        </span>
+      </span>
+      <span className="dl-stop__side">
+        <span className="dl-amount lc-num">{rupees(stop.total)}</span>
+        <span className="dl-muted">{stop.paymentStatus || 'Not collected'}</span>
+        <Icon icon={ChevronRight} size={20} />
+      </span>
+    </button>
+  );
+}
+
+function StopDetail({ t, stop, number, sync, user, busy, onSpeak, onPickUp, onDeliver, onFail }) {
+  const items = orderItems(stop);
+  const [recent, setRecent] = useState({ state: 'loading', orders: [] });
+
+  useEffect(() => {
+    let active = true;
+    setRecent({ state: 'loading', orders: [] });
+    const shop = stop.customerId;
+    if (!shop) {
+      setRecent({ state: 'error', orders: [] });
+      return undefined;
+    }
+    api
+      .getShopOrderHistory(shop, 7, user?.id)
+      .then((res) => {
+        if (!active) return;
+        if (res && res.status === 200 && Array.isArray(res.orders)) {
+          setRecent({ state: 'ok', orders: res.orders.filter((o) => String(o.orderId) !== String(stop.id)) });
+        } else setRecent({ state: 'error', orders: [] });
+      })
+      .catch(() => active && setRecent({ state: 'error', orders: [] }));
+    return () => {
+      active = false;
+    };
+  }, [stop.id, stop.customerId, user?.id]);
+
+  return (
+    <div className="dl-stack dl-detail">
+      <div className="dl-chips">
+        <span className="dl-over">{t.stopNumber} {number > 0 ? number : '—'} · {t.order} {stop.id}</span>
+      </div>
+      <div className="dl-chips">
+        <StopStatus t={t} stop={stop} />
+        <SyncChip t={t} sync={sync} />
+      </div>
+      {sync?.state === 'failed' ? (
+        <div className="dl-notice dl-notice--danger" role="alert">
+          <Icon icon={AlertTriangle} size={20} />
+          <span>{t.syncFailed}: {sync.error || t.updateFailed}</span>
+        </div>
+      ) : null}
+
+      <dl className="dl-kv">
+        {stop.ownerName ? (<><dt>{t.owner}</dt><dd>{stop.ownerName}</dd></>) : null}
+        {stop.contactPhone ? (<><dt>{t.phone}</dt><dd className="lc-num">{stop.contactPhone}</dd></>) : null}
+        <dt>{t.address}</dt>
+        <dd>{[stop.address, stop.pincode].filter(Boolean).join(' – ') || t.noAddressOrGps}{!hasCoords(stop) ? <span className="dl-muted dl-block">{t.gpsMissing}</span> : null}</dd>
+      </dl>
+
+      <ContactActions t={t} stop={stop} onSpeak={onSpeak} />
+      <PrimaryActions t={t} stop={stop} busy={busy} onPickUp={onPickUp} onDeliver={onDeliver} onFail={onFail} />
+
+      {stopPhase(stop) === 'failed' || stopPhase(stop) === 'cancelled' ? (
+        <dl className="dl-kv">
+          {stop.deliveryReason ? (<><dt>{t.closedReason}</dt><dd>{stop.deliveryReason}</dd></>) : null}
+          {stop.deliveryNote ? (<><dt>{t.note.replace(/\s*\(.*\)$/, '')}</dt><dd>{stop.deliveryNote}</dd></>) : null}
+        </dl>
+      ) : null}
+
+      <section aria-label={t.orderItems}>
+        <h3 className="dl-section">{t.orderItems}</h3>
+        {items.length ? (
+          <table className="dl-items">
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.key}>
+                  <td>{it.name}</td>
+                  <td className="lc-num dl-items__qty">{it.qty} {it.unit}</td>
+                  <td className="lc-num dl-items__amt">{rupees(it.lineTotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row" colSpan={2}>{t.total}</th>
+                <td className="lc-num dl-items__amt">{rupees(stop.total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        ) : (
+          <div className="dl-row"><span className="dl-muted">{stop.itemsCount || 0} {t.items}</span><span className="dl-amount lc-num">{rupees(stop.total)}</span></div>
+        )}
+      </section>
+
+      <section aria-label={t.payment}>
+        <h3 className="dl-section">{t.payment}</h3>
+        <dl className="dl-kv">
+          <dt>{t.payment}</dt><dd><StatusPill status={stop.paymentStatus || 'Not collected'} /></dd>
+          <dt>{t.collected}</dt><dd className="lc-num">{rupees(stop.paymentAmountCollected)}</dd>
+          <dt>{t.balance}</dt><dd className="lc-num">{rupees(stop.paymentBalanceDue ?? Math.max(0, Number(stop.total || 0) - Number(stop.paymentAmountCollected || 0)))}</dd>
+          {stop.deliveryUpdatedAt ? (<><dt>{t.lastUpdate}</dt><dd className="lc-num">{new Date(stop.deliveryUpdatedAt).toLocaleString('en-IN')}</dd></>) : null}
+        </dl>
+      </section>
+
+      <section aria-label={t.recentOrders}>
+        <h3 className="dl-section">{t.recentOrders}</h3>
+        {recent.state === 'loading' ? (
+          <Skeleton height={48} />
+        ) : recent.state === 'error' ? (
+          <p className="dl-muted">{t.recentUnavailable}</p>
+        ) : recent.orders.length === 0 ? (
+          <p className="dl-muted">{t.noRecentOrders}</p>
+        ) : (
+          <ul className="dl-recent">
+            {recent.orders.map((o) => (
+              <li key={o.orderId}>
+                <span>
+                  <b className="lc-num">{o.date}</b>
+                  <span className="dl-muted"> · {o.itemsCount} {t.items} · {rupees(o.total)}</span>
+                </span>
+                <span className="dl-chips"><StatusPill status={o.status} /><StatusPill status={o.paymentStatus} /></span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DeliverDialog({ t, stop, busy, onCancel, onConfirm }) {
+  const [mode, setMode] = useState('full');
+  const [amount, setAmount] = useState('');
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (stop) {
+      setMode('full');
+      setAmount('');
+      setTouched(false);
+    }
+  }, [stop?.id]);
+  if (!stop) return <Dialog open={false} onClose={onCancel} title="" />;
+  const total = Number(stop.total || 0);
+  const check = mode === 'partial' ? validateCollected(amount, total) : { ok: true, value: mode === 'full' ? total : 0 };
+  const preview = paymentOutcome(total, check.ok ? check.value : 0);
+  return (
+    <Dialog
+      open={Boolean(stop)}
+      onClose={onCancel}
+      dismissible={!busy}
+      title={t.markDelivered}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>{t.cancel}</Button>
+          <Button
+            variant="success"
+            loading={busy}
+            disabled={!check.ok}
+            onClick={() => {
+              setTouched(true);
+              if (check.ok) onConfirm(stop, check.value);
+            }}
+          >
+            {t.confirmDelivered}
+          </Button>
+        </>
+      }
+    >
+      <div className="dl-stack">
+        <div>
+          <div className="dl-result__shop">{stop.shopName}</div>
+          <div className="dl-row"><span className="dl-muted">{t.order} {stop.id}</span><span className="dl-amount lc-num">{rupees(total)}</span></div>
+        </div>
+        <div className="dl-stack dl-stack--sm">
+          <span className="lc-field__label" id="dl-pay-q">{t.paymentQuestion}</span>
+          <SegmentedControl
+            label={t.paymentQuestion}
+            value={mode}
+            onChange={(m) => { setMode(m); if (m === 'partial' && amount === '') setAmount(''); }}
+            options={[
+              { value: 'full', label: `${t.paidFull} ${rupees(total)}` },
+              { value: 'partial', label: t.paidPartial },
+              { value: 'none', label: t.paidNone }
+            ]}
+          />
+        </div>
+        {mode === 'partial' ? (
+          <Field label={t.amountCollected} error={touched || amount !== '' ? (check.ok ? null : t[check.error]) : null}>
+            <TextInput type="number" inputMode="decimal" min="0" max={total} step="any" value={amount} onChange={(e) => setAmount(e.target.value)} onBlur={() => setTouched(true)} data-autofocus />
+          </Field>
+        ) : null}
+        <dl className="dl-kv">
+          <dt>{t.collected}</dt><dd className="lc-num">{rupees(preview.collected)}</dd>
+          <dt>{t.balance}</dt><dd className="lc-num">{rupees(preview.balance)}</dd>
+          <dt>{t.payment}</dt><dd><StatusPill status={preview.status} /></dd>
+        </dl>
+      </div>
+    </Dialog>
+  );
+}
+
+function FailDialog({ t, stop, busy, onCancel, onConfirm }) {
+  const [reason, setReason] = useState(FAIL_REASONS[0].id);
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    if (stop) {
+      setReason(FAIL_REASONS[0].id);
+      setNote('');
+    }
+  }, [stop?.id]);
+  if (!stop) return <Dialog open={false} onClose={onCancel} title="" />;
+  return (
+    <Dialog
+      open={Boolean(stop)}
+      onClose={onCancel}
+      dismissible={!busy}
+      title={t.reasonTitle}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>{t.cancel}</Button>
+          <Button variant="danger" loading={busy} onClick={() => onConfirm(stop, reason, note.trim())}>{t.confirmNotDelivered}</Button>
+        </>
+      }
+    >
+      <div className="dl-stack">
+        <div className="dl-result__shop">{stop.shopName}</div>
+        <div role="radiogroup" aria-label={t.selectReason} className="dl-reasons">
+          {FAIL_REASONS.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              role="radio"
+              aria-checked={reason === r.id}
+              className="dl-reason"
+              onClick={() => setReason(r.id)}
+            >
+              <span className="dl-reason__dot" aria-hidden="true" />
+              <span>{t.reasons[r.key]}</span>
+            </button>
+          ))}
+        </div>
+        <Field label={t.note}>
+          <TextArea value={note} onChange={(e) => setNote(e.target.value)} placeholder={t.notePlaceholder} maxLength={300} />
+        </Field>
+      </div>
+    </Dialog>
   );
 }
