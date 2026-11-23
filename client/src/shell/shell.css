@@ -49,7 +49,7 @@
 /* ---------- Bottom navigation (phone) ---------- */
 .lc-bottomnav { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--lc-z-nav); display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); min-height: var(--lc-bottomnav-h); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); background: var(--lc-surface); border-top: 1px solid var(--lc-border); }
 .lc-bottomnav__item { position: relative; display: grid; justify-items: center; align-content: center; gap: 3px; min-height: var(--lc-bottomnav-h); padding: 4px 2px; border: 0; background: transparent; color: var(--lc-muted); font: var(--lc-weight-semibold) var(--lc-text-xs)/1.15 var(--lc-font-body); cursor: pointer; -webkit-tap-highlight-color: transparent; }
-.lc-bottomnav__item span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lc-bottomnav__label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lc-bottomnav__item[aria-current='page'] { color: var(--lc-brand-700); }
 .lc-bottomnav__item[aria-current='page']::before { content: ''; position: absolute; top: 0; left: 25%; right: 25%; height: 3px; border-radius: 0 0 3px 3px; background: var(--lc-brand-600); }
 .lc-bottomnav__icon { position: relative; display: grid; place-items: center; }

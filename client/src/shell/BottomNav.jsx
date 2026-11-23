@@ -21,7 +21,7 @@ export default function BottomNav({ items, page, onSelect, onMore, moreActive, m
               <Icon icon={item.icon} size={24} />
               {count ? <span className="lc-count" aria-hidden="true">{count}</span> : null}
             </span>
-            <span aria-hidden="true">{item.short || item.label}</span>
+            <span className="lc-bottomnav__label" aria-hidden="true">{item.short || item.label}</span>
           </button>
         );
       })}
@@ -35,7 +35,7 @@ export default function BottomNav({ items, page, onSelect, onMore, moreActive, m
         <span className="lc-bottomnav__icon">
           <Icon icon={moreIsAccountOnly ? UserRound : MoreHorizontal} size={24} />
         </span>
-        <span>{moreIsAccountOnly ? 'Account' : 'More'}</span>
+        <span className="lc-bottomnav__label">{moreIsAccountOnly ? 'Account' : 'More'}</span>
       </button>
     </nav>
   );
