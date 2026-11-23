@@ -305,3 +305,11 @@
   padding: 0;
   font-size: var(--lc-text-lg);
 }
+
+/* Order entry item panel: on phones the single grid column must shrink to the card, not to the
+   inputs' intrinsic width (which pushed the quantity and requested-price fields past the card). */
+@media (max-width: 780px) {
+  .lc-main .page-content .order-catalog-inputs-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.lc-main .page-content .order-catalog-inputs-grid > * { min-width: 0; }
+.lc-main .page-content .order-catalog-input-group .field { width: 100%; max-width: 100%; }
