@@ -36,8 +36,8 @@ Screenshots are kept locally in the session scratch folder (not committed).
 - A sign-in error from an earlier attempt stayed after a successful sign-in; errors are cleared on sign-in.
 - The no-GPS navigation button wrapped to three lines; now "Navigate", with the address-only meaning in its accessible name.
 
-## Backend finding (documented, not changed)
-A delivery-status update for an order the office had already **cancelled** was accepted: audit shows "from 'Cancelled' to 'Picked up'" for local test order S203-24027. `POST /api/delivery/orders/:id/status` blocks non-admin changes to 'Delivered' and 'Could not deliver' but not to 'Cancelled'. This is a server business rule and outside this UI phase; it needs an owner decision before any change.
+## Backend finding (fixed after owner decision)
+A delivery-status update for an order the office had already **cancelled** was accepted (local test order S203-24027: 'Cancelled' -> 'Picked up'). Fixed on this branch after the owner's decisions of 23 Nov 2026; see "Order status integrity" in `docs/IMPLEMENTATION_STATUS.md`. The local test record itself was left as it was.
 
 ## Tests and builds
 - `npm test`: 28 of 28 suites, 357 of 357 tests.
