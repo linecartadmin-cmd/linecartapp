@@ -69,3 +69,12 @@ describe('Field Sales Agent Today panel', () => {
     assert.match(overview, /h < 12 \? 'Good morning' : h < 17 \? 'Good afternoon' : 'Good evening'/);
   });
 });
+
+describe('Approvals badge', () => {
+  test('a price decision tells the shell to refresh the pending count', () => {
+    const screen = src('components/ManagerOrdersScreen.jsx');
+    const decision = screen.slice(screen.indexOf('api.decidePriceRequest('), screen.indexOf("showToast(res?.message || 'Failed to record decision.')"));
+    assert.ok(decision.includes("new CustomEvent('linecart:price_requests_updated')"));
+    assert.ok(src('App.jsx').includes("'linecart:price_requests_updated'"));
+  });
+});

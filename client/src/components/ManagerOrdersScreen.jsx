@@ -83,6 +83,7 @@ export default function ManagerOrdersScreen({ user, clusters, shops, showToast, 
       if (res && res.status === 200) {
         showToast(action === 'approve' ? 'Price request approved!' : 'Price request rejected.');
         setDecisionModal(null);
+        window.dispatchEvent(new CustomEvent('linecart:price_requests_updated'));
         fetchPriceRequests();
         fetchOrders();
       } else {
