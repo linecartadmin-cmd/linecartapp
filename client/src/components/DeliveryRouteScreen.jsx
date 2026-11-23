@@ -37,7 +37,8 @@ import {
   EmptyState,
   Skeleton,
   SkeletonGroup,
-  Metric
+  Metric,
+  registerOverlay
 } from '../ui';
 import { DELIVERY_I18N } from '../delivery/deliveryI18n';
 import { useDeliveryRoute } from '../delivery/useDeliveryRoute';
@@ -70,6 +71,13 @@ export default function DeliveryRouteScreen({ user, showToast }) {
   const { activeStops, counts, nextIndex, syncMap, online, loading, clusters, selectedClusterId } = route;
 
   const [view, setView] = useState('today');
+
+  // Android back on 'All stops' or 'Map' returns to 'Today' first (open sheets and dialogs still
+  // close before this, because they register on top of it).
+  useEffect(() => {
+    if (view === 'today') return undefined;
+    return registerOverlay({ onRequestClose: () => setView('today') });
+  }, [view]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [detailId, setDetailId] = useState(null);
@@ -370,9 +378,9 @@ function ContactActions({ t, stop, onSpeak }) {
         </a>
       ) : null}
       {mapsUrl ? (
-        <a className="lc-btn lc-btn--secondary" href={mapsUrl} target="_blank" rel="noopener noreferrer">
+        <a className="lc-btn lc-btn--secondary" href={mapsUrl} target="_blank" rel="noopener noreferrer" aria-label={hasCoords(stop) ? t.navigate : t.openMapByAddress} title={hasCoords(stop) ? t.navigate : t.openMapByAddress}>
           <Icon icon={Navigation} size={20} />
-          <span>{hasCoords(stop) ? t.navigate : t.openMapByAddress}</span>
+          <span>{t.navigate}</span>
         </a>
       ) : null}
       <IconButton icon={Volume2} label={t.readAloud} outlined onClick={onSpeak} />

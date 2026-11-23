@@ -39,7 +39,12 @@ export function ToastProvider({ children }) {
     return id;
   }, []);
 
-  const value = useMemo(() => ({ show, dismiss }), [show, dismiss]);
+  // Removes error toasts only (for example stale sign-in errors once sign-in succeeds).
+  const clearErrors = useCallback(() => {
+    setToasts((list) => list.filter((x) => x.variant !== 'error'));
+  }, []);
+
+  const value = useMemo(() => ({ show, dismiss, clearErrors }), [show, dismiss, clearErrors]);
 
   return (
     <ToastContext.Provider value={value}>

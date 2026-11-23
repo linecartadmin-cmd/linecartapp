@@ -162,3 +162,23 @@ describe('Offline queue and server confirmation (source guarantees)', () => {
     assert.ok(!/SyncStatusBar|onLogout\(|onTogglePreview|Laptop view/.test(screen));
   });
 });
+
+describe('Emulator walkthrough fixes (Phase 2)', () => {
+  const screen = src('components/DeliveryRouteScreen.jsx');
+  const app = src('App.jsx');
+  const toast = src('ui/Toast.jsx');
+
+  test('Android back on "All stops" or "Map" returns to "Today" before leaving the app', () => {
+    assert.match(screen, /if \(view === 'today'\) return undefined;\s*return registerOverlay\(\{ onRequestClose: \(\) => setView\('today'\) \}\);/);
+  });
+
+  test('stale error toasts from failed sign-in attempts are cleared once sign-in succeeds', () => {
+    assert.match(toast, /const clearErrors = useCallback\(\(\) => \{\s*setToasts\(\(list\) => list\.filter\(\(x\) => x\.variant !== 'error'\)\);/);
+    assert.match(app, /onLoginSuccess=\{\(u\) => \{[\s\S]{0,160}toastApi\.clearErrors\(\);/);
+  });
+
+  test('navigate button keeps a short visible label; the address-only meaning stays in its accessible name', () => {
+    assert.match(screen, /<span>\{t\.navigate\}<\/span>/);
+    assert.match(screen, /aria-label=\{hasCoords\(stop\) \? t\.navigate : t\.openMapByAddress\}/);
+  });
+});

@@ -516,6 +516,8 @@ export default function App() {
     return (
       <LoginScreen
         onLoginSuccess={(u) => {
+          // Errors from earlier failed attempts no longer apply once sign-in succeeds
+          toastApi.clearErrors();
           setUser(u);
           const r = (u?.role || '').toLowerCase();
           if (r === 'admin') navigate('admin-dashboard');
