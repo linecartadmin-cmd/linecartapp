@@ -506,9 +506,11 @@ export default function App() {
     navigate(item.pageId);
   };
 
-  // Android hardware back: open dialog or sheet first, then in-app history, then leave the app
-  // in the background at the role's home screen (never signs out, never clears data).
-  useAndroidBackButton({ enabled: Boolean(user), onBack: handleBack, isAtRoot: page === getRoleHome() && navHistory.length === 0 });
+  // Android hardware back: open dialog or sheet first, then in-app history. On the role's home screen
+  // it moves the app to the background, as Android does for a top-level screen (the in-app history can
+  // hold entries the role-home guard redirects, such as 'overview' for managers after sign-in).
+  // Never signs out, never clears data.
+  useAndroidBackButton({ enabled: Boolean(user), onBack: handleBack, isAtRoot: page === getRoleHome() });
 
   if (!user) {
     return (
@@ -532,7 +534,7 @@ export default function App() {
       nav={nav}
       page={page}
       title={pageTitle(roleKey, page)}
-      showBack={page !== getRoleHome() || navHistory.length > 0}
+      showBack={page !== getRoleHome()}
       onBack={handleBack}
       onSelect={handleNavSelect}
       onSignOut={handleLogout}
