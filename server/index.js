@@ -25,6 +25,15 @@ import {
 import { registerVisitRoutes } from './visits.js';
 import { installRouteDeclarations, STAFF_ROLES, canonicalRole } from './access.js';
 import { validateVisitSettingUpdates } from './geo.js';
+import {
+  ORDER_STATUSES,
+  effectiveStatus,
+  isRecognisedStatus,
+  sameLifecycleState,
+  checkTransition,
+  conflictBody,
+  updateOrderIfStatus
+} from './orderStatus.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -4006,7 +4015,7 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
     });
   }
 
-  const currentStatus = order.status || 'In progress';
+  const currentStatus = effectiveStatus(order.status);
 
   // Idempotency: if the order is already in the target status, return 200 idempotent replay
   if (currentStatus === status) {
@@ -4029,35 +4038,48 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
     });
   }
 
+  // Every refusal after this point is recorded so the office can see what a device tried to do.
+  const auditRejection = (httpStatus, code, message, currentForLog) =>
+    addAuditLog(
+      req,
+      'DELIVERY_STATUS_REJECTED',
+      'Order',
+      order.id,
+      `Rejected delivery status update for order ${order.id}: '${currentForLog}' -> '${status}' (HTTP ${httpStatus}${code ? ` ${code}` : ''}: ${message})${deviceEventTime ? ` [deviceEventTime: ${deviceEventTime}]` : ''}${idempotencyKey ? ` [idempotencyKey: ${idempotencyKey}]` : ''}`
+    ).catch(() => {});
+
   if (currentStatus === 'Price approval pending') {
-    return res.status(400).json({
-      status: 400,
-      message: `Invalid status transition: Order '${orderId}' is currently 'Price approval pending' and cannot be dispatched or updated until approved.`
-    });
+    const message = `Invalid status transition: Order '${orderId}' is currently 'Price approval pending' and cannot be dispatched or updated until approved.`;
+    await auditRejection(400, null, message, currentStatus);
+    return res.status(400).json({ status: 400, message });
   }
 
-  if (!isAdmin && ['Delivered', 'Could not deliver'].includes(currentStatus)) {
-    return res.status(400).json({
-      status: 400,
-      message: `Duplicate or invalid status update: Order '${orderId}' is already finalized as '${currentStatus}'`
+  // New apps send the status they saw when the agent acted; a mismatch means the update is stale.
+  const expectedStatus = req.body?.expectedStatus ? String(req.body.expectedStatus) : null;
+  if (expectedStatus && !sameLifecycleState(expectedStatus, currentStatus)) {
+    const body = conflictBody({
+      code: 'STALE_UPDATE',
+      orderId,
+      currentStatus,
+      requestedStatus: status,
+      message: `Order '${orderId}' changed to '${currentStatus}' after this update was made on the device (expected '${expectedStatus}'). The update was not applied.`
     });
+    await auditRejection(409, body.code, body.message, currentStatus);
+    return res.status(409).json(body);
   }
 
-  if (!isAdmin && ['Pending', 'In progress'].includes(currentStatus)) {
-    if (status === 'Delivered') {
-      return res.status(400).json({
-        status: 400,
-        message: `Invalid status transition: Order '${orderId}' must be marked as 'Picked up' before it can be marked as 'Delivered'`
-      });
-    }
+  const transition = checkTransition(currentStatus, status, isAdmin ? 'admin' : 'agent');
+  if (!transition.ok) {
+    const body = conflictBody({ orderId, currentStatus, requestedStatus: status, message: transition.message });
+    await auditRejection(409, body.code, body.message, currentStatus);
+    return res.status(409).json(body);
   }
 
   if (status === 'Could not deliver') {
     if (!reason || typeof reason !== 'string' || !reason.trim()) {
-      return res.status(400).json({
-        status: 400,
-        message: "A short reason is required when marking an order as 'Could not deliver'"
-      });
+      const message = "A short reason is required when marking an order as 'Could not deliver'";
+      await auditRejection(400, null, message, currentStatus);
+      return res.status(400).json({ status: 400, message });
     }
   }
 
@@ -4109,19 +4131,54 @@ app.post('/api/delivery/orders/:id/status', requireAuth, async (req, res) => {
     paymentCollectedByName = caller.name || 'Delivery Agent';
   }
 
-  await db.query(
-    `UPDATE orders
-     SET status = $1, delivery_reason = $2, delivery_note = $3, delivery_updated_at = $4, delivery_updated_by = $5,
-         payment_status = $6, payment_amount_collected = $7, payment_balance_due = $8,
-         payment_collected_at = $9, payment_collected_by = $10, payment_collected_by_name = $11
-     WHERE order_id = $12`,
+  // Atomic write: applies only if the order still has the status checked above, so an admin
+  // cancellation (or any other change) that lands in between is never overwritten.
+  const write = await updateOrderIfStatus(
+    db,
+    order.orderId || order.id,
+    currentStatus,
+    `status = $1, delivery_reason = $2, delivery_note = $3, delivery_updated_at = $4, delivery_updated_by = $5,
+     payment_status = $6, payment_amount_collected = $7, payment_balance_due = $8,
+     payment_collected_at = $9, payment_collected_by = $10, payment_collected_by_name = $11`,
     [
       status, updatedReason, updatedNote, updatedAt, Number(caller.id),
       paymentStatus, paymentAmount, balanceDue,
-      paymentCollectedAt, paymentCollectedBy, paymentCollectedByName,
-      order.orderId || order.id
+      paymentCollectedAt, paymentCollectedBy, paymentCollectedByName
     ]
   );
+
+  if (!write.applied) {
+    await refreshStateFromDb();
+    if (write.currentStatus === status) {
+      // An identical update won the race: same outcome, report it as a replay
+      const fresh = submittedOrders.find((o) => String(o.id) === orderId || String(o.orderId) === orderId) || order;
+      return res.status(200).json({
+        status: 200,
+        message: `Order '${orderId}' is already '${status}'`,
+        idempotentReplay: true,
+        order: {
+          id: fresh.id,
+          orderId: fresh.orderId || fresh.id,
+          status,
+          deliveryReason: fresh.deliveryReason || null,
+          deliveryNote: fresh.deliveryNote || null,
+          deliveryUpdatedAt: fresh.deliveryUpdatedAt || null,
+          paymentStatus: fresh.paymentStatus || 'Not collected',
+          paymentAmountCollected: Number(fresh.paymentAmountCollected || 0),
+          paymentBalanceDue: Number(fresh.paymentBalanceDue || 0),
+          total: Number(fresh.total || 0)
+        }
+      });
+    }
+    const body = conflictBody({
+      orderId,
+      currentStatus: write.currentStatus,
+      requestedStatus: status,
+      message: `Order '${orderId}' changed to '${write.currentStatus}' while this update was being saved. The update was not applied.`
+    });
+    await auditRejection(409, body.code, body.message, write.currentStatus);
+    return res.status(409).json(body);
+  }
 
   await refreshStateFromDb();
   await addAuditLog(
@@ -5643,11 +5700,25 @@ app.put('/api/admin/orders/:id', requireAdmin, async (req, res) => {
     }
 
     const { status, deliveryAgentId, orderList, notes } = req.body || {};
-    const beforeStatus = order.status;
+    const beforeStatus = effectiveStatus(order.status);
     const beforeTotal = order.total;
     const beforeLinesCount = (order.orderList || []).length;
 
-    let newStatus = status ? String(status).trim() : order.status;
+    let newStatus = status ? String(status).trim() : beforeStatus;
+    if (newStatus !== beforeStatus) {
+      if (!isRecognisedStatus(newStatus)) {
+        return res.status(400).json({
+          status: 400,
+          message: `Unknown status '${newStatus}' is not allowed. Use one of: ${ORDER_STATUSES.join(', ')}.`
+        });
+      }
+      const transition = checkTransition(beforeStatus, newStatus, 'admin');
+      if (!transition.ok) {
+        return res.status(409).json(
+          conflictBody({ orderId: order.orderId, currentStatus: beforeStatus, requestedStatus: newStatus, message: transition.message })
+        );
+      }
+    }
     let newDeliveryAgentId = deliveryAgentId !== undefined
       ? (deliveryAgentId === null || deliveryAgentId === '' ? null : Number(deliveryAgentId))
       : order.deliveryAgentId;
@@ -5693,12 +5764,20 @@ app.put('/api/admin/orders/:id', requireAdmin, async (req, res) => {
         newLinesCount = orderList.filter((l) => (parseFloat(l.qty) || 0) > 0).length;
       }
 
-      await tx.query(
-        `UPDATE orders
-         SET status = $1, delivery_agent_id = $2, total = $3, items_count = $4
-         WHERE order_id = $5`,
-        [newStatus, newDeliveryAgentId, newTotal, newLinesCount, order.orderId]
+      // Applies only if nobody changed the status since it was read; otherwise the whole edit
+      // (line items included) is rolled back and the admin gets a 409.
+      const write = await updateOrderIfStatus(
+        tx,
+        order.orderId,
+        beforeStatus,
+        `status = $1, delivery_agent_id = $2, total = $3, items_count = $4`,
+        [newStatus, newDeliveryAgentId, newTotal, newLinesCount]
       );
+      if (!write.applied) {
+        const err = new Error('STATUS_CONFLICT');
+        err.statusConflict = write.currentStatus;
+        throw err;
+      }
     });
 
     await refreshStateFromDb();
@@ -5717,6 +5796,18 @@ app.put('/api/admin/orders/:id', requireAdmin, async (req, res) => {
       order: updatedOrder
     });
   } catch (err) {
+    if (err && err.statusConflict !== undefined) {
+      await refreshStateFromDb();
+      const orderId = String(req.params.id);
+      return res.status(409).json(
+        conflictBody({
+          orderId,
+          currentStatus: err.statusConflict,
+          requestedStatus: req.body?.status ? String(req.body.status).trim() : err.statusConflict,
+          message: `Order '${orderId}' changed to '${err.statusConflict}' while it was being edited. Nothing was saved; reload and try again.`
+        })
+      );
+    }
     console.error('[Admin Order Update Error]', err);
     res.status(500).json({ status: 500, message: `Failed to update order: ${err.message}` });
   }
@@ -5733,12 +5824,40 @@ app.post('/api/admin/orders/:id/cancel', requireAdmin, async (req, res) => {
     }
 
     const reason = req.body?.reason ? String(req.body.reason).trim() : 'Cancelled by Administrator';
-    const beforeStatus = order.status;
+    const beforeStatus = effectiveStatus(order.status);
 
-    await db.query(
-      `UPDATE orders SET status = 'Cancelled' WHERE order_id = $1`,
-      [order.orderId]
-    );
+    if (beforeStatus === 'Cancelled') {
+      return res.json({
+        status: 200,
+        message: `Order '${order.orderId}' is already cancelled.`,
+        orderId: order.orderId,
+        idempotentReplay: true
+      });
+    }
+
+    // Ordinary cancellation only before pick-up; payment columns are never touched here.
+    const transition = checkTransition(beforeStatus, 'Cancelled', 'admin');
+    if (!transition.ok) {
+      return res.status(409).json(
+        conflictBody({ orderId: order.orderId, currentStatus: beforeStatus, requestedStatus: 'Cancelled', message: transition.message })
+      );
+    }
+
+    const write = await updateOrderIfStatus(db, order.orderId, beforeStatus, `status = $1`, ['Cancelled']);
+    if (!write.applied) {
+      await refreshStateFromDb();
+      if (write.currentStatus === 'Cancelled') {
+        return res.json({ status: 200, message: `Order '${order.orderId}' is already cancelled.`, orderId: order.orderId, idempotentReplay: true });
+      }
+      return res.status(409).json(
+        conflictBody({
+          orderId: order.orderId,
+          currentStatus: write.currentStatus,
+          requestedStatus: 'Cancelled',
+          message: `Order '${order.orderId}' changed to '${write.currentStatus}' before it could be cancelled. It was not cancelled.`
+        })
+      );
+    }
 
     await refreshStateFromDb();
     await addAuditLog(

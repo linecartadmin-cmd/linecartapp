@@ -25,7 +25,7 @@ let T = {};
 async function insertOrder({ status = 'In progress', total = 500, collected = 0, deliveryAgentId } = {}) {
   seq += 1;
   const orderId = `${PREFIX}${Date.now().toString(36)}-${seq}`;
-  const serial = 950000 + Math.floor(Math.random() * 40000);
+  const serial = (await db.query('SELECT COALESCE(MAX(serial_no), 0) + 1 AS n FROM orders')).rows[0].n;
   await db.query(
     `INSERT INTO orders (order_id, serial_no, shop_short_id, customer_id, customer_name, sperson_id, agent_name, cluster_id,
                          order_date, created_at, status, items_count, total, delivery_agent_id,

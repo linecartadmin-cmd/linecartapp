@@ -272,3 +272,20 @@ describe('Toast durations and server failure messages', () => {
     assert.deepStrictEqual(bad, []);
   });
 });
+
+describe('Order status conflict messages read as errors', () => {
+  test('every refusal message from server/orderStatus.js is classified as an error toast', async () => {
+    const { checkTransition, conflictBody } = await import(pathToFileURL(path.join(repoRoot, 'server/orderStatus.js')).href);
+    const pairs = [
+      ['Cancelled', 'Picked up', 'agent'], ['Delivered', 'Picked up', 'agent'], ['Could not deliver', 'Delivered', 'admin'],
+      ['In progress', 'Could not deliver', 'agent'], ['Picked up', 'Cancelled', 'admin'], ['Picked up', 'In progress', 'agent'],
+      ['In progress', 'Delivered', 'agent'], ['Pending', 'Pending', 'admin'], ['Price approval pending', 'Picked up', 'admin']
+    ];
+    for (const [from, to, actor] of pairs) {
+      const r = checkTransition(from, to, actor);
+      if (r.ok) continue;
+      assert.strictEqual(inferToastVariant(r.message), 'error', `${from} -> ${to}: ${r.message}`);
+    }
+    assert.strictEqual(inferToastVariant(conflictBody({ orderId: 'X', currentStatus: 'Cancelled', requestedStatus: 'Picked up' }).message), 'error');
+  });
+});
