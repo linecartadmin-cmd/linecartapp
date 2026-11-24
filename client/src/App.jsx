@@ -509,8 +509,9 @@ export default function App() {
   // Android hardware back: open dialog or sheet first, then in-app history. On the role's home screen
   // it moves the app to the background, as Android does for a top-level screen (the in-app history can
   // hold entries the role-home guard redirects, such as 'overview' for managers after sign-in).
-  // Never signs out, never clears data.
-  useAndroidBackButton({ enabled: Boolean(user), onBack: handleBack, isAtRoot: page === getRoleHome() });
+  // Never signs out, never clears data. On the sign-in screen (no user) it closes an open overlay first
+  // and otherwise moves the app to the background, instead of replaying old page history.
+  useAndroidBackButton({ enabled: true, onBack: handleBack, isAtRoot: !user || page === getRoleHome() });
 
   if (!user) {
     return (

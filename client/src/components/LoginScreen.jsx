@@ -1,5 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { registerOverlay } from '../ui';
 import { api, INDIAN_MOBILE_REGEX, APP_BUILD_ENV, API_NOT_CONFIGURED, API_BASE_URL } from '../api';
 import {
   registerBiometricSession,
@@ -41,6 +42,11 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [selectedHasBio, setSelectedHasBio] = useState(false);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+  // Android back closes the saved-account switcher before leaving the app.
+  useEffect(() => {
+    if (!showAccountSwitcher) return undefined;
+    return registerOverlay({ onRequestClose: () => setShowAccountSwitcher(false) });
+  }, [showAccountSwitcher]);
   const [hardwareInfo, setHardwareInfo] = useState(null);
 
   // One-Time First Admin Setup state

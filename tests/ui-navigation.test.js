@@ -158,7 +158,13 @@ describe('App shell source guarantees', () => {
 
 describe('Android back order: overlays first, then legacy modals', () => {
   test('on the role home screen back leaves the app instead of replaying redirected history', () => {
-    assert.ok(appSrc.includes('useAndroidBackButton({ enabled: Boolean(user), onBack: handleBack, isAtRoot: page === getRoleHome() });'));
+    assert.ok(appSrc.includes('useAndroidBackButton({ enabled: true, onBack: handleBack, isAtRoot: !user || page === getRoleHome() });'));
+  });
+
+  test('on the sign-in screen back leaves the app (after closing the account switcher)', () => {
+    const login = read('components/LoginScreen.jsx');
+    assert.match(login, /if \(!showAccountSwitcher\) return undefined;\s*return registerOverlay\(\{ onRequestClose: \(\) => setShowAccountSwitcher\(false\) \}\);/);
+    assert.ok(appSrc.indexOf('useAndroidBackButton(') < appSrc.indexOf('if (!user) {'), 'hook runs before the signed-out return');
   });
 
   test('closes the top-most registered overlay first', () => {
