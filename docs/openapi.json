@@ -764,6 +764,43 @@
         }
       }
     },
+    "/api/admin/shops/bulk-assign": {
+      "post": {
+        "operationId": "postApiAdminShopsBulkAssign",
+        "summary": "POST /api/admin/shops/bulk-assign",
+        "description": "Any valid session whose role is one of: Admin, Sales Manager, Field Sales Agent, Delivery Agent. The handler then applies its own role and permission checks.",
+        "x-linecart-audience": "staff",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionToken": []
+          },
+          {
+            "legacyToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON bodies mirror the HTTP status in `status`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
     "/api/admin/shops/{shopId}/assign": {
       "post": {
         "operationId": "postApiAdminShopsShopIdAssign",

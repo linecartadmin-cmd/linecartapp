@@ -427,4 +427,256 @@ describe('Shop Assignment & Field Sales Agent Scoping Test Suite', async () => {
       });
     });
   });
+
+  describe('6. Strict Unassignment, Bulk Assignment, Access Enforcement & Historical Integrity', () => {
+    test('Admin can unassign a shop using PUT /api/shops/:shopId/assign (unassign: true)', async () => {
+      // First ensure shop 101 is assigned to agent 1
+      await db.query('UPDATE shops SET assigned_agent_id = 1 WHERE shop_id = 101');
+
+      const res = await fetch(`${BASE_URL}/api/shops/101/assign`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ unassign: true, reason: 'Testing unassign' })
+      });
+
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.status, 200);
+      assert.strictEqual(json.shop.assignedAgentId, null);
+      assert.strictEqual(json.shop.assignedAgentName, 'Unassigned');
+
+      // Check database row
+      const rowRes = await db.query('SELECT assigned_agent_id, created_by FROM shops WHERE shop_id = 101');
+      assert.strictEqual(rowRes.rows[0].assigned_agent_id, null);
+
+      // Verify audit log entry
+      const auditRes = await db.query(
+        "SELECT action, target_type, target_id FROM audit_logs WHERE action = 'SHOP_UNASSIGNED' AND target_id = '101' ORDER BY id DESC LIMIT 1"
+      );
+      assert.ok(auditRes.rows.length > 0, 'Audit log SHOP_UNASSIGNED must be recorded');
+    });
+
+    test('Field Sales Agent (Agent 1) CANNOT see or access unassigned Shop 101', async () => {
+      // 1. GET /api/shops - shop 101 must not appear
+      const shopsRes = await fetch(`${BASE_URL}/api/shops`, {
+        headers: { Authorization: `Bearer ${agent1Token}` }
+      });
+      assert.strictEqual(shopsRes.status, 200);
+      const shopsJson = await shopsRes.json();
+      assert.ok(!shopsJson.shops.some((s) => Number(s.shopid) === 101), 'Unassigned shop 101 must not be in /api/shops for Agent 1');
+
+      // 2. GET /getitemsorder - shop 101 must not appear in any cluster's shopsList
+      const orderRes = await fetch(`${BASE_URL}/getitemsorder?spersonId=1`, {
+        headers: { Authorization: `Bearer ${agent1Token}` }
+      });
+      assert.strictEqual(orderRes.status, 200);
+      const orderJson = await orderRes.json();
+      const allShops = [];
+      (orderJson.result?.clusterList || []).forEach((c) => (c.shopsList || []).forEach((s) => allShops.push(s)));
+      assert.ok(!allShops.some((s) => Number(s.shopid) === 101), 'Unassigned shop 101 must not be in /getitemsorder');
+
+      // 3. GET /api/shops/101/order-history - must return 403 Forbidden
+      const histRes = await fetch(`${BASE_URL}/api/shops/101/order-history`, {
+        headers: { Authorization: `Bearer ${agent1Token}` }
+      });
+      assert.strictEqual(histRes.status, 403);
+
+      // 4. POST /createorder for shop 101 - must return 403 Forbidden
+      const createRes = await fetch(`${BASE_URL}/createorder`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${agent1Token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          orderList: [
+            {
+              itemid: 1,
+              itemName: 'Onio Medium',
+              qty: 1,
+              custprice: 50,
+              customerid: 101,
+              clusterid: 1,
+              spersonid: 1,
+              date: '2026-10-30'
+            }
+          ]
+        })
+      });
+      assert.strictEqual(createRes.status, 403);
+    });
+
+    test('Bulk Assignment: POST /api/admin/shops/bulk-assign assigns multiple shops atomically', async () => {
+      // Ensure shops 101 and 102 are initially unassigned
+      await db.query('UPDATE shops SET assigned_agent_id = NULL WHERE shop_id IN (101, 102)');
+
+      const res = await fetch(`${BASE_URL}/api/admin/shops/bulk-assign`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          shopIds: [101, 102],
+          agentId: 1,
+          reason: 'Bulk assignment test'
+        })
+      });
+
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.status, 200);
+      assert.strictEqual(json.count, 2);
+      assert.strictEqual(json.assignedAgentId, 1);
+
+      // Verify in DB
+      const dbRes = await db.query('SELECT shop_id, assigned_agent_id FROM shops WHERE shop_id IN (101, 102)');
+      assert.strictEqual(dbRes.rows.length, 2);
+      for (const r of dbRes.rows) {
+        assert.strictEqual(Number(r.assigned_agent_id), 1);
+      }
+
+      // Verify audit log
+      const auditRes = await db.query(
+        "SELECT action, target_type, target_id FROM audit_logs WHERE action = 'SHOP_BULK_ASSIGNED' ORDER BY id DESC LIMIT 1"
+      );
+      assert.ok(auditRes.rows.length > 0);
+      assert.strictEqual(auditRes.rows[0].target_id, '101,102');
+    });
+
+    test('Bulk Assignment: POST /api/admin/shops/bulk-assign unassigns multiple shops atomically', async () => {
+      const res = await fetch(`${BASE_URL}/api/admin/shops/bulk-assign`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          shopIds: [101, 102],
+          unassign: true,
+          reason: 'Bulk unassignment test'
+        })
+      });
+
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.status, 200);
+      assert.strictEqual(json.count, 2);
+      assert.strictEqual(json.assignedAgentId, null);
+
+      // Verify in DB
+      const dbRes = await db.query('SELECT shop_id, assigned_agent_id FROM shops WHERE shop_id IN (101, 102)');
+      for (const r of dbRes.rows) {
+        assert.strictEqual(r.assigned_agent_id, null);
+      }
+
+      // Verify audit log
+      const auditRes = await db.query(
+        "SELECT action, target_type, target_id FROM audit_logs WHERE action = 'SHOP_BULK_UNASSIGNED' ORDER BY id DESC LIMIT 1"
+      );
+      assert.ok(auditRes.rows.length > 0);
+    });
+
+    test('Bulk Assignment: validates every shop before applying changes (atomic rollback on invalid shop)', async () => {
+      // Ensure shop 101 is unassigned
+      await db.query('UPDATE shops SET assigned_agent_id = NULL WHERE shop_id = 101');
+
+      const res = await fetch(`${BASE_URL}/api/admin/shops/bulk-assign`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          shopIds: [101, 99999], // 99999 does not exist
+          agentId: 1
+        })
+      });
+
+      assert.strictEqual(res.status, 404);
+
+      // Verify shop 101 was NOT changed (remains NULL)
+      const dbRes = await db.query('SELECT assigned_agent_id FROM shops WHERE shop_id = 101');
+      assert.strictEqual(dbRes.rows[0].assigned_agent_id, null);
+    });
+
+    test('Field Sales Agent CANNOT bulk assign shops (HTTP 403 Forbidden)', async () => {
+      const res = await fetch(`${BASE_URL}/api/admin/shops/bulk-assign`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${agent1Token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          shopIds: [101],
+          agentId: 1
+        })
+      });
+      assert.strictEqual(res.status, 403);
+    });
+
+    test('created_by column remains immutable when shop assignments change', async () => {
+      // Fetch initial created_by
+      const initRes = await db.query('SELECT created_by FROM shops WHERE shop_id = 101');
+      const originalCreatedBy = initRes.rows[0].created_by;
+
+      // Assign shop 101 to agent 1
+      await fetch(`${BASE_URL}/api/shops/101/assign`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ agentId: 1 })
+      });
+
+      // Verify created_by has NOT changed
+      const afterAssignRes = await db.query('SELECT created_by, assigned_agent_id FROM shops WHERE shop_id = 101');
+      assert.strictEqual(afterAssignRes.rows[0].created_by, originalCreatedBy);
+      assert.strictEqual(Number(afterAssignRes.rows[0].assigned_agent_id), 1);
+
+      // Unassign shop 101
+      await fetch(`${BASE_URL}/api/shops/101/assign`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ unassign: true })
+      });
+
+      // Verify created_by STILL has NOT changed
+      const afterUnassignRes = await db.query('SELECT created_by, assigned_agent_id FROM shops WHERE shop_id = 101');
+      assert.strictEqual(afterUnassignRes.rows[0].created_by, originalCreatedBy);
+      assert.strictEqual(afterUnassignRes.rows[0].assigned_agent_id, null);
+
+      // Restore shop 101 to agent 1
+      await db.query('UPDATE shops SET assigned_agent_id = 1 WHERE shop_id = 101');
+    });
+
+    test('Historical orders and visits remain immutable when shop assignments change', async () => {
+      // Check existing orders
+      const ordersBefore = await db.query('SELECT order_id, sperson_id FROM orders LIMIT 5');
+
+      // Change assignment of shop 101 to agent 4
+      await fetch(`${BASE_URL}/api/shops/101/assign`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ agentId: 4 })
+      });
+
+      // Verify historical orders were untouched
+      const ordersAfter = await db.query('SELECT order_id, sperson_id FROM orders LIMIT 5');
+      assert.deepStrictEqual(ordersBefore.rows, ordersAfter.rows);
+
+      // Restore shop 101 to agent 1
+      await db.query('UPDATE shops SET assigned_agent_id = 1 WHERE shop_id = 101');
+    });
+  });
 });

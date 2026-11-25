@@ -42,7 +42,15 @@ const INTENDED = {
   'admin PUT /api/admin/permissions': 400,
   // T0.8: new route POST /api/auth/logout-all (any valid session; sign out everywhere)
   'none POST /api/auth/logout-all': 401,
-  ...Object.fromEntries(['customer', 'auditor', 'delivery', 'agent', 'manager', 'admin'].map((who) => [`${who} POST /api/auth/logout-all`, 200]))
+  ...Object.fromEntries(['customer', 'auditor', 'delivery', 'agent', 'manager', 'admin'].map((who) => [`${who} POST /api/auth/logout-all`, 200])),
+  // New route POST /api/admin/shops/bulk-assign (Admin and Manager bulk assign/unassign)
+  'none POST /api/admin/shops/bulk-assign': 401,
+  'customer POST /api/admin/shops/bulk-assign': 403,
+  'auditor POST /api/admin/shops/bulk-assign': 403,
+  'delivery POST /api/admin/shops/bulk-assign': 403,
+  'agent POST /api/admin/shops/bulk-assign': 403,
+  'manager POST /api/admin/shops/bulk-assign': 400,
+  'admin POST /api/admin/shops/bulk-assign': 400
 };
 
 test('every declared route answers as recorded, apart from the intended Stage A changes', async (t) => {

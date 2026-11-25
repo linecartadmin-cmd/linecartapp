@@ -22,6 +22,7 @@ import { useToast, ConfirmDialog, Skeleton, SkeletonGroup } from './ui';
 import AppShell from './shell/AppShell';
 import { visibleNav, pageTitle, roleKeyFor, ROLE_LABELS } from './shell/navConfig';
 import { useAndroidBackButton } from './shell/useAndroidBackButton';
+import ChangePasswordModal from './components/ChangePasswordModal';
 
 // The phone-preview frame is a developer aid; import.meta.env.DEV is false in production builds.
 const DEV_PREVIEW_ENABLED = import.meta.env.DEV;
@@ -305,7 +306,7 @@ export default function App() {
 
   // Load cluster and shops data from backend (skipped for Delivery Agents who use /api/delivery/orders)
   useEffect(() => {
-    if (!user || isDelivery) return;
+    if (!user || isDelivery || user?.mustChangePassword) return;
 
     // 1. Immediately initialize with cached or pilot seed data from local storage
     seedPilotDataIfEmpty(user.id)
@@ -347,7 +348,7 @@ export default function App() {
 
   // Load authoritative orders from backend
   useEffect(() => {
-    if (!user || isDelivery) return;
+    if (!user || isDelivery || user?.mustChangePassword) return;
     api.getOrders().then((res) => {
       if (res && res.status === 200 && Array.isArray(res.orders)) {
         // The server list is authoritative (orders are online-only; there are no local temporary orders)
@@ -736,6 +737,19 @@ export default function App() {
 
   return (
     <>
+      {user?.mustChangePassword && (
+        <ChangePasswordModal
+          user={user}
+          onSuccess={() => {
+            const updated = { ...user, mustChangePassword: false };
+            setUser(updated);
+            try {
+              localStorage.setItem('LineCartPref_user', JSON.stringify(updated));
+            } catch {}
+          }}
+          showToast={showToast}
+        />
+      )}
       {androidPreview ? (
         <div className="lc-devframe-host">
           <span className="lc-devframe-note">Development preview only: simulated phone width, not the native app</span>

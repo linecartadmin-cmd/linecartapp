@@ -90,7 +90,10 @@ export function registerVisitRoutes(app, ctx) {
     return false;
   };
 
-  const shopAssignedAgent = (shop) => Number(shop?.assignedAgentId ?? shop?.assigned_agent_id ?? shop?.createdby ?? 0);
+  const shopAssignedAgent = (shop) => {
+    const aid = shop?.assignedAgentId ?? shop?.assigned_agent_id;
+    return aid !== null && aid !== undefined && !isNaN(Number(aid)) && Number(aid) > 0 ? Number(aid) : null;
+  };
 
   // -------------------------------------------------------------------------
   // Effective settings (any signed-in user; used for on-screen hints)
@@ -511,7 +514,7 @@ export function registerVisitRoutes(app, ctx) {
           address: s.address || '',
           clusterId: Number(s.clusterid || 1),
           assignedAgentId: aid,
-          assignedAgentName: usersById.get(aid)?.name || `Agent #${aid}`,
+          assignedAgentName: aid ? (usersById.get(aid)?.name || `Agent #${aid}`) : 'Unassigned',
           latitude: Number(s.latitude || 0),
           longitude: Number(s.longitude || 0),
           locationRegistered: registered

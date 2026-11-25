@@ -323,16 +323,39 @@ export const api = {
     }
   },
 
-  // 4c. PUT /api/shops/:shopId/assign (Assign shop to Field Sales Agent - Admin & Sales Manager)
-  async assignShopAgent(shopId, agentId) {
+  // 4c. PUT /api/shops/:shopId/assign (Assign, reassign or unassign shop - Admin & Sales Manager)
+  async assignShopAgent(shopId, agentId, reason = '') {
     try {
+      const isUnassign = agentId === null || agentId === 'unassign' || agentId === 0;
       const res = await fetch(`${BASE_URL}/api/shops/${encodeURIComponent(shopId)}/assign`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...getAuthHeaders()
         },
-        body: JSON.stringify({ agentId })
+        body: JSON.stringify(isUnassign ? { unassign: true, reason } : { agentId: Number(agentId), reason })
+      });
+      return await res.json();
+    } catch (err) {
+      return { status: 500, message: err.message };
+    }
+  },
+
+  // 4d. POST /api/admin/shops/bulk-assign (Bulk assign, reassign or unassign shops)
+  async bulkAssignShops(shopIds, agentId, reason = '') {
+    try {
+      const isUnassign = agentId === null || agentId === 'unassign' || agentId === 0;
+      const res = await fetch(`${BASE_URL}/api/admin/shops/bulk-assign`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify(
+          isUnassign
+            ? { shopIds, unassign: true, reason }
+            : { shopIds, agentId: Number(agentId), reason }
+        )
       });
       return await res.json();
     } catch (err) {

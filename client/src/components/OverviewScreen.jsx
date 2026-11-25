@@ -29,20 +29,20 @@ export default function OverviewScreen({
       .join('')
       .toUpperCase();
 
-  // 1. Scoped Shops: Only shops assigned to the logged-in agent
+  // 1. Scoped Shops: Strictly shops assigned to the logged-in agent (for Field Sales Agents)
   const assignedShops = useMemo(() => {
     if (!shops || shops.length === 0) return [];
-    if (!user?.id) return shops;
+    const isAgent = (user?.role || '').toLowerCase() === 'field sales agent';
+    if (!isAgent) return shops;
+    if (!user?.id) return [];
     const uid = Number(user.id);
-    const hasAssignedProp = shops.some((s) => s.assignedAgentId !== undefined && s.assignedAgentId !== null);
-    if (hasAssignedProp) {
-      return shops.filter((s) => {
-        const agId = Number(s.assignedAgentId ?? s.assigned_agent_id ?? s.createdby ?? s.created_by);
-        return agId === uid;
-      });
-    }
-    return shops;
-  }, [shops, user?.id]);
+    return shops.filter((s) => {
+      const rawAid = s.assignedAgentId !== undefined && s.assignedAgentId !== null
+        ? s.assignedAgentId
+        : (s.assigned_agent_id !== undefined && s.assigned_agent_id !== null ? s.assigned_agent_id : null);
+      return rawAid !== null && !isNaN(Number(rawAid)) && Number(rawAid) > 0 && Number(rawAid) === uid;
+    });
+  }, [shops, user?.id, user?.role]);
 
   // 2. Filtered Shops based on selectedShopId
   const displayedShops = useMemo(() => {

@@ -28,6 +28,11 @@ export default function CustomersScreen({
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [selectedClusterFilter, setSelectedClusterFilter] = useState('all');
+  const [salespersonFilter, setSalespersonFilter] = useState('all');
+  const [assignmentStatusFilter, setAssignmentStatusFilter] = useState('all');
+  const [selectedShopIds, setSelectedShopIds] = useState([]);
+  const [bulkActionAgentId, setBulkActionAgentId] = useState('');
+  const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 12;
 
@@ -66,22 +71,80 @@ export default function CustomersScreen({
   }, [canAssign, isAdmin, isManager, user?.id]);
 
   const handleAssignAgent = async (shopId, agentId) => {
-    if (!canAssign || !agentId) return;
+    if (!canAssign) return;
+    const isUnassign = agentId === '' || agentId === 'unassign' || agentId === null;
     setAssigningShopId(shopId);
     try {
-      const res = await api.assignShopAgent(shopId, Number(agentId));
+      const res = await api.assignShopAgent(shopId, isUnassign ? null : Number(agentId));
       if (res && (res.status === 200 || res.status === 1)) {
-        showToast(res.message || 'Shop assigned successfully!');
+        showToast(res.message || (isUnassign ? 'Shop unassigned successfully!' : 'Shop assigned successfully!'));
         setLocalShops((prev) =>
-          prev.map((s) => (Number(s.shopid) === Number(shopId) ? { ...s, assignedAgentId: Number(agentId) } : s))
+          prev.map((s) => (Number(s.shopid) === Number(shopId) ? {
+            ...s,
+            assignedAgentId: isUnassign ? null : Number(agentId),
+            assigned_agent_id: isUnassign ? null : Number(agentId),
+            assignedAgentName: isUnassign ? 'Unassigned' : (assignableAgents.find(a => Number(a.id) === Number(agentId))?.name || `Agent #${agentId}`)
+          } : s))
         );
       } else {
-        showToast(res?.message || 'Failed to assign shop.');
+        showToast(res?.message || 'Failed to update shop assignment.');
       }
     } catch {
       showToast('Error connecting to assignment service.');
     } finally {
       setAssigningShopId(null);
+    }
+  };
+
+  const handleBulkAssign = async () => {
+    if (!canAssign || selectedShopIds.length === 0 || !bulkActionAgentId) return;
+    const isUnassign = bulkActionAgentId === 'unassign';
+    setIsBulkSubmitting(true);
+    try {
+      const res = await api.bulkAssignShops(
+        selectedShopIds,
+        isUnassign ? null : Number(bulkActionAgentId),
+        isUnassign ? 'Admin bulk unassignment' : 'Admin bulk assignment'
+      );
+      if (res && (res.status === 200 || res.status === 1)) {
+        showToast(res.message || 'Bulk assignment completed successfully!');
+        const newAid = isUnassign ? null : Number(bulkActionAgentId);
+        const newName = isUnassign ? 'Unassigned' : (assignableAgents.find(a => Number(a.id) === Number(bulkActionAgentId))?.name || `Agent #${bulkActionAgentId}`);
+        const updatedIds = new Set(selectedShopIds.map(Number));
+        setLocalShops((prev) =>
+          prev.map((s) => (updatedIds.has(Number(s.shopid)) ? {
+            ...s,
+            assignedAgentId: newAid,
+            assigned_agent_id: newAid,
+            assignedAgentName: newName
+          } : s))
+        );
+        setSelectedShopIds([]);
+        setBulkActionAgentId('');
+      } else {
+        showToast(res?.message || 'Failed to complete bulk assignment.');
+      }
+    } catch {
+      showToast('Error connecting to bulk assignment service.');
+    } finally {
+      setIsBulkSubmitting(false);
+    }
+  };
+
+  const handleToggleSelectShop = (shopId) => {
+    const sid = Number(shopId);
+    setSelectedShopIds((prev) =>
+      prev.includes(sid) ? prev.filter((id) => id !== sid) : [...prev, sid]
+    );
+  };
+
+  const handleSelectAllCurrentShops = () => {
+    const pageShopIds = paginatedShops.map((s) => Number(s.shopid));
+    const allSelected = pageShopIds.length > 0 && pageShopIds.every((id) => selectedShopIds.includes(id));
+    if (allSelected) {
+      setSelectedShopIds((prev) => prev.filter((id) => !pageShopIds.includes(id)));
+    } else {
+      setSelectedShopIds((prev) => Array.from(new Set([...prev, ...pageShopIds])));
     }
   };
 
@@ -336,14 +399,17 @@ export default function CustomersScreen({
     }
   };
 
-  // Strictly restrict shop visibility to the agent's assigned shops
+  // Strictly restrict shop visibility to the agent's assigned shops (no fallback to true)
   const visibleShops = isAgent
     ? localShops.filter((s) => {
-        const aid = s.assignedAgentId ?? s.assigned_agent_id;
-        if (aid !== undefined && aid !== null && user?.id !== undefined && user?.id !== null) {
-          return Number(aid) === Number(user.id);
+        const rawAid = s.assignedAgentId !== undefined && s.assignedAgentId !== null
+          ? s.assignedAgentId
+          : (s.assigned_agent_id !== undefined && s.assigned_agent_id !== null ? s.assigned_agent_id : null);
+        const aid = rawAid !== null && !isNaN(Number(rawAid)) && Number(rawAid) > 0 ? Number(rawAid) : null;
+        if (aid !== null && user?.id !== undefined && user?.id !== null) {
+          return aid === Number(user.id);
         }
-        return true;
+        return false;
       })
     : localShops;
 
@@ -411,6 +477,18 @@ export default function CustomersScreen({
       return false;
     }
     if (categoryFilter !== 'All' && (s.shopCategory || 'Retail').toLowerCase() !== categoryFilter.toLowerCase()) return false;
+    if (canAssign) {
+      const rawAid = s.assignedAgentId !== undefined && s.assignedAgentId !== null
+        ? s.assignedAgentId
+        : (s.assigned_agent_id !== undefined && s.assigned_agent_id !== null ? s.assigned_agent_id : null);
+      const aid = rawAid !== null && !isNaN(Number(rawAid)) && Number(rawAid) > 0 ? Number(rawAid) : null;
+
+      if (assignmentStatusFilter === 'assigned' && aid === null) return false;
+      if (assignmentStatusFilter === 'unassigned' && aid !== null) return false;
+
+      if (salespersonFilter === 'unassigned' && aid !== null) return false;
+      if (salespersonFilter !== 'all' && salespersonFilter !== 'unassigned' && aid !== Number(salespersonFilter)) return false;
+    }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       const match =
@@ -505,6 +583,87 @@ export default function CustomersScreen({
               </span>
             </div>
 
+            {canAssign && (
+              <div className="shops-admin-filters-row flex items-center justify-between gap-3 flex-wrap pt-2 border-t border-slate-100">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="shops-salesperson-filter flex items-center gap-2">
+                    <label htmlFor="shopsSalespersonSelect" className="text-xs font-semibold text-slate-500 whitespace-nowrap">
+                      SALESPERSON:
+                    </label>
+                    <select
+                      id="shopsSalespersonSelect"
+                      className="select text-xs py-1 px-2 border border-slate-200 rounded-lg"
+                      value={salespersonFilter}
+                      onChange={(e) => {
+                        setSalespersonFilter(e.target.value);
+                        setCurrentPage(1);
+                      }}
+                    >
+                      <option value="all">All Salespeople</option>
+                      <option value="unassigned">Unassigned Shops Only</option>
+                      {assignableAgents.map((ag) => {
+                        const count = localShops.filter(
+                          (s) => Number(s.assignedAgentId ?? s.assigned_agent_id) === Number(ag.id)
+                        ).length;
+                        return (
+                          <option key={ag.id} value={String(ag.id)}>
+                            {ag.name} ({count} shops)
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div className="shops-status-pills flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                    {[
+                      { id: 'all', label: 'All Status' },
+                      { id: 'assigned', label: 'Assigned' },
+                      { id: 'unassigned', label: 'Unassigned' }
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          assignmentStatusFilter === tab.id
+                            ? 'bg-white text-emerald-700 shadow-sm font-semibold'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                        onClick={() => {
+                          setAssignmentStatusFilter(tab.id);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {paginatedShops.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-xs px-3 py-1 border border-slate-200 rounded-lg bg-white text-slate-700 hover:bg-slate-50 font-medium transition-colors"
+                      onClick={handleSelectAllCurrentShops}
+                    >
+                      {paginatedShops.every((s) => selectedShopIds.includes(Number(s.shopid)))
+                        ? 'Deselect Page'
+                        : `Select Page (${paginatedShops.length})`}
+                    </button>
+                    {selectedShopIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="text-xs text-rose-600 hover:underline font-medium"
+                        onClick={() => setSelectedShopIds([])}
+                      >
+                        Clear Selection ({selectedShopIds.length})
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="shops-tabs-wrap">
               <div className="tabs shops-tabs">
                 {['All', ...SHOP_CATEGORIES].map((cat) => (
@@ -542,8 +701,17 @@ export default function CustomersScreen({
                 {paginatedShops.map((c) => (
                   <article key={c.shopid} className="customer-card">
                     <div className="customer-card-top">
+                      {canAssign && (
+                        <input
+                          type="checkbox"
+                          className="mr-2 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          checked={selectedShopIds.includes(Number(c.shopid))}
+                          onChange={() => handleToggleSelectShop(c.shopid)}
+                          aria-label={`Select ${c.shopName}`}
+                        />
+                      )}
                       <span className="customer-dot">{initials(c.shopName)}</span>
-                      <div>
+                      <div className="flex-1">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <h3>{c.shopName}</h3>
                           <span className="shop-code-pill">{formatShopId(c.shopid)}</span>
@@ -600,6 +768,7 @@ export default function CustomersScreen({
                           onChange={(e) => handleAssignAgent(c.shopid, e.target.value)}
                         >
                           <option value="">Choose Agent</option>
+                          <option value="unassign">-- Unassign (Remove) --</option>
                           {assignableAgents.map((ag) => (
                             <option key={ag.id} value={ag.id}>
                               {ag.name} ({ag.employeeId || `ID: ${ag.id}`})
@@ -672,6 +841,53 @@ export default function CustomersScreen({
                   </button>
                 </div>
               </div>
+
+              {/* Floating Bulk Action Bar */}
+              {canAssign && selectedShopIds.length > 0 && (
+                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-4 flex-wrap max-w-xl w-[90%] justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-emerald-500 text-slate-950 text-xs font-bold px-2 py-0.5 rounded-full">
+                      {selectedShopIds.length}
+                    </span>
+                    <span className="text-sm font-semibold">
+                      {selectedShopIds.length === 1 ? 'shop selected' : 'shops selected'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-1 justify-end">
+                    <select
+                      className="text-xs bg-slate-800 text-white border border-slate-600 rounded-lg py-1.5 px-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      value={bulkActionAgentId}
+                      onChange={(e) => setBulkActionAgentId(e.target.value)}
+                    >
+                      <option value="">Select Action / Agent</option>
+                      <option value="unassign">-- Bulk Unassign --</option>
+                      {assignableAgents.map((ag) => (
+                        <option key={ag.id} value={ag.id}>
+                          Assign to {ag.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      disabled={!bulkActionAgentId || isBulkSubmitting}
+                      className="text-xs bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                      onClick={handleBulkAssign}
+                    >
+                      {isBulkSubmitting ? 'Applying...' : 'Apply'}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="text-xs text-slate-400 hover:text-white px-2 py-1.5 cursor-pointer"
+                      onClick={() => setSelectedShopIds([])}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

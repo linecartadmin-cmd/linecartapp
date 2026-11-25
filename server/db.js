@@ -693,12 +693,8 @@ export async function runMigrationsAndSeed({
     console.warn('[DB Migration] Could not backfill expected_delivery_date:', expErr.message);
   }
 
-  // Preserve existing data: safely backfill assigned_agent_id from created_by for any unassigned shops
-  try {
-    await db.query('UPDATE shops SET assigned_agent_id = created_by WHERE assigned_agent_id IS NULL AND created_by IS NOT NULL');
-  } catch (initErr) {
-    console.warn('[DB Migration] Could not initialize assigned_agent_id default:', initErr.message);
-  }
+  // Historical creator preservation: created_by is immutable historical metadata.
+  // Never backfill assigned_agent_id from created_by; shops remain explicitly unassigned (NULL) unless assigned.
 
   // Load legacy admin_config.json if present for one-time repeatable migration
   let legacyConfig = {};
@@ -939,9 +935,14 @@ export async function runMigrationsAndSeed({
     const shouldSeedShops = Number(existingShopsCountRes.rows[0]?.cnt || 0) === 0 && !isCloudOrPostgres;
     if (shouldSeedShops) {
       for (const s of seedData.shops || []) {
+        const seedAssignedId = s.assignedAgentId !== undefined && s.assignedAgentId !== null
+          ? Number(s.assignedAgentId)
+          : (s.assigned_agent_id !== undefined && s.assigned_agent_id !== null
+            ? Number(s.assigned_agent_id)
+            : null);
         await tx.query(
-          `INSERT INTO shops (shop_id, cluster_id, shop_name, shop_category, owner_name, contact1, contact2, latitude, longitude, address, pincode, payment_mode, created_by, photo, active, created_on, survey_json)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          `INSERT INTO shops (shop_id, cluster_id, shop_name, shop_category, owner_name, contact1, contact2, latitude, longitude, address, pincode, payment_mode, created_by, assigned_agent_id, photo, active, created_on, survey_json)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
            ON CONFLICT (shop_id) DO NOTHING`,
           [
             Number(s.shopid),
@@ -957,6 +958,7 @@ export async function runMigrationsAndSeed({
             String(s.pincode || ''),
             Number(s.paymentmode || 0),
             Number(s.createdby || 6),
+            seedAssignedId,
             String(s.photo || 'no_image.jpg'),
             s.active !== undefined ? Number(s.active) : 1,
             String(s.createdon || '2026-04-01 10:00:00'),
@@ -1188,10 +1190,10 @@ export async function loadDatabaseState(defaultRolePermissions = {}) {
       createdby: Number(r.created_by || 6),
       assignedAgentId: r.assigned_agent_id !== null && r.assigned_agent_id !== undefined
         ? Number(r.assigned_agent_id)
-        : (r.created_by ? Number(r.created_by) : null),
+        : null,
       assigned_agent_id: r.assigned_agent_id !== null && r.assigned_agent_id !== undefined
         ? Number(r.assigned_agent_id)
-        : (r.created_by ? Number(r.created_by) : null),
+        : null,
       photo: r.photo || 'no_image.jpg',
       active: Number(r.active ?? 1),
       createdon: r.created_on || '2026-04-01 10:00:00',

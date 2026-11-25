@@ -76,7 +76,13 @@ export default function OrderEntryScreen({
   const agentAssignedShops = isAgent && user?.id
     ? shops.filter((s) => {
         const assignedId = s.assignedAgentId ?? s.assigned_agent_id ?? s.salesExecId ?? s.salesexecid;
-        return assignedId === undefined || assignedId === null || Number(assignedId) === Number(user.id);
+        return (
+          assignedId !== undefined &&
+          assignedId !== null &&
+          !isNaN(Number(assignedId)) &&
+          Number(assignedId) > 0 &&
+          Number(assignedId) === Number(user.id)
+        );
       })
     : shops;
 

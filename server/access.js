@@ -86,6 +86,7 @@ export const ROUTE_DECLARATIONS = Object.freeze({
   'PUT /api/shops/:shopId/assign': STAFF,
   'POST /api/shops/:shopId/assign-agent': STAFF,
   'POST /api/admin/shops/:shopId/assign': STAFF,
+  'POST /api/admin/shops/bulk-assign': STAFF,
   'GET /api/shops': STAFF,
   'GET /api/role-permissions': STAFF,
   'GET /api/admin/dashboard': STAFF,
@@ -159,6 +160,13 @@ function makeGate(audience, getCaller, authFailureCode) {
     const caller = getCaller(req);
     if (!caller) {
       return res.status(401).json({ status: 401, code: authFailureCode(req), message: AUTH_MESSAGE });
+    }
+    if (caller.mustChangePassword && req.path !== '/api/auth/change-password' && req.path !== '/api/auth/me') {
+      return res.status(403).json({
+        status: 403,
+        code: 'PASSWORD_CHANGE_REQUIRED',
+        message: 'Password change required: You must change your temporary password before accessing business operations.'
+      });
     }
     if (audience === SELF) return next();
     const role = canonicalRole(caller.role);
