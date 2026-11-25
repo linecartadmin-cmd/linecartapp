@@ -727,6 +727,120 @@ async function main() {
     'X-Session-Token': token
   };
 
+  // [1.5/5] Verify and provision Field Sales Agent accounts for Selvavignesh P & Jagadeesh
+  console.log('\n[1.5/5] Verifying Field Sales Agent accounts on production...');
+  const usersRes = await fetchWithTimeout(`${baseUrl}/api/admin/users`, { headers }, 15000);
+  if (!usersRes.ok) {
+    console.error(`Failed to fetch admin users: HTTP ${usersRes.status}`);
+    if (releaseLock) releaseLock();
+    process.exit(1);
+  }
+  const usersList = await usersRes.json();
+  const remoteUsers = Array.isArray(usersList) ? usersList : (usersList.users || usersList.result || []);
+  console.log(`✓ Retrieved ${remoteUsers.length} users from production.`);
+
+  // Check Selvavignesh P (phone: 6381568077)
+  let selvaUser = remoteUsers.find((u) => u.phone === '6381568077');
+  // Check Jagadeesh (phone: 9597779893)
+  let jagaUser = remoteUsers.find((u) => u.phone === '9597779893');
+
+  const generatedCredentials = [];
+
+  if (!selvaUser) {
+    console.log('Creating account for Selvavignesh P (phone: 6381568077)...');
+    // Generate 128-bit cryptographic temporary password
+    const tempPassword = 'Lc#' + crypto.randomBytes(16).toString('base64url') + '!9';
+    const createRes = await fetchWithTimeout(`${baseUrl}/api/admin/users`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Selvavignesh P',
+        phone: '6381568077',
+        role: 'Field Sales Agent',
+        clusterid: 1,
+        password: tempPassword,
+        mustChangePassword: true
+      })
+    }, 15000);
+    const createBody = await createRes.json().catch(() => null);
+    if (!createRes.ok || !createBody?.user) {
+      console.error(`🚨 ACCOUNT CREATION FAILED for Selvavignesh P: HTTP ${createRes.status}`, createBody);
+      if (releaseLock) releaseLock();
+      process.exit(1);
+    }
+    selvaUser = createBody.user;
+    generatedCredentials.push({
+      name: 'Selvavignesh P',
+      phone: '6381568077',
+      role: 'Field Sales Agent',
+      id: selvaUser.id,
+      tempPassword
+    });
+    console.log(`✓ Created Selvavignesh P (#${selvaUser.id})`);
+  } else {
+    console.log(`✓ Selvavignesh P account already exists (#${selvaUser.id})`);
+  }
+
+  if (!jagaUser) {
+    console.log('Creating account for Jagadeesh (phone: 9597779893)...');
+    // Generate 128-bit cryptographic temporary password
+    const tempPassword = 'Lc#' + crypto.randomBytes(16).toString('base64url') + '!9';
+    const createRes = await fetchWithTimeout(`${baseUrl}/api/admin/users`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Jagadeesh',
+        phone: '9597779893',
+        role: 'Field Sales Agent',
+        clusterid: 1,
+        password: tempPassword,
+        mustChangePassword: true
+      })
+    }, 15000);
+    const createBody = await createRes.json().catch(() => null);
+    if (!createRes.ok || !createBody?.user) {
+      console.error(`🚨 ACCOUNT CREATION FAILED for Jagadeesh: HTTP ${createRes.status}`, createBody);
+      if (releaseLock) releaseLock();
+      process.exit(1);
+    }
+    jagaUser = createBody.user;
+    generatedCredentials.push({
+      name: 'Jagadeesh',
+      phone: '9597779893',
+      role: 'Field Sales Agent',
+      id: jagaUser.id,
+      tempPassword
+    });
+    console.log(`✓ Created Jagadeesh (#${jagaUser.id})`);
+  } else {
+    console.log(`✓ Jagadeesh account already exists (#${jagaUser.id})`);
+  }
+
+  if (generatedCredentials.length > 0) {
+    console.log('\n========================================================================');
+    console.log('PROVISIONED FIELD SALES AGENT TEMPORARY CREDENTIALS (RETAIN SAFELY)');
+    console.log('These temporary credentials must be shared once directly with each agent.');
+    console.log('Backend and frontend enforce mandatory password change on first login.');
+    console.log('========================================================================');
+    for (const cred of generatedCredentials) {
+      console.log(`• Agent #${cred.id}: ${cred.name} (Phone: ${cred.phone})`);
+      console.log(`  Temporary Password: ${cred.tempPassword}`);
+    }
+    console.log('========================================================================\n');
+  }
+
+  // Dynamically bind the resolved IDs to the assignments map
+  const activeAssignments = { ...ASSIGNMENTS_BY_AGENT };
+  const selvaId = Number(selvaUser.id);
+  const jagaId = Number(jagaUser.id);
+  if (selvaId !== 911 || jagaId !== 912) {
+    console.log(`ℹ️  Dynamically mapping resolved IDs: Selvavignesh P -> #${selvaId}, Jagadeesh -> #${jagaId}`);
+    delete activeAssignments[911];
+    delete activeAssignments[912];
+    activeAssignments[selvaId] = ASSIGNMENTS_BY_AGENT[911];
+    activeAssignments[jagaId] = ASSIGNMENTS_BY_AGENT[912];
+  }
+
   // [2/5] Read live inventory and verify preflight baseline
   console.log('\n[2/5] Fetching live production inventory and verifying preflight conditions...');
   const shopsRes = await fetchWithTimeout(`${baseUrl}/api/shops`, { headers }, 15000);
@@ -750,7 +864,7 @@ async function main() {
     shopMap.set(Number(s.shopid), s);
   }
 
-  // Preflight check: All 233 target shops must exist AND their pre-execution assigned_agent_id
+  // Preflight check: All target shops must exist AND their pre-execution assigned_agent_id
   // must match their exact authoritative legacy created_by value (from the startup backfill) or NULL.
   const unexpectedPreflightShops = [];
   const allApprovedTargetShopIds = new Set();
@@ -760,7 +874,7 @@ async function main() {
     matchingNull: 0
   };
 
-  for (const [aid, info] of Object.entries(ASSIGNMENTS_BY_AGENT)) {
+  for (const [aid, info] of Object.entries(activeAssignments)) {
     for (const sid of info.shops) {
       allApprovedTargetShopIds.add(sid);
       const s = shopMap.get(sid);
@@ -893,7 +1007,7 @@ async function main() {
     let skippedCount = 0;
     let successCount = 0;
 
-    for (const [agentIdStr, info] of Object.entries(ASSIGNMENTS_BY_AGENT)) {
+    for (const [agentIdStr, info] of Object.entries(activeAssignments)) {
       const targetAgentId = Number(agentIdStr);
       console.log(`\nAssigning ${info.shops.length} shops to Agent #${targetAgentId} (${info.name})...`);
 
@@ -905,14 +1019,14 @@ async function main() {
 
         // Idempotency check: Skip if already assigned to the target agent
         if (Number(currentAssignedId) === targetAgentId) {
-          console.log(`[${processedCount}/233] Shop #${shopId} already assigned to Agent #${targetAgentId}. [SKIPPED]`);
+          console.log(`[${processedCount}/${allApprovedTargetShopIds.size}] Shop #${shopId} already assigned to Agent #${targetAgentId}. [SKIPPED]`);
           journal.skippedShops.push({ shopId, agentId: targetAgentId, reason: 'ALREADY_ASSIGNED' });
           atomicWriteJson(journalFileName, journal);
           skippedCount++;
           continue;
         }
 
-        process.stdout.write(`[${processedCount}/233] Shop #${shopId} -> Agent #${targetAgentId} (${info.name})... `);
+        process.stdout.write(`[${processedCount}/${allApprovedTargetShopIds.size}] Shop #${shopId} -> Agent #${targetAgentId} (${info.name})... `);
 
         let callSucceeded = false;
         let uncertainOutcome = false;
@@ -1042,7 +1156,7 @@ async function main() {
   console.log('Agent ID | Agent Name           | Expected | Actual | Status');
   console.log('---------+----------------------+----------+--------+-------');
   let allVerified = true;
-  for (const [aid, info] of Object.entries(ASSIGNMENTS_BY_AGENT)) {
+  for (const [aid, info] of Object.entries(activeAssignments)) {
     const actual = actualCounts[aid] || 0;
     const match = actual === info.expectedCount;
     if (!match) allVerified = false;
@@ -1050,9 +1164,9 @@ async function main() {
   }
 
   console.log('---------+----------------------+----------+--------+-------');
-  const expectedAssignedTotal = Object.values(ASSIGNMENTS_BY_AGENT).reduce((sum, a) => sum + a.shops.length, 0);
+  const expectedAssignedTotal = Object.values(activeAssignments).reduce((sum, a) => sum + a.shops.length, 0);
   const expectedUnassignedTotal = UNASSIGNED_SHOPS.productionGaps.length;
-  const totalAssignedActual = Object.keys(ASSIGNMENTS_BY_AGENT).reduce((sum, aid) => sum + (actualCounts[aid] || 0), 0);
+  const totalAssignedActual = Object.keys(activeAssignments).reduce((sum, aid) => sum + (actualCounts[aid] || 0), 0);
   const actualUnassigned = allPostShops.length - totalAssignedActual;
   console.log(`Total Assigned:   Expected: ${expectedAssignedTotal} | Actual: ${totalAssignedActual} | ${totalAssignedActual === expectedAssignedTotal ? '✓ PASS' : '✗ MISMATCH'}`);
   console.log(`Total Unassigned: Expected: ${expectedUnassignedTotal}   | Actual: ${actualUnassigned} | ${actualUnassigned === expectedUnassignedTotal ? '✓ PASS' : '✗ MISMATCH'}`);
@@ -1070,7 +1184,7 @@ async function main() {
 
       // Match each of the assigned shops against audit entries
       const missingAuditShops = [];
-      for (const [aid, info] of Object.entries(ASSIGNMENTS_BY_AGENT)) {
+      for (const [aid, info] of Object.entries(activeAssignments)) {
         for (const sid of info.shops) {
           const matchingEntry = logs.find((l) =>
             l.action === 'SHOP_ASSIGNED' &&
