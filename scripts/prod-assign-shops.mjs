@@ -138,6 +138,32 @@ export const EXPECTED_PREFLIGHT_LEGACY_CREATED_BY = Object.freeze({
   340:11, 341:10, 342:10, 343:10, 344:10, 345:6, 346:9, 347:7, 348:7, 349:7
 });
 
+// Verified historical/staging assigned_agent_id values for 7 shops that were tested in staging prior to rollout
+export const KNOWN_PRIOR_STAGING_ASSIGNMENTS = Object.freeze({
+  33: 903,
+  34: 903,
+  36: 903,
+  37: 903,
+  38: 903,
+  39: 903,
+  101: 1
+});
+
+/**
+ * Validates whether a shop's pre-execution assigned_agent_id matches the accepted baseline:
+ * 1. NULL (genuinely unassigned)
+ * 2. Exact authoritative legacy created_by (startup backfill)
+ * 3. Exact verified prior staging assignment (for the 7 shops tested in staging: 33, 34, 36, 37, 38, 39 -> 903; 101 -> 1)
+ */
+export function isAcceptablePreflightState(shopId, currentAid) {
+  if (currentAid === null || currentAid === undefined) return true;
+  const legacyCb = EXPECTED_PREFLIGHT_LEGACY_CREATED_BY[shopId];
+  if (legacyCb !== undefined && currentAid === legacyCb) return true;
+  const stagingPrior = KNOWN_PRIOR_STAGING_ASSIGNMENTS[shopId];
+  if (stagingPrior !== undefined && currentAid === stagingPrior) return true;
+  return false;
+}
+
 // Canonical cryptographic hash of the approved 310-assignment plan
 export function computeMappingHash() {
   const sortedPairs = [];
@@ -865,12 +891,14 @@ async function main() {
   }
 
   // Preflight check: All target shops must exist AND their pre-execution assigned_agent_id
-  // must match their exact authoritative legacy created_by value (from the startup backfill) or NULL.
+  // must match their exact authoritative legacy created_by value (from the startup backfill),
+  // verified staging prior assignment, or NULL.
   const unexpectedPreflightShops = [];
   const allApprovedTargetShopIds = new Set();
   const preflightStateSummary = {
     totalAssignedShopsChecked: 0,
     matchingLegacyCreatedBy: 0,
+    matchingKnownStagingPrior: 0,
     matchingNull: 0
   };
 
@@ -886,17 +914,21 @@ async function main() {
       const existingAid = s.assignedAgentId ?? s.assigned_agent_id ?? null;
       const currentAid = existingAid !== null && existingAid !== undefined ? Number(existingAid) : null;
       const expectedLegacyCb = EXPECTED_PREFLIGHT_LEGACY_CREATED_BY[sid];
+      const knownStagingPrior = KNOWN_PRIOR_STAGING_ASSIGNMENTS[sid];
 
       preflightStateSummary.totalAssignedShopsChecked++;
       if (currentAid === null) {
         preflightStateSummary.matchingNull++;
       } else if (currentAid === expectedLegacyCb) {
         preflightStateSummary.matchingLegacyCreatedBy++;
+      } else if (knownStagingPrior !== undefined && currentAid === knownStagingPrior) {
+        preflightStateSummary.matchingKnownStagingPrior++;
       } else {
         unexpectedPreflightShops.push({
           shopId: sid,
           currentAssignedAgentId: currentAid,
           expectedLegacyCreatedBy: expectedLegacyCb,
+          knownStagingPrior,
           intendedAgentId: aid
         });
       }
@@ -906,16 +938,16 @@ async function main() {
   if (unexpectedPreflightShops.length > 0) {
     console.error(`\n🚨 UNEXPECTED PRE-EXECUTION STATE: Found ${unexpectedPreflightShops.length} shops with unexpected assigned_agent_id:`);
     for (const item of unexpectedPreflightShops.slice(0, 10)) {
-      console.error(`  - Shop #${item.shopId}: current assigned_agent_id = ${item.currentAssignedAgentId} (expected legacy created_by: ${item.expectedLegacyCreatedBy} or NULL; intended FSA: #${item.intendedAgentId})`);
+      console.error(`  - Shop #${item.shopId}: current assigned_agent_id = ${item.currentAssignedAgentId} (expected legacy created_by: ${item.expectedLegacyCreatedBy}, prior staging: ${item.knownStagingPrior ?? 'N/A'}, or NULL; intended FSA: #${item.intendedAgentId})`);
     }
     if (unexpectedPreflightShops.length > 10) console.error(`  ... and ${unexpectedPreflightShops.length - 10} more.`);
-    console.error('All shops were required to be either NULL or their exact legacy created_by prior to assignment. Execution refused to prevent state corruption.');
+    console.error('All shops were required to match the verified baseline prior to assignment. Execution refused to prevent state corruption.');
     if (releaseLock) releaseLock();
     process.exit(1);
   }
 
   console.log(`✓ Inventory baseline verified: All 317 shops present.`);
-  console.log(`  - ${allApprovedTargetShopIds.size} targets validated: ${preflightStateSummary.matchingLegacyCreatedBy} matching verified legacy created_by, ${preflightStateSummary.matchingNull} unassigned (NULL).`);
+  console.log(`  - ${allApprovedTargetShopIds.size} targets validated: ${preflightStateSummary.matchingLegacyCreatedBy} matching verified legacy created_by, ${preflightStateSummary.matchingKnownStagingPrior} matching verified staging prior, ${preflightStateSummary.matchingNull} unassigned (NULL).`);
 
   // Persist pre-execution snapshot and re-parse to verify disk content
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -966,9 +998,10 @@ async function main() {
       process.exit(1);
     }
     const psAid = ps.assignedAgentId !== null && ps.assignedAgentId !== undefined ? Number(ps.assignedAgentId) : null;
-    const expectedLegacyCb = EXPECTED_PREFLIGHT_LEGACY_CREATED_BY[sid];
-    if (psAid !== null && psAid !== expectedLegacyCb) {
-      console.error(`🚨 SNAPSHOT STATE ERROR: Shop #${sid} in snapshot has unexpected assignedAgentId = ${psAid} (expected legacy created_by: ${expectedLegacyCb} or NULL).`);
+    if (!isAcceptablePreflightState(sid, psAid)) {
+      const expectedLegacyCb = EXPECTED_PREFLIGHT_LEGACY_CREATED_BY[sid];
+      const knownStagingPrior = KNOWN_PRIOR_STAGING_ASSIGNMENTS[sid];
+      console.error(`🚨 SNAPSHOT STATE ERROR: Shop #${sid} in snapshot has unexpected assignedAgentId = ${psAid} (expected legacy created_by: ${expectedLegacyCb}, prior staging: ${knownStagingPrior ?? 'N/A'}, or NULL).`);
       if (releaseLock) releaseLock();
       process.exit(1);
     }

@@ -10,7 +10,9 @@ import {
   atomicWriteJson,
   computeMappingHash,
   APPROVED_MAPPING_SHA256,
-  ASSIGNMENTS_BY_AGENT
+  ASSIGNMENTS_BY_AGENT,
+  KNOWN_PRIOR_STAGING_ASSIGNMENTS,
+  isAcceptablePreflightState
 } from '../scripts/prod-assign-shops.mjs';
 
 function createIsolatedTestDb() {
@@ -300,5 +302,59 @@ test('Recovery SQL Safety, Concurrency & Isolation Tests', async (t) => {
     assert.equal(r40.assigned_agent_id, 4, 'Shop 40 must be restored to exact previous integer 4');
     assert.equal(r74.assigned_agent_id, 13, 'Shop 74 must be restored to exact previous integer 13');
     assert.equal(r103.assigned_agent_id, null, 'Shop 103 must be restored to NULL');
+  });
+
+  // 8. Preflight State Validation Tests
+  await t.test('10. Preflight state validation: accepts NULL, legacy created_by, and verified staging priors; rejects unexpected IDs', () => {
+    // NULL is always acceptable
+    assert.equal(isAcceptablePreflightState(40, null), true);
+    assert.equal(isAcceptablePreflightState(34, null), true);
+
+    // Exact legacy created_by is acceptable
+    assert.equal(isAcceptablePreflightState(40, 4), true); // Shop 40 legacy created_by is 4
+    assert.equal(isAcceptablePreflightState(33, 3), true); // Shop 33 legacy created_by is 3
+    assert.equal(isAcceptablePreflightState(34, 11), true); // Shop 34 legacy created_by is 11
+
+    // Verified prior staging assignments are acceptable
+    assert.equal(isAcceptablePreflightState(33, 903), true); // Shop 33 prior staging is 903
+    assert.equal(isAcceptablePreflightState(34, 903), true); // Shop 34 prior staging is 903
+    assert.equal(isAcceptablePreflightState(36, 903), true); // Shop 36 prior staging is 903
+    assert.equal(isAcceptablePreflightState(37, 903), true); // Shop 37 prior staging is 903
+    assert.equal(isAcceptablePreflightState(38, 903), true); // Shop 38 prior staging is 903
+    assert.equal(isAcceptablePreflightState(39, 903), true); // Shop 39 prior staging is 903
+    assert.equal(isAcceptablePreflightState(101, 1), true);  // Shop 101 prior staging is 1
+
+    // Unexpected IDs are strictly rejected
+    assert.equal(isAcceptablePreflightState(40, 999), false);
+    assert.equal(isAcceptablePreflightState(40, 903), false); // Shop 40 was never in staging priors
+    assert.equal(isAcceptablePreflightState(34, 999), false);
+    assert.equal(isAcceptablePreflightState(101, 999), false);
+  });
+
+  // 9. Exact Staging Prior Restoration Test
+  await t.test('11. Exact restoration of staging priors: restores 903 and 1 exactly', () => {
+    const db = createIsolatedTestDb();
+    db.exec(`
+      INSERT INTO shops (shop_id, shop_name, assigned_agent_id) VALUES
+      (34, 'Shop 34', 906),
+      (101, 'Shop 101', 908);
+    `);
+
+    const journal = {
+      journalFileName: 'test-staging-prior-recovery.json',
+      assignedShops: [
+        { shopId: 34, targetAgentId: 906, previousAssignedId: 903 },
+        { shopId: 101, targetAgentId: 908, previousAssignedId: 1 }
+      ]
+    };
+
+    const sql = generateGuardedRecoverySql(journal, { dialect: 'standard' });
+    db.exec(sql);
+
+    const r34 = db.prepare('SELECT assigned_agent_id FROM shops WHERE shop_id = 34').get();
+    const r101 = db.prepare('SELECT assigned_agent_id FROM shops WHERE shop_id = 101').get();
+
+    assert.equal(r34.assigned_agent_id, 903, 'Shop 34 must be restored to exact previous 903');
+    assert.equal(r101.assigned_agent_id, 1, 'Shop 101 must be restored to exact previous 1');
   });
 });
