@@ -16,16 +16,18 @@
  *    has actually saved protected credentials.
  */
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { NativeBiometric, AccessControl } from '@capgo/capacitor-native-biometric';
 import { saveUserProfile, getUserProfile, hasUnsyncedMutations } from './offlineDb';
+
+const SessionStorage = registerPlugin('SessionStorage');
 
 export const SAVED_ACCOUNTS_KEY = 'LineCart_saved_accounts';
 export const ACTIVE_USER_KEY = 'LineCartPref_active_user_meta';
 
 export const getBiometricServerKey = (userId) => `linecart-session-${userId}`;
 
-// In-memory token storage (Android native security requirement)
+// In-memory token storage (Android native security requirement: never in localStorage/IndexedDB)
 let inMemorySessionToken = null;
 
 export function setMemorySessionToken(token) {
@@ -43,6 +45,44 @@ export function getMemorySessionToken() {
 
 export function clearMemorySessionToken() {
   inMemorySessionToken = null;
+}
+
+/**
+ * Persist session token inside AndroidKeyStore AES-256-GCM encrypted SharedPreferences
+ * so active sessions survive app restarts without storing tokens in localStorage or IndexedDB.
+ */
+export async function persistNativeSessionToken(token) {
+  if (!token) return;
+  setMemorySessionToken(token);
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await SessionStorage.saveToken({ token });
+  } catch (err) {
+    console.warn('[SessionStorage] Could not persist encrypted session token:', err?.message || err);
+  }
+}
+
+export async function restoreNativeSessionToken() {
+  if (inMemorySessionToken) return inMemorySessionToken;
+  if (!Capacitor.isNativePlatform()) return getMemorySessionToken();
+  try {
+    const res = await SessionStorage.getToken();
+    if (res && res.token) {
+      setMemorySessionToken(res.token);
+      return res.token;
+    }
+  } catch (err) {
+    console.warn('[SessionStorage] Could not restore encrypted session token:', err?.message || err);
+  }
+  return null;
+}
+
+export async function clearNativeSessionToken() {
+  clearMemorySessionToken();
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await SessionStorage.clearToken();
+  } catch {}
 }
 
 /**
@@ -311,7 +351,7 @@ export function lockAppSession() {
  * Complete sign-out (clear memory and remove Keystore credentials)
  */
 export async function signOutAppSession(userId = null) {
-  clearMemorySessionToken();
+  await clearNativeSessionToken();
   if (Capacitor.isNativePlatform()) {
     try {
       if (userId) {

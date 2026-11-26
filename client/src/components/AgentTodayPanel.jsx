@@ -50,6 +50,12 @@ export default function AgentTodayPanel({ orders = [], onNavigate, onOrderForCus
     load();
   }, [load]);
 
+  useEffect(() => {
+    const onPasswordChanged = () => load();
+    window.addEventListener('linecart:password_changed', onPasswordChanged);
+    return () => window.removeEventListener('linecart:password_changed', onPasswordChanged);
+  }, [load]);
+
   const today = useMemo(() => {
     const day = state.data?.date || localDate();
     const list = (orders || []).filter((o) => orderDate(o) === day && !String(o.status || '').toLowerCase().includes('cancel'));

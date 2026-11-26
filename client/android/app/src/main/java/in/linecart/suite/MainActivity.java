@@ -17,8 +17,9 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // App-local plugin: fresh GPS fix + mock-location flag for shop-visit verification
+        // App-local plugins: fresh GPS fix + mock-location flag, and Keystore-backed session token store
         registerPlugin(LocationIntegrityPlugin.class);
+        registerPlugin(SessionStoragePlugin.class);
         super.onCreate(savedInstanceState);
 
         Window window = getWindow();

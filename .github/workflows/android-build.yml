@@ -9,30 +9,23 @@ on:
       - 'config/**'
       - '.github/workflows/android-build.yml'
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build target (debug, release, or both)'
-        required: true
-        default: 'both'
-        type: choice
-        options:
-          - both
-          - debug
-          - release
 
 jobs:
-  build:
+  build-debug-apk:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: 'npm'
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -47,30 +40,63 @@ jobs:
 
       - name: Install Android build tools and platforms
         run: |
+          set +o pipefail
           yes | sdkmanager --licenses
+          set -o pipefail
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" "platform-tools"
 
-      - name: Install root dependencies
-        run: npm ci
+      - name: Install server and client dependencies
+        run: |
+          npm ci --prefix server
+          npm ci --prefix client
 
-      - name: Install client dependencies
-        working-directory: ./client
-        run: npm ci
+      - name: Run full test suite
+        run: |
+          mkdir -p dist-android
+          node tests/run-tests.mjs | tee dist-android/test-results.txt
 
-      - name: Build Debug APK
-        if: ${{ github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both' || github.event_name == 'push' }}
-        run: node scripts/build-android.mjs debug
+      - name: Build production-pointing DEBUG APK
+        run: |
+          chmod +x client/android/gradlew
+          mkdir -p dist-android
+          node scripts/build-android.mjs debug 2>&1 | tee dist-android/build-debug.log
 
-      - name: Build Release APK
-        if: ${{ github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both' || github.event_name == 'push' }}
-        run: node scripts/build-android.mjs release
+      - name: Verify package ID, backend URL, signature, and SHA-256
+        run: |
+          APK_FILE=$(ls dist-android/linecart-*-debug.apk | head -n 1)
+          echo "=== Inspect APK ===" | tee dist-android/apk-verification.txt
+          node scripts/inspect-apk.mjs "$APK_FILE" \
+            --expect-url https://linecart-staging.onrender.com \
+            --expect-id in.linecart.suite.debug \
+            --expect-debuggable true | tee -a dist-android/apk-verification.txt
+          echo "=== Verify Signature ===" | tee -a dist-android/apk-verification.txt
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK_FILE" | tee -a dist-android/apk-verification.txt
+          echo "=== Verify SHA-256 ===" | tee -a dist-android/apk-verification.txt
+          (cd dist-android && sha256sum -c "$(basename "$APK_FILE").sha256" | tee -a apk-verification.txt)
 
-      - name: Upload Android Artifacts
+      - name: Upload Android DEBUG APK Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: linecart-android-apks
+          name: linecart-android-debug-apk
           path: |
-            dist-android/*.apk
-            dist-android/*.sha256
+            dist-android/linecart-*-debug.apk
+            dist-android/linecart-*-debug.apk.sha256
             dist-android/build-info.json
+            dist-android/test-results.txt
+            dist-android/build-debug.log
+            dist-android/apk-verification.txt
           retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload Failure Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linecart-android-failure-logs
+          path: |
+            dist-android/*.txt
+            dist-android/*.log
+          retention-days: 14
+          if-no-files-found: ignore

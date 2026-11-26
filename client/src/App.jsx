@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { api } from './api';
 import OverviewScreen from './components/OverviewScreen';
 import LoginScreen from './components/LoginScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncStatusBar from './components/SyncStatusBar';
 import { initSyncEngine } from './offline/syncEngine';
-import { signOutAppSession, removeSavedAccount, ACTIVE_USER_KEY } from './offline/biometricAuth';
+import {
+  signOutAppSession,
+  removeSavedAccount,
+  getMemorySessionToken,
+  restoreNativeSessionToken,
+  clearNativeSessionToken,
+  ACTIVE_USER_KEY
+} from './offline/biometricAuth';
 import { saveOrdersCache, loadOrdersCache, clearOrdersCache } from './offline/ordersCache';
 import {
   seedPilotDataIfEmpty,
@@ -79,6 +87,11 @@ export default function App() {
 
   const [permissions, setPermissions] = useState(null);
   const [showManualChangePassword, setShowManualChangePassword] = useState(false);
+  const [authReady, setAuthReady] = useState(() => (
+    !Capacitor.isNativePlatform() ||
+    Boolean(getMemorySessionToken()) ||
+    !localStorage.getItem('LineCartPref_user')
+  ));
 
   useEffect(() => {
     const handler = () => setShowManualChangePassword(true);
@@ -93,36 +106,55 @@ export default function App() {
         setUser(res.user);
         localStorage.setItem('LineCartPref_user', JSON.stringify(res.user));
         localStorage.setItem('LineCartPref_userid', String(res.user.id));
-        return res.user;
+        return { ok: true, user: res.user };
+      }
+      if (res && (res.status === 401 || res.status === 403)) {
+        return { ok: false, rejected: true };
       }
     } catch {}
-    return null;
+    return { ok: false, rejected: false };
   }, []);
 
-  // Authoritative identity sync: verify session token with backend on mount
+  // Authoritative identity sync: restore Android Keystore session token and verify with backend on mount
   useEffect(() => {
-    const token = localStorage.getItem('LineCartPref_token');
-    const savedUser = localStorage.getItem('LineCartPref_user');
-
-    if (!token && !savedUser) {
-      if (user) setUser(null);
-      return;
-    }
-
-    refreshUser().then((synced) => {
-      if (!synced) {
-        const t = localStorage.getItem('LineCartPref_token');
-        if (!t) {
-          localStorage.removeItem('LineCartPref_user');
-          localStorage.removeItem('LineCartPref_userid');
-          setUser(null);
-        }
+    let cancelled = false;
+    (async () => {
+      if (Capacitor.isNativePlatform() && !getMemorySessionToken()) {
+        await restoreNativeSessionToken();
       }
-    });
+      if (cancelled) return;
+      setAuthReady(true);
+
+      const token = getMemorySessionToken() || localStorage.getItem('LineCartPref_token');
+      const savedUser = localStorage.getItem('LineCartPref_user');
+
+      if (!token && !savedUser) {
+        if (user) setUser(null);
+        return;
+      }
+
+      if (!token) {
+        localStorage.removeItem('LineCartPref_user');
+        localStorage.removeItem('LineCartPref_userid');
+        setUser(null);
+        return;
+      }
+
+      const synced = await refreshUser();
+      if (!cancelled && synced.rejected) {
+        await clearNativeSessionToken();
+        localStorage.removeItem('LineCartPref_token');
+        localStorage.removeItem('LineCartPref_user');
+        localStorage.removeItem('LineCartPref_userid');
+        setUser(null);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [refreshUser]);
 
   // Load active role permissions from backend
   useEffect(() => {
+    if (!authReady || !user) return;
     api.getRolePermissions()
       .then((res) => {
         if (res && res.rolePermissions) {
@@ -130,7 +162,7 @@ export default function App() {
         }
       })
       .catch(() => {});
-  }, [user]);
+  }, [authReady, user]);
 
   // Initialize background and foreground sync engine
   useEffect(() => {
@@ -324,7 +356,7 @@ export default function App() {
 
   // Load cluster and shops data from backend (skipped for Delivery Agents who use /api/delivery/orders)
   useEffect(() => {
-    if (!user || isDelivery || user?.mustChangePassword) return;
+    if (!authReady || !user || isDelivery || user?.mustChangePassword) return;
 
     // 1. Immediately initialize with cached or pilot seed data from local storage
     seedPilotDataIfEmpty(user.id)
@@ -366,7 +398,7 @@ export default function App() {
 
   // Load authoritative orders from backend
   useEffect(() => {
-    if (!user || isDelivery || user?.mustChangePassword) return;
+    if (!authReady || !user || isDelivery || user?.mustChangePassword) return;
     api.getOrders().then((res) => {
       if (res && res.status === 200 && Array.isArray(res.orders)) {
         // The server list is authoritative (orders are online-only; there are no local temporary orders)
@@ -380,7 +412,7 @@ export default function App() {
         setOrders(merged);
       }
     }).catch(() => {});
-  }, [user?.id, isDelivery]);
+  }, [authReady, user?.id, isDelivery, user?.mustChangePassword]);
 
   // Listen for sync engine updates to orders
   useEffect(() => {
@@ -492,7 +524,8 @@ export default function App() {
     try {
       localStorage.removeItem(ACTIVE_USER_KEY);
     } catch {}
-    signOutAppSession();
+    await clearNativeSessionToken();
+    await signOutAppSession();
     localStorage.removeItem('LineCartPref_token');
     localStorage.removeItem('LineCartPref_userid');
     localStorage.removeItem('LineCartPref_user');
@@ -531,6 +564,14 @@ export default function App() {
   // Never signs out, never clears data. On the sign-in screen (no user) it closes an open overlay first
   // and otherwise moves the app to the background, instead of replaying old page history.
   useAndroidBackButton({ enabled: true, onBack: handleBack, isAtRoot: !user || page === getRoleHome() });
+
+  if (!authReady && user) {
+    return (
+      <div style={{ padding: '24px' }}>
+        <ScreenLoadingSkeleton />
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -769,6 +810,7 @@ export default function App() {
             try {
               localStorage.setItem('LineCartPref_user', JSON.stringify(updated));
             } catch {}
+            window.dispatchEvent(new CustomEvent('linecart:password_changed'));
           }}
           showToast={showToast}
         />

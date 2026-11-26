@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { registerOverlay } from '../ui';
 import { api, INDIAN_MOBILE_REGEX, APP_BUILD_ENV, API_NOT_CONFIGURED, API_BASE_URL } from '../api';
 import {
+  persistNativeSessionToken,
   registerBiometricSession,
   unlockOfflineSession,
   checkBiometricHardware,
@@ -182,8 +183,11 @@ export default function LoginScreen({ onLoginSuccess, showToast }) {
             localStorage.setItem('LineCartPref_token', response.token);
           }
         } else {
-          // On Android native, NEVER persist the session token in localStorage
+          // On Android native, NEVER persist the session token in localStorage; use Keystore-encrypted SessionStorage
           localStorage.removeItem('LineCartPref_token');
+          if (response.token) {
+            await persistNativeSessionToken(response.token);
+          }
         }
 
         // Register session with native Keystore AccessControl

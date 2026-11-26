@@ -117,6 +117,15 @@ export default function VisitsScreen({ user, showToast, onOpenChangePassword, on
 
   useEffect(() => { load(filter); }, [filter]);
 
+  useEffect(() => {
+    const onPasswordChanged = () => {
+      recheck();
+      load(filter);
+    };
+    window.addEventListener('linecart:password_changed', onPasswordChanged);
+    return () => window.removeEventListener('linecart:password_changed', onPasswordChanged);
+  }, [filter, load, recheck]);
+
   const selected = useMemo(() => data.shops.find((s) => s.shopId === selectedId) || null, [data.shops, selectedId]);
 
   useEffect(() => {
