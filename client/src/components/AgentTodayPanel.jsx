@@ -15,19 +15,36 @@ const localDate = () => {
 };
 const orderDate = (o) => String(o.date || o.orderDate || o.order_date || o.createdAt || '').slice(0, 10);
 
-export default function AgentTodayPanel({ orders = [], onNavigate, onOrderForCustomer }) {
-  const [state, setState] = useState({ status: 'loading', data: null, error: null });
+export default function AgentTodayPanel({ orders = [], onNavigate, onOrderForCustomer, onOpenChangePassword, onRefreshUser }) {
+  const [state, setState] = useState({ status: 'loading', data: null, error: null, code: null });
 
   const load = useCallback(async () => {
-    setState((s) => ({ ...s, status: 'loading', error: null }));
+    setState((s) => ({ ...s, status: 'loading', error: null, code: null }));
     try {
       const res = await api.getVisitShops('all');
-      if (res?.status === 200) setState({ status: 'ok', data: res, error: null });
-      else setState({ status: 'error', data: null, error: res?.message || 'Could not load your visit list.' });
+      if (res?.status === 200) {
+        setState({ status: 'ok', data: res, error: null, code: null });
+      } else {
+        const code = res?.code || (res?.status === 403 ? 'PASSWORD_CHANGE_REQUIRED' : null);
+        setState({
+          status: 'error',
+          data: null,
+          error: res?.message || 'Could not load your visit list.',
+          code
+        });
+        if (code === 'PASSWORD_CHANGE_REQUIRED' && onRefreshUser) {
+          onRefreshUser();
+        }
+      }
     } catch {
-      setState({ status: 'error', data: null, error: 'Could not load your visit list. Check your connection.' });
+      setState({ status: 'error', data: null, error: 'Could not load your visit list. Check your connection.', code: null });
     }
-  }, []);
+  }, [onRefreshUser]);
+
+  const handleRetry = useCallback(async () => {
+    if (onRefreshUser) await onRefreshUser();
+    await load();
+  }, [load, onRefreshUser]);
 
   useEffect(() => {
     load();
@@ -90,7 +107,26 @@ export default function AgentTodayPanel({ orders = [], onNavigate, onOrderForCus
             <Skeleton height={56} />
           </SkeletonGroup>
         ) : state.status === 'error' ? (
-          <EmptyState icon={AlertTriangle} title="Visit list unavailable" action={<Button variant="secondary" icon={RefreshCw} onClick={load}>Try again</Button>}>
+          <EmptyState
+            icon={AlertTriangle}
+            title="Visit list unavailable"
+            action={
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <Button variant="secondary" icon={RefreshCw} onClick={handleRetry}>Try again</Button>
+                {state.code === 'PASSWORD_CHANGE_REQUIRED' ? (
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      if (onOpenChangePassword) onOpenChangePassword();
+                      else if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('linecart:open-change-password'));
+                    }}
+                  >
+                    Change password
+                  </Button>
+                ) : null}
+              </div>
+            }
+          >
             {state.error}
           </EmptyState>
         ) : toVisit.length === 0 ? (

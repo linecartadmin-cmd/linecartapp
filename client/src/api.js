@@ -208,7 +208,7 @@ export const api = {
   },
 
   // Lightweight reachability check (no database work on the server)
-  async ping(timeoutMs = 6000) {
+  async ping(timeoutMs = 12000) {
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
     try {
@@ -312,14 +312,28 @@ export const api = {
   },
 
   // 4b. GET /api/shops (Scoped shop list with assigned agents)
-  async getShops() {
+  async getShops(timeoutMs = 15000) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
     try {
       const res = await fetch(`${BASE_URL}/api/shops`, {
-        headers: { ...getAuthHeaders() }
+        headers: { ...getAuthHeaders() },
+        signal: ctrl?.signal
       });
-      return await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        data = { status: res.status, shops: [], message: `Server error (${res.status}).` };
+      }
+      return data;
     } catch (err) {
+      if (err.name === 'AbortError') {
+        return { status: 408, shops: [], message: 'Request timed out waiting for shops list.' };
+      }
       return { status: 500, shops: [], message: err.message };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   },
 
@@ -848,11 +862,29 @@ export const api = {
   },
 
   // 17b. GPS-verified shop visits (online only)
-  async getVisitShops(filter = 'all') {
-    const res = await fetch(`${BASE_URL}/api/visits/my-shops?filter=${encodeURIComponent(filter)}`, {
-      headers: { ...getAuthHeaders() }
-    });
-    return res.json();
+  async getVisitShops(filter = 'all', timeoutMs = 15000) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    try {
+      const res = await fetch(`${BASE_URL}/api/visits/my-shops?filter=${encodeURIComponent(filter)}`, {
+        headers: { ...getAuthHeaders() },
+        signal: ctrl?.signal
+      });
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        data = { status: res.status, message: `Server error (HTTP ${res.status}).` };
+      }
+      return data;
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        return { status: 408, message: 'Request timed out waiting for server response. Please tap Retry.' };
+      }
+      return { status: 0, message: err.message || 'Network error reaching LineCart server.' };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   },
 
   // Resolves with the server answer (2xx/4xx). Throws `uncertain` when the outcome is unknown so the

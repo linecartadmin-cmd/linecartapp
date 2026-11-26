@@ -130,3 +130,136 @@ test('Mandatory first-login password change enforcement suite', async (t) => {
   await db.query('DELETE FROM sessions WHERE user_id = $1', [testUserId]);
   await db.query('DELETE FROM users WHERE id = $1', [testUserId]);
 });
+
+test('Admin user management and password reset mustChangePassword suite', async (t) => {
+  const adminId = 900;
+  const adminPhone = '6381168811';
+  const adminPass = 'AdminSecretPass#1';
+
+  // Ensure Admin exists and has a session
+  await db.query('DELETE FROM sessions WHERE user_id = $1', [adminId]);
+  await db.query('DELETE FROM users WHERE id = $1', [adminId]);
+  await db.query(
+    `INSERT INTO users (id, name, role, phone, phone_valid, password_hash, must_change_password, cluster_id, active, created_on)
+     VALUES ($1, $2, 'Admin', $3, 1, $4, 0, 1, 1, '2026-04-01 09:00:00')`,
+    [adminId, 'LineCart Administrator', adminPhone, scrypt(adminPass)]
+  );
+
+  const rawAdminToken = 'admin-test-token-' + crypto.randomUUID();
+  const tokenHash = crypto.createHash('sha256').update(rawAdminToken).digest('hex');
+  const now = Date.now();
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, role, is_dev_admin, created_at, last_seen, expires_at, revoked_at)
+     VALUES ($1, $2, 'Admin', 1, $3, $4, $5, NULL)`,
+    [tokenHash, adminId, now, now, now + 86400000]
+  );
+  const adminHeaders = { Authorization: `Bearer ${rawAdminToken}` };
+
+  // 1. Admin creates a user with mustChangePassword = true (default)
+  const agentPhone = '6381568999';
+  const initialAgentPass = 'InitialAgent#Pass1';
+  await db.query('DELETE FROM users WHERE phone = $1', [agentPhone]);
+
+  const createRes = await call('/api/admin/users', {
+    method: 'POST',
+    headers: adminHeaders,
+    body: {
+      name: 'Agent Test Multi',
+      phone: agentPhone,
+      role: 'Field Sales Agent',
+      password: initialAgentPass,
+      mustChangePassword: true,
+      clusterid: 1
+    }
+  });
+
+  assert.strictEqual(createRes.status, 201, 'Admin successfully created agent');
+  const createdAgentId = createRes.json.user.id;
+  assert.ok(createdAgentId > 0);
+
+  // Check database state
+  let dbRow = (await db.query('SELECT must_change_password FROM users WHERE id = $1', [createdAgentId])).rows[0];
+  assert.strictEqual(Number(dbRow.must_change_password), 1, 'Initial creation has must_change_password = 1');
+
+  // Check GET /api/admin/users returns mustChangePassword
+  const usersListRes = await call('/api/admin/users', { headers: adminHeaders });
+  assert.strictEqual(usersListRes.status, 200);
+  const targetInList = usersListRes.json.users.find((u) => u.id === createdAgentId);
+  assert.strictEqual(targetInList.mustChangePassword, true, 'Admin users list reflects mustChangePassword: true');
+
+  // 2. Admin resets password without specifying mustChangePassword -> should clear to 0
+  const resetPass1 = 'AdminReset#NewPass1';
+  const resetRes1 = await call(`/api/admin/users/${createdAgentId}`, {
+    method: 'PUT',
+    headers: adminHeaders,
+    body: {
+      name: 'Agent Test Multi',
+      phone: agentPhone,
+      role: 'Field Sales Agent',
+      password: resetPass1,
+      clusterid: 1,
+      active: 1
+    }
+  });
+  assert.strictEqual(resetRes1.status, 200, 'Admin reset password successfully');
+
+  dbRow = (await db.query('SELECT must_change_password FROM users WHERE id = $1', [createdAgentId])).rows[0];
+  assert.strictEqual(Number(dbRow.must_change_password), 0, 'Admin reset without mustChangePassword clears flag to 0');
+
+  // 3. Admin resets password with explicit mustChangePassword: true -> should set to 1
+  const resetPass2 = 'AdminReset#NewPass2';
+  const resetRes2 = await call(`/api/admin/users/${createdAgentId}`, {
+    method: 'PUT',
+    headers: adminHeaders,
+    body: {
+      name: 'Agent Test Multi',
+      phone: agentPhone,
+      role: 'Field Sales Agent',
+      password: resetPass2,
+      mustChangePassword: true,
+      clusterid: 1,
+      active: 1
+    }
+  });
+  assert.strictEqual(resetRes2.status, 200);
+  dbRow = (await db.query('SELECT must_change_password FROM users WHERE id = $1', [createdAgentId])).rows[0];
+  assert.strictEqual(Number(dbRow.must_change_password), 1, 'Admin reset with mustChangePassword: true sets flag to 1');
+
+  // 4. Admin updates user without password change but with mustChangePassword: false -> should clear to 0
+  const resetRes3 = await call(`/api/admin/users/${createdAgentId}`, {
+    method: 'PUT',
+    headers: adminHeaders,
+    body: {
+      name: 'Agent Test Multi',
+      phone: agentPhone,
+      role: 'Field Sales Agent',
+      mustChangePassword: false,
+      clusterid: 1,
+      active: 1
+    }
+  });
+  assert.strictEqual(resetRes3.status, 200);
+  dbRow = (await db.query('SELECT must_change_password FROM users WHERE id = $1', [createdAgentId])).rows[0];
+  assert.strictEqual(Number(dbRow.must_change_password), 0, 'Admin edit with mustChangePassword: false clears flag to 0');
+
+  // 5. Agent signs in with resetPass2 -> gets mustChangePassword: false, unblocked access to visits and shops
+  const agentLogin = await call('/login', {
+    method: 'POST',
+    body: { phone: agentPhone, password: resetPass2 }
+  });
+  assert.strictEqual(agentLogin.status, 200, 'Agent logs in with Admin-reset password');
+  assert.strictEqual(agentLogin.json.result[0].mustChangePassword, false, 'mustChangePassword is false');
+
+  const agentToken = agentLogin.json.token;
+  const agentHeaders = { Authorization: `Bearer ${agentToken}` };
+
+  const shopsRes = await call('/api/shops', { headers: agentHeaders });
+  assert.strictEqual(shopsRes.status, 200, 'Agent can access /api/shops without 403');
+
+  const visitsRes = await call('/api/visits/my-shops', { headers: agentHeaders });
+  assert.strictEqual(visitsRes.status, 200, 'Agent can access /api/visits/my-shops without 403');
+
+  // Cleanup
+  await db.query('DELETE FROM sessions WHERE user_id IN ($1, $2)', [adminId, createdAgentId]);
+  await db.query('DELETE FROM users WHERE id IN ($1, $2)', [adminId, createdAgentId]);
+});

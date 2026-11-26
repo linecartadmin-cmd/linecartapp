@@ -73,11 +73,12 @@ export function TodayVisitsCount({ loading, error, counts, date }) {
   );
 }
 
-export default function VisitsScreen({ user, showToast }) {
+export default function VisitsScreen({ user, showToast, onOpenChangePassword, onRefreshUser }) {
   const [filter, setFilter] = useState('all');
   const [data, setData] = useState({ shops: [], counts: {}, settings: null, date: '' });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [loadErrorCode, setLoadErrorCode] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [phase, setPhase] = useState('idle');
   const [detailText, setDetailText] = useState('');
@@ -91,16 +92,28 @@ export default function VisitsScreen({ user, showToast }) {
   const load = useCallback(async (f = filter) => {
     setLoading(true);
     setLoadError('');
+    setLoadErrorCode('');
     try {
       const res = await api.getVisitShops(f);
-      if (res?.status === 200) setData(res);
-      else setLoadError(res?.message || 'Could not load your shops.');
-    } catch {
-      setLoadError('Could not load your shops. Check your internet connection.');
+      if (res?.status === 200) {
+        setData(res);
+      } else {
+        const code = res?.code || (res?.status === 403 ? 'PASSWORD_CHANGE_REQUIRED' : '');
+        setLoadErrorCode(code);
+        setLoadError(res?.message || 'Could not load your shops.');
+      }
+    } catch (err) {
+      setLoadError(err?.message || 'Could not load your shops. Check your internet connection.');
     } finally {
       setLoading(false);
     }
   }, [filter]);
+
+  const handleRetry = useCallback(async () => {
+    if (onRefreshUser) await onRefreshUser();
+    await recheck();
+    await load(filter);
+  }, [filter, load, onRefreshUser, recheck]);
 
   useEffect(() => { load(filter); }, [filter]);
 
@@ -347,7 +360,7 @@ export default function VisitsScreen({ user, showToast }) {
         ) : null}
       </header>
 
-      {!isConnected && (
+      {!isConnected && !loadError && (
         <div role="alert" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 10, padding: 10, fontSize: 13 }}>
           No connection to the LineCart server. Visits can only be verified online.
         </div>
@@ -378,10 +391,28 @@ export default function VisitsScreen({ user, showToast }) {
       </div>
 
       {loading ? (
-        <div style={{ padding: 20, textAlign: 'center', color: '#64748b' }}>Loading your shops…</div>
+        <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>Loading your shops…</div>
       ) : loadError ? (
-        <div role="alert" style={{ padding: 14, color: '#991b1b' }}>
-          {loadError} <button type="button" className="secondary-button" onClick={() => load(filter)}>Retry</button>
+        <div role="alert" style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: 16, display: 'grid', gap: 10 }}>
+          <div style={{ color: '#991b1b', fontSize: 14, fontWeight: 500 }}>
+            {loadError}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" className="secondary-button" onClick={handleRetry}>Retry</button>
+            {loadErrorCode === 'PASSWORD_CHANGE_REQUIRED' ? (
+              <button
+                type="button"
+                className="primary-button"
+                style={{ padding: '8px 14px', borderRadius: 8, background: '#1e3a8a', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                onClick={() => {
+                  if (onOpenChangePassword) onOpenChangePassword();
+                  else if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('linecart:open-change-password'));
+                }}
+              >
+                Change Password
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : data.shops.length === 0 ? (
         <div style={{ padding: 20, textAlign: 'center', color: '#64748b' }}>No shops in this list.</div>

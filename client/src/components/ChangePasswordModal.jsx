@@ -49,8 +49,35 @@ export default function ChangePasswordModal({ user, onSuccess, onClose, showToas
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 relative animate-in fade-in zoom-in duration-150">
+    <div
+      className="fixed inset-0 z-[9999] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 9999,
+        backgroundColor: 'rgba(15, 23, 42, 0.75)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px'
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 relative animate-in fade-in zoom-in duration-150"
+        style={{
+          background: '#ffffff',
+          borderRadius: '16px',
+          maxWidth: '448px',
+          width: '100%',
+          padding: '24px',
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          position: 'relative'
+        }}
+      >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">

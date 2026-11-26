@@ -3720,6 +3720,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
       clusterid: u.clusterid,
       active: u.active !== undefined ? u.active : 1,
       createdon: u.createdon || '2026-04-01 09:00:00',
+      mustChangePassword: Boolean(u.mustChangePassword),
       assignedManager,
       assignedAgentsCount
     };
@@ -3885,7 +3886,19 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
       });
     }
     updatedPasswordHash = hashPassword(trimmedPwd);
-    updatedMustChange = 1;
+    shouldRevokeSessions = true;
+  }
+
+  // Handle mustChangePassword explicitly from request body if passed;
+  // If password was reset and mustChangePassword was not explicitly specified,
+  // default to 0 (cleared) so that an Admin-managed password does not force a secondary change.
+  if (req.body && req.body.mustChangePassword !== undefined) {
+    updatedMustChange = req.body.mustChangePassword ? 1 : 0;
+  } else if (password) {
+    updatedMustChange = 0;
+  }
+
+  if (updatedMustChange === 1 && !targetUser.mustChangePassword) {
     shouldRevokeSessions = true;
   }
 

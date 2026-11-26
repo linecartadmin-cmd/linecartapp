@@ -65,3 +65,6 @@ Thumbs.db
 
 # Android build outputs (scripts/build-android.mjs)
 dist-android/
+
+linecart-assignment-journal-*.json
+linecart-shops-snapshot-*.json

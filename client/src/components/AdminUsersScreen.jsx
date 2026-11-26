@@ -17,6 +17,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
     name: '',
     phone: '',
     password: '',
+    mustChangePassword: true,
     role: 'Field Sales Agent',
     clusterid: '1'
   });
@@ -29,6 +30,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
     name: '',
     phone: '',
     password: '',
+    mustChangePassword: false,
     role: 'Field Sales Agent',
     clusterid: '1',
     active: 1
@@ -101,6 +103,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
             name: '',
             phone: '',
             password: '',
+            mustChangePassword: true,
             role: 'Field Sales Agent',
             clusterid: '1'
           });
@@ -123,6 +126,7 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
       name: u.name || '',
       phone: u.phone || '',
       password: '',
+      mustChangePassword: Boolean(u.mustChangePassword),
       role: u.role || 'Field Sales Agent',
       clusterid: String(u.clusterid || 1),
       active: u.active !== undefined ? u.active : 1
@@ -374,9 +378,27 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
                         )}
                       </td>
                       <td>
-                        <span className={`status-pill ${isActive ? 'badge-delivered' : 'badge-cancelled'}`}>
-                          {isActive ? 'Active' : 'Inactive'}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                          <span className={`status-pill ${isActive ? 'badge-delivered' : 'badge-cancelled'}`}>
+                            {isActive ? 'Active' : 'Inactive'}
+                          </span>
+                          {u.mustChangePassword ? (
+                            <span
+                              className="badge-role-tag"
+                              style={{
+                                background: '#fef3c7',
+                                color: '#92400e',
+                                borderColor: '#fde68a',
+                                fontSize: '11px',
+                                padding: '2px 6px',
+                                borderRadius: '4px'
+                              }}
+                              title="User must change password on next login"
+                            >
+                              Password change pending
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="user-action-buttons">
@@ -498,6 +520,16 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
                       {showCreatePassword ? <Icon icon={EyeOff} size={18} /> : <Icon icon={Eye} size={18} />}
                     </button>
                   </div>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '6px' }}>
+                    <input
+                      type="checkbox"
+                      checked={createForm.mustChangePassword}
+                      onChange={(e) => setCreateForm({ ...createForm, mustChangePassword: e.target.checked })}
+                    />
+                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#334155' }}>
+                      Require user to change password on next login
+                    </span>
+                  </label>
                 </div>
 
                 <div className="field-group">
@@ -630,6 +662,16 @@ export default function AdminUsersScreen({ user, clusters = [], onNavigate, show
                       {showEditPassword ? <Icon icon={EyeOff} size={18} /> : <Icon icon={Eye} size={18} />}
                     </button>
                   </div>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '6px' }}>
+                    <input
+                      type="checkbox"
+                      checked={editForm.mustChangePassword}
+                      onChange={(e) => setEditForm({ ...editForm, mustChangePassword: e.target.checked })}
+                    />
+                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#334155' }}>
+                      Require user to change password on next login
+                    </span>
+                  </label>
                 </div>
 
                 <div className="field-group">

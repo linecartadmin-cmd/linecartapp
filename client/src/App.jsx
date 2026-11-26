@@ -78,6 +78,26 @@ export default function App() {
   const isAgent = !isAdmin && !isManager && !isDelivery;
 
   const [permissions, setPermissions] = useState(null);
+  const [showManualChangePassword, setShowManualChangePassword] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setShowManualChangePassword(true);
+    window.addEventListener('linecart:open-change-password', handler);
+    return () => window.removeEventListener('linecart:open-change-password', handler);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    try {
+      const res = await api.getAuthMe();
+      if (res && res.status === 200 && res.user) {
+        setUser(res.user);
+        localStorage.setItem('LineCartPref_user', JSON.stringify(res.user));
+        localStorage.setItem('LineCartPref_userid', String(res.user.id));
+        return res.user;
+      }
+    } catch {}
+    return null;
+  }, []);
 
   // Authoritative identity sync: verify session token with backend on mount
   useEffect(() => {
@@ -89,19 +109,17 @@ export default function App() {
       return;
     }
 
-    api.getAuthMe().then((res) => {
-      if (res && res.status === 200 && res.user) {
-        setUser(res.user);
-        localStorage.setItem('LineCartPref_user', JSON.stringify(res.user));
-        localStorage.setItem('LineCartPref_userid', String(res.user.id));
-      } else if (res && (res.status === 401 || res.status === 403)) {
-        localStorage.removeItem('LineCartPref_token');
-        localStorage.removeItem('LineCartPref_user');
-        localStorage.removeItem('LineCartPref_userid');
-        setUser(null);
+    refreshUser().then((synced) => {
+      if (!synced) {
+        const t = localStorage.getItem('LineCartPref_token');
+        if (!t) {
+          localStorage.removeItem('LineCartPref_user');
+          localStorage.removeItem('LineCartPref_userid');
+          setUser(null);
+        }
       }
-    }).catch(() => {});
-  }, []);
+    });
+  }, [refreshUser]);
 
   // Load active role permissions from backend
   useEffect(() => {
@@ -716,7 +734,10 @@ export default function App() {
         )}
 
         {page === 'visits' && !isAdmin && !isManager && !isDelivery && (
-          <VisitsScreen user={user} showToast={showToast} />
+          <VisitsScreen
+            user={user}
+            showToast={showToast}
+          />
         )}
 
         {page === 'field-visits' && (isAdmin || isManager) && (
@@ -737,10 +758,12 @@ export default function App() {
 
   return (
     <>
-      {user?.mustChangePassword && (
+      {(user?.mustChangePassword || showManualChangePassword) && (
         <ChangePasswordModal
           user={user}
+          onClose={!user?.mustChangePassword ? () => setShowManualChangePassword(false) : undefined}
           onSuccess={() => {
+            setShowManualChangePassword(false);
             const updated = { ...user, mustChangePassword: false };
             setUser(updated);
             try {
