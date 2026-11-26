@@ -156,10 +156,12 @@ export async function clearUserCachedData(userId) {
 // ---------------------------------------------------------------------------
 
 export async function saveUserProfile(user) {
-  if (!user || !user.id) return;
+  const uid = Number(user?.id ?? user?.userId);
+  if (!user || !Number.isInteger(uid) || uid <= 0) return;
   const store = await getStore('profiles', 'readwrite');
   const record = {
-    userId: Number(user.id),
+    id: uid,
+    userId: uid,
     name: user.name,
     phone: user.phone,
     role: user.role,
@@ -173,7 +175,15 @@ export async function saveUserProfile(user) {
 export async function getUserProfile(userId) {
   if (!userId) return null;
   const store = await getStore('profiles', 'readonly');
-  return promisifyRequest(store.get(Number(userId)));
+  const row = await promisifyRequest(store.get(Number(userId)));
+  if (!row) return null;
+  const normalizedId = Number(row.id ?? row.userId ?? userId);
+  return {
+    ...row,
+    id: normalizedId,
+    userId: normalizedId,
+    clusterid: row.clusterid ?? row.clusterId ?? 1
+  };
 }
 
 // ---------------------------------------------------------------------------

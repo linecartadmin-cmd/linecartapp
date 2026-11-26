@@ -85,8 +85,10 @@ export default function ReportsScreen({
   }, [hasSingleCluster, effectiveClusters, selectedClusterFilter]);
 
   useEffect(() => {
+    const rawId = Number(user?.id ?? user?.userId);
+    const spersonId = Number.isInteger(rawId) && rawId > 0 ? rawId : null;
+    if (!spersonId) return;
     let mounted = true;
-    const spersonId = user?.id || localStorage.getItem('LineCartPref_userid') || 6;
     setLoadingReport(true);
     api.getHomeReport({
       spersonId,

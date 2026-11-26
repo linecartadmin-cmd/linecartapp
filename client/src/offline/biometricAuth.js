@@ -313,25 +313,36 @@ export async function unlockOfflineSession(targetUserId = null) {
   // 5. Restore session token into memory
   setMemorySessionToken(creds.password);
 
-  // 6. Load user profile from IndexedDB
+  // 6. Load user profile from IndexedDB and preserve canonical numeric id
   const profile = await getUserProfile(userId);
-  const userObj = profile || {
-    id: userId,
-    name: accountMeta.name,
-    phone: accountMeta.phone,
-    role: accountMeta.role,
-    clusterid: accountMeta.clusterId || 1
-  };
+  const resolvedId = Number(profile?.id ?? profile?.userId ?? userId);
+  const userObj = profile
+    ? {
+        ...profile,
+        id: resolvedId,
+        userId: resolvedId,
+        clusterid: profile.clusterid ?? profile.clusterId ?? accountMeta.clusterId ?? 1
+      }
+    : {
+        id: resolvedId,
+        userId: resolvedId,
+        name: accountMeta.name,
+        phone: accountMeta.phone,
+        role: accountMeta.role,
+        clusterid: accountMeta.clusterId || 1
+      };
 
-  // Update active user meta
+  // Update active user meta & cached user identifiers consistently
   try {
     localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify({
-      userId: Number(userObj.id),
+      userId: resolvedId,
       name: userObj.name,
       phone: userObj.phone,
       role: userObj.role,
       clusterId: userObj.clusterId ?? userObj.clusterid ?? 1
     }));
+    localStorage.setItem('LineCartPref_userid', String(resolvedId));
+    localStorage.setItem('LineCartPref_user', JSON.stringify(userObj));
   } catch {}
 
   return {

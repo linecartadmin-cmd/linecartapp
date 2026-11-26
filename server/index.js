@@ -2691,14 +2691,13 @@ const handleCreateOrder = async (req, res) => {
       });
     }
 
-    // Verify agent identity ownership
-    const requestedSpersonId = orderList[0]?.spersonid !== undefined ? Number(orderList[0].spersonid) : Number(caller.id);
-    if ((callerRole || '').toLowerCase() === 'field sales agent' && requestedSpersonId !== Number(caller.id)) {
-      return res.status(403).json({
-        status: 403,
-        message: `Access Denied: Field Sales Agents cannot submit orders on behalf of another agent (Caller ID: ${caller.id}, Requested: ${requestedSpersonId}).`
-      });
-    }
+    // Field Sales Agents are always attributed to their authenticated session user (caller.id).
+    // Client-supplied spersonid values are ignored so stale caches or modified payloads can neither
+    // trigger false mismatches nor attribute orders to another salesperson.
+    const isFieldAgent = (callerRole || '').toLowerCase() === 'field sales agent';
+    const requestedSpersonId = isFieldAgent
+      ? Number(caller.id)
+      : (orderList[0]?.spersonid !== undefined ? Number(orderList[0].spersonid) : Number(caller.id));
     if ((callerRole || '').toLowerCase() === 'sales manager') {
       const assigned = getAssignedAgentIds(caller.id);
       if (requestedSpersonId !== Number(caller.id) && !assigned.includes(requestedSpersonId)) {
@@ -2714,7 +2713,7 @@ const handleCreateOrder = async (req, res) => {
       return res.status(400).json({
         status: 400,
         code: 'INVALID_CREDITED_SALESPERSON',
-        message: `The order cannot be credited to user #${orderList[0]?.spersonid ?? caller.id}: the user ${credited.reason}.`,
+        message: `The order cannot be credited to user #${requestedSpersonId}: the user ${credited.reason}.`,
         id: '0'
       });
     }
@@ -2982,6 +2981,7 @@ const handleCreateOrder = async (req, res) => {
         const unitType = catalogItemRef?.unitType || item.unitType || item.unit || 'kg';
         const enrichedLine = {
           ...item,
+          spersonid,
           itemName,
           unitType,
           price: catPrice,

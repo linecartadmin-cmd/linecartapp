@@ -374,7 +374,7 @@ export default function CustomersScreen({
       address: formData.address.trim(),
       pincode: formData.pincode.trim(),
       paymentmode: formData.paymentmode === 'Cash' ? 1 : 0,
-      createdby: Number(user?.id || localStorage.getItem('LineCartPref_userid') || 1),
+      ...(Number(user?.id ?? user?.userId) > 0 ? { createdby: Number(user?.id ?? user?.userId) } : {}),
       survey: surveyItems.map((it) => ({ itemid: it.itemid, qty: parseFloat(it.value) || 0 }))
     };
 

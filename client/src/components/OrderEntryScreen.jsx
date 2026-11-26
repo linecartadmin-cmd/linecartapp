@@ -72,18 +72,22 @@ export default function OrderEntryScreen({
   onNavigate,
   showToast
 }) {
+  const rawUserId = Number(user?.id ?? user?.userId);
+  const authenticatedUserId = Number.isInteger(rawUserId) && rawUserId > 0 ? rawUserId : null;
   const isAgent = user?.role === 'Field Sales Agent';
-  const agentAssignedShops = isAgent && user?.id
-    ? shops.filter((s) => {
-        const assignedId = s.assignedAgentId ?? s.assigned_agent_id ?? s.salesExecId ?? s.salesexecid;
-        return (
-          assignedId !== undefined &&
-          assignedId !== null &&
-          !isNaN(Number(assignedId)) &&
-          Number(assignedId) > 0 &&
-          Number(assignedId) === Number(user.id)
-        );
-      })
+  const agentAssignedShops = isAgent
+    ? (authenticatedUserId
+        ? shops.filter((s) => {
+            const assignedId = s.assignedAgentId ?? s.assigned_agent_id ?? s.salesExecId ?? s.salesexecid;
+            return (
+              assignedId !== undefined &&
+              assignedId !== null &&
+              !isNaN(Number(assignedId)) &&
+              Number(assignedId) > 0 &&
+              Number(assignedId) === authenticatedUserId
+            );
+          })
+        : [])
     : shops;
 
   // Strictly scope clusters to those containing shops assigned to this agent
@@ -536,8 +540,12 @@ export default function OrderEntryScreen({
       }
     }
 
+    if (!authenticatedUserId) {
+      showToast('Your signed-in user identity could not be verified. Please sign out and sign in again before placing an order.');
+      return;
+    }
+
     setSubmitting(true);
-    const spersonid = Number(user?.id || localStorage.getItem('LineCartPref_userid') || 1);
     const finalClusterId = Number(currentShop?.clusterid || singleClusterId || 1);
 
     const extraMeta = {
@@ -567,7 +575,8 @@ export default function OrderEntryScreen({
         custprice: catPrice, // Catalog price preserved until price request is approved
         requestedPrice: isCustom ? reqVal : undefined,
         requestReason: r.requestReason || '',
-        spersonid,
+        // For Field Sales Agents, let the authenticated backend session determine salesperson attribution
+        ...(isAgent ? {} : { spersonid: authenticatedUserId }),
         clusterid: finalClusterId,
         date: orderDate,
         expectedDeliveryDate,

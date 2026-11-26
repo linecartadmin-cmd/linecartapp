@@ -69,11 +69,23 @@ function ScreenLoadingSkeleton() {
 
 
 
+const normalizeClientUser = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const parsedId = Number(raw.id ?? raw.userId);
+  const validId = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
+  if (!validId) return null;
+  return {
+    ...raw,
+    id: validId,
+    userId: validId
+  };
+};
+
 export default function App() {
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem('LineCartPref_user');
-      return saved ? JSON.parse(saved) : null;
+      return saved ? normalizeClientUser(JSON.parse(saved)) : null;
     } catch {
       return null;
     }
@@ -103,10 +115,13 @@ export default function App() {
     try {
       const res = await api.getAuthMe();
       if (res && res.status === 200 && res.user) {
-        setUser(res.user);
-        localStorage.setItem('LineCartPref_user', JSON.stringify(res.user));
-        localStorage.setItem('LineCartPref_userid', String(res.user.id));
-        return { ok: true, user: res.user };
+        const normalized = normalizeClientUser(res.user);
+        if (normalized) {
+          setUser(normalized);
+          localStorage.setItem('LineCartPref_user', JSON.stringify(normalized));
+          localStorage.setItem('LineCartPref_userid', String(normalized.id));
+          return { ok: true, user: normalized };
+        }
       }
       if (res && (res.status === 401 || res.status === 403)) {
         return { ok: false, rejected: true };
@@ -579,8 +594,15 @@ export default function App() {
         onLoginSuccess={(u) => {
           // Errors from earlier failed attempts no longer apply once sign-in succeeds
           toastApi.clearErrors();
-          setUser(u);
-          const r = (u?.role || '').toLowerCase();
+          const normalized = normalizeClientUser(u) || u;
+          if (normalized?.id) {
+            try {
+              localStorage.setItem('LineCartPref_userid', String(normalized.id));
+              localStorage.setItem('LineCartPref_user', JSON.stringify(normalized));
+            } catch {}
+          }
+          setUser(normalized);
+          const r = (normalized?.role || '').toLowerCase();
           if (r === 'admin') navigate('admin-dashboard');
           else if (r === 'sales manager') navigate('reports');
           else if (r === 'delivery agent') navigate('delivery');
